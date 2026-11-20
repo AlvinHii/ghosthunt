@@ -6,8 +6,8 @@ import java.util.random.RandomGenerator;
 
 /**
  * AI 鬼的大腦：看現在的情況，決定下一步要做什麼。純邏輯，不碰伺服器（可以單元測試）。
- * 優先順序（設計文件第 4 節）：攻擊 ＞ 追人 ＞ 找最後看到的位置 ＞ 去聽到聲音的地方 ＞ 去感應到的位置
- * ＞ 搬卡 ＞ 弄壞大門 ＞ 關電源 ＞ 守監獄（機率）＞ 巡邏。
+ * 優先順序：攻擊 ＞ 追人 ＞ 弄壞大門 ＞ 找最後看到的位置 ＞ 去聽到聲音的地方（比較新的情報優先）＞ 去感應到的位置
+ * ＞ 搬卡 ＞ 關電源 ＞ 守監獄（機率）＞ 巡邏。
  */
 public final class GhostBrain {
 
@@ -42,25 +42,53 @@ public final class GhostBrain {
     public GhostBrain(Config cfg, RandomGenerator rnd) {
         this.cfg = cfg;
         this.rnd = rnd;
+        this.rules = buildRules();
+    }
+
+    /** 一條規則：條件成立時產生目標。順序就是優先順序（寫成資料，之後調順序、加其他鬼種的能力比較簡單）。 */
+    private record Rule(Kind kind, java.util.function.Predicate<Situation> when, java.util.function.Function<Situation, Goal> make) {}
+
+    private boolean seesSomeone(Situation s) {
+        return !s.blinded() && s.seen() != null;
+    }
+
+    private boolean lastSeenFresh(Situation s) {
+        return s.lastSeen() != null && s.tick() - s.lastSeenTick() <= cfg.searchTicks();
+    }
+
+    private boolean noiseFresh(Situation s) {
+        return s.noise() != null && s.tick() - s.noiseTick() <= cfg.noiseMemoryTicks();
+    }
+
+    private final List<Rule> rules;
+
+    private List<Rule> buildRules() {
+        return List.of(
+            new Rule(Kind.ATTACK, s -> seesSomeone(s) && s.seen().distance() <= cfg.attackRange(),
+                    s -> new Goal(Kind.ATTACK, s.seen().at(), s.seen().id())),
+            new Rule(Kind.CHASE, this::seesSomeone, s -> new Goal(Kind.CHASE, s.seen().at(), s.seen().id())),
+            // 大門倒數只有 25 秒：排在「追」下面、所有搜尋的上面
+            new Rule(Kind.SABOTAGE_GATE, s -> !s.sabotageableGates().isEmpty(),
+                    s -> new Goal(Kind.SABOTAGE_GATE, nearest(s.here(), s.sabotageableGates()), null)),
+            // 情報的新鮮度：比聲音舊的「最後看到的位置」讓給聲音
+            new Rule(Kind.SEARCH_LAST_SEEN, s -> lastSeenFresh(s) && !(noiseFresh(s) && s.noiseTick() > s.lastSeenTick()),
+                    s -> new Goal(Kind.SEARCH_LAST_SEEN, s.lastSeen(), null)),
+            new Rule(Kind.INVESTIGATE_NOISE, this::noiseFresh, s -> new Goal(Kind.INVESTIGATE_NOISE, s.noise(), null)),
+            new Rule(Kind.GO_SENSED, s -> s.sensed() != null, s -> new Goal(Kind.GO_SENSED, s.sensed(), null)),
+            new Rule(Kind.MOVE_CARD, s -> s.cardRevealOpen() && s.cardMoveAvailable(), s -> new Goal(Kind.MOVE_CARD, null, null)),
+            new Rule(Kind.CUT_POWER, s -> s.powerOn() && !s.cutPowerUsed(), s -> new Goal(Kind.CUT_POWER, null, null)),
+            new Rule(Kind.GUARD_JAIL, s -> s.someoneJailed() && s.jail() != null && rnd.nextDouble() < cfg.guardJailChance(),
+                    s -> new Goal(Kind.GUARD_JAIL, s.jail(), null)),
+            new Rule(Kind.PATROL, s -> true, s -> new Goal(Kind.PATROL, null, null)));
+    }
+
+    /** 優先順序（測試、除錯顯示用）。 */
+    public List<Kind> order() {
+        return rules.stream().map(Rule::kind).toList();
     }
 
     public Goal decide(Situation s) {
-        if (!s.blinded() && s.seen() != null) {
-            Seen v = s.seen();
-            return v.distance() <= cfg.attackRange()
-                    ? new Goal(Kind.ATTACK, v.at(), v.id())
-                    : new Goal(Kind.CHASE, v.at(), v.id());
-        }
-        if (s.lastSeen() != null && s.tick() - s.lastSeenTick() <= cfg.searchTicks())
-            return new Goal(Kind.SEARCH_LAST_SEEN, s.lastSeen(), null);
-        if (s.noise() != null && s.tick() - s.noiseTick() <= cfg.noiseMemoryTicks())
-            return new Goal(Kind.INVESTIGATE_NOISE, s.noise(), null);
-        if (s.sensed() != null) return new Goal(Kind.GO_SENSED, s.sensed(), null);
-        if (s.cardRevealOpen() && s.cardMoveAvailable()) return new Goal(Kind.MOVE_CARD, null, null);
-        if (!s.sabotageableGates().isEmpty()) return new Goal(Kind.SABOTAGE_GATE, nearest(s.here(), s.sabotageableGates()), null);
-        if (s.powerOn() && !s.cutPowerUsed()) return new Goal(Kind.CUT_POWER, null, null);
-        if (s.someoneJailed() && s.jail() != null && rnd.nextDouble() < cfg.guardJailChance())
-            return new Goal(Kind.GUARD_JAIL, s.jail(), null);
+        for (Rule r : rules) if (r.when().test(s)) return r.make().apply(s);
         return new Goal(Kind.PATROL, null, null);
     }
 

@@ -149,10 +149,41 @@ class GhostBrainTest {
     }
 
     @Test
-    void noise_beatsSensed_andObjectives() {
+    void gate_beatsNoiseSensedAndLastSeen() {
+        // 大門倒數只有 25 秒：就算有聲音、感應、剛追丟的位置，也先去弄壞大門（只輸給看得到人）
+        Point gate = new Point(3, 65, 3);
+        Situation s = new Situation(NOW, false, null, new Point(5, 65, 5), NOW - 10, new Point(8, 65, -3), NOW - 10, new Point(-20, 65, 4),
+                true, true, true, false, List.of(gate), false, null, HERE);
+        assertEquals(Kind.SABOTAGE_GATE, brain.decide(s).kind());
+    }
+
+    @Test
+    void noise_beatsSensed_andCard() {
         Point noise = new Point(8, 65, -3);
         Situation s = new Situation(NOW, false, null, null, -1_000_000, noise, NOW - 10, new Point(-20, 65, 4),
-                true, true, true, false, List.of(new Point(3, 65, 3)), false, null, HERE);
+                true, true, true, false, List.of(), false, null, HERE);
         assertEquals(Kind.INVESTIGATE_NOISE, brain.decide(s).kind());
+    }
+
+    @Test
+    void newerNoise_beatsOlderLastSeen() {
+        // 9 秒前看到人在 A，1 秒前聽到 B 有聲音：去 B
+        Point noise = new Point(8, 65, -3);
+        Situation s = new Situation(NOW, false, null, new Point(5, 65, 5), NOW - 180, noise, NOW - 20, null,
+                false, false, false, false, List.of(), false, null, HERE);
+        assertEquals(Kind.INVESTIGATE_NOISE, brain.decide(s).kind());
+    }
+
+    @Test
+    void newerLastSeen_beatsOlderNoise() {
+        Situation s = new Situation(NOW, false, null, new Point(5, 65, 5), NOW - 20, new Point(8, 65, -3), NOW - 180, null,
+                false, false, false, false, List.of(), false, null, HERE);
+        assertEquals(Kind.SEARCH_LAST_SEEN, brain.decide(s).kind());
+    }
+
+    @Test
+    void priorityOrder_isData() {
+        assertEquals(List.of(Kind.ATTACK, Kind.CHASE, Kind.SABOTAGE_GATE, Kind.SEARCH_LAST_SEEN, Kind.INVESTIGATE_NOISE, Kind.GO_SENSED,
+                Kind.MOVE_CARD, Kind.CUT_POWER, Kind.GUARD_JAIL, Kind.PATROL), brain.order());
     }
 }
