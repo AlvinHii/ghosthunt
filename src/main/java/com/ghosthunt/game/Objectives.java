@@ -327,7 +327,7 @@ final class Objectives {
             m.ghostMessage(Component.text("電源剛修好，" + ((graceUntil - m.tick) / 20 + 1) + " 秒內關不掉", NamedTextColor.GRAY));
             return false;
         }
-        if (!g.getWorld().equals(at.getWorld()) || g.getLocation().distance(at.clone().add(0.5, 0, 0.5)) > 4.5) return false;
+        if (!g.getWorld().equals(at.getWorld()) || g.getLocation().distance(at) > 4.5) return false;
         return m.acts.start(g, "ghost-cut", "關電源", o.ghostCutPower(), false, false, at, () -> {
             ghostCutUsed = true;
             setPower(false, "鬼把電源關掉了！");
@@ -346,7 +346,7 @@ final class Objectives {
             m.ghostMessage(Component.text("這扇門已經弄壞過一次了", NamedTextColor.GRAY));
             return false;
         }
-        if (!g.getWorld().equals(at.getWorld()) || g.getLocation().distance(at.clone().add(0.5, 0, 0.5)) > 4.5) return false;
+        if (!g.getWorld().equals(at.getWorld()) || g.getLocation().distance(at) > 4.5) return false;
         Interactions.Act a = m.acts.startAct(g, "sabotage:" + gs.index, "弄壞大門", o.ghostSabotage(), false, false, at, () -> {
             gs.sabotaged = true;
             stopCountdown(gs);
@@ -780,7 +780,7 @@ final class Objectives {
             return;
         }
         final int card = n;
-        Location at = m.loc(pos(block)).add(0.5, 0.5, 0.5);
+        Location at = m.loc(pos(block)).add(0, 0.5, 0);
         m.acts.start(p, "authorize:" + pos(block), "授權門禁卡 #" + card, o.authorize(), false, true, at, () -> {
             if (!Items.keycardsOn(p).contains(card)) return;
             authorized.add(card);

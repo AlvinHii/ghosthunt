@@ -67,7 +67,7 @@ movement:
 
 ai-ghost:                      # PvE 的 AI 鬼（/gh start ai）
   mob: HUSK                    # 用哪種怪物當身體（要跟玩家差不多高：過得了門、鑽不過蹲伏小洞）
-  base-speed: 0.13             # 基本速度（約等於玩家跑步）；依人數的加成、揮拳減速跟真人鬼一樣
+  base-speed: 0.45             # 基本速度（怪物的速度數值；0.45 約等於玩家跑步每秒 5.6 格，實測校正）；依人數的加成、揮拳減速跟真人鬼一樣
   sight-range: 24              # 看得到人的距離（同一層、視線沒被擋）
   sight-range-dark: 14         # 停電時看得到的距離
   think-every: 5               # 每幾 tick 想一次下一步（tick）

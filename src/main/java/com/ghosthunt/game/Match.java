@@ -82,7 +82,8 @@ public final class Match {
     final World world;
     final GameSettings s;
     final GhostType type;
-    final UUID ghost;
+    /** 鬼的 UUID（真人鬼是玩家，AI 鬼開局生出來後換成怪物的）。 */
+    UUID ghost;
     final String ghostName;
     final Map<UUID, Survivor> survivors = new LinkedHashMap<>();
     final Random rnd = new Random();
@@ -132,6 +133,13 @@ public final class Match {
         this(plugin, b, world, s, type, ghost.getUniqueId(), ghost.getName(), survivorPlayers, onEnd);
     }
 
+    /** PvE：所有玩家都是逃生者，鬼是 AI（基本鬼）。 */
+    public static Match pve(Plugin plugin, Building b, World world, GameSettings s, List<Player> survivors, Runnable onEnd) {
+        Match m = new Match(plugin, b, world, s, GhostType.BASIC, UUID.randomUUID(), "電腦", survivors, onEnd);
+        m.aiGhost = new AiGhost(m, s.ai());
+        return m;
+    }
+
     private Match(Plugin plugin, Building b, World world, GameSettings s, GhostType type, UUID ghostId, String ghostName,
                   List<Player> survivorPlayers, Runnable onEnd) {
         this.plugin = plugin;
@@ -160,18 +168,31 @@ public final class Match {
         stats.put("survivors", survivors.size());
         stats.put("captures", 0);
         stats.put("rescues", 0);
-        Player g = ghostPlayer();
-        preparePlayer(g);
-        // 鬼自帶夜視：停電、熄燈時也看得清楚（逃生者沒有）
-        if (s.ghostNightVision())
-            g.addPotionEffect(new PotionEffect(PotionEffectType.NIGHT_VISION, PotionEffect.INFINITE_DURATION, 0, false, false));
+        LivingEntity g;
+        Player gp = null;
+        if (aiGhost != null) {
+            // PvE：在鬼房生出 AI 鬼，鬼的 UUID 換成牠的
+            holdChunks(plugin, true); // 玩家走遠時 AI 鬼也照樣會動
+            org.bukkit.entity.Mob mob = aiGhost.spawn(loc(b.ghostRoomCenter));
+            ghost = mob.getUniqueId();
+            g = mob;
+            stats.put("mode", "pve");
+        } else {
+            gp = ghostPlayer();
+            preparePlayer(gp);
+            // 鬼自帶夜視：停電、熄燈時也看得清楚（逃生者沒有）
+            if (s.ghostNightVision())
+                gp.addPotionEffect(new PotionEffect(PotionEffectType.NIGHT_VISION, PotionEffect.INFINITE_DURATION, 0, false, false));
+            gp.teleport(loc(b.ghostRoomCenter));
+            if (nightmare != null) gp.getInventory().setItem(0, Items.lightsOut());
+            gp.getInventory().setItem(1, Items.moveCard());
+            g = gp;
+            stats.put("mode", "pvp");
+        }
         double bonus = GameSettings.bySurvivors(s.ghostSpeedBySurvivors(), survivors.size());
         ghostBonus = bonus;
         g.getAttribute(Attribute.MOVEMENT_SPEED).addTransientModifier(
                 new AttributeModifier(GHOST_SPEED_KEY, bonus, AttributeModifier.Operation.ADD_SCALAR));
-        g.teleport(loc(b.ghostRoomCenter));
-        if (nightmare != null) g.getInventory().setItem(0, Items.lightsOut());
-        g.getInventory().setItem(1, Items.moveCard());
 
         List<Pos> spawns = pickSpawns();
         int i = 0;
@@ -183,12 +204,14 @@ public final class Match {
             p.teleport(loc(spawns.get(i++ % spawns.size())));
             sv.lastSample = p.getLocation();
             p.showTitle(Title.title(Component.text("你是逃生者", NamedTextColor.GREEN),
-                    Component.text("鬼是 " + ghostName + "（" + type.label + "）｜按 F 衝刺", NamedTextColor.GRAY)));
+                    Component.text((aiGhost != null ? "鬼是電腦（AI）" : "鬼是 " + ghostName + "（" + type.label + "）") + "｜按 F 衝刺",
+                            NamedTextColor.GRAY)));
         }
-        g.showTitle(Title.title(Component.text("你是" + type.label, NamedTextColor.DARK_RED),
+        if (gp != null) gp.showTitle(Title.title(Component.text("你是" + type.label, NamedTextColor.DARK_RED),
                 Component.text((s.releaseDelay() / 20) + " 秒後放你出去", NamedTextColor.GRAY)));
-        broadcast("遊戲開始！鬼：" + ghostName + "（" + type.label + "），逃生者 " + survivors.size() + " 人。", NamedTextColor.GOLD);
-        briefing(g);
+        broadcast("遊戲開始！鬼：" + (aiGhost != null ? "電腦（AI）" : ghostName + "（" + type.label + "）")
+                + "，逃生者 " + survivors.size() + " 人。", NamedTextColor.GOLD);
+        briefing(gp);
         hud = new Hud(this);
         hud.show();
         refreshSurvivorFog();
@@ -200,7 +223,7 @@ public final class Match {
      * 不需要玩家的自我檢查：跑一次開局的場地準備（拉桿、容器內容、上鎖、大門、燈、計分板），
      * 再模擬開電源、關電源、開大門，最後回報結果。用來在真的開局前抓錯。
      */
-    public static List<String> selfTest(Plugin plugin, Building b, World world, GameSettings s) {
+    public static List<String> selfTest(Plugin plugin, Building b, World world, GameSettings s, java.util.function.Consumer<String> later) {
         Match m = new Match(plugin, b, world, s, GhostType.NIGHTMARE, UUID.randomUUID(), "selftest", List.of(), () -> { });
         m.resetBuilding();
         m.obj.setup();
@@ -211,7 +234,71 @@ public final class Match {
         out.addAll(m.obj.selfTestActions());
         m.refreshLights();
         out.add("燈光（沒電）：" + m.ambientLight());
+        m.aiPathTest(plugin, later);
+        out.add("AI 鬼尋路：檢查中（等鬼落地，約 1 秒後回報）");
         return out;
+    }
+
+    /**
+     * 自我檢查：生一隻 AI 鬼在 1F 起點，等牠落地（剛生出來還沒更新過，尋路一定失敗），
+     * 再問尋路找不找得到路到各個關鍵點（電源、大門讀卡機、終端機、監獄），結果用 later 回報，然後移除。
+     */
+    private void aiPathTest(Plugin plugin, java.util.function.Consumer<String> later) {
+        holdChunks(plugin, true);
+        // 每層一隻（原版尋路一次找太遠會放棄；AI 鬼實際走的時候也是先走到樓梯再換層）
+        List<org.bukkit.entity.Mob> mobs = new ArrayList<>();
+        for (int f = 0; f < b.layout.floors; f++) mobs.add(new AiGhost(this, s.ai()).spawn(loc(b.layout.crossing(f))));
+        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            try {
+                record Target(String name, Location at, double near) {}
+                List<Target> targets = new ArrayList<>();
+                Location lever = obj.leverLocation();
+                if (lever != null) targets.add(new Target("電源開關", lever.clone().add(0, -1, 0), 2.5)); // 站在拉桿下面那格
+                for (Building.Gate gt : b.gates) targets.add(new Target((gt.floor() + 1) + "F 大門讀卡機", loc(gt.reader()), 2.5));
+                for (Pos t : b.securityTerminals) targets.add(new Target("終端機 " + t, loc(t), 2.5));
+                // 監獄籠子中心走不進去（籠子是鐵欄杆），到籠子外面 5 格內就算到
+                for (Map.Entry<Integer, Pos> e : b.jailCages.entrySet()) targets.add(new Target((e.getKey() + 1) + "F 監獄", loc(e.getValue()), 5.0));
+                // 樓梯：每座樓梯從底部走得到頂端
+                for (Pos[] link : b.stairLinks) targets.add(new Target("樓梯 " + link[0] + " 往上", loc(link[1]), 1.5));
+                int ok = 0;
+                List<String> fails = new ArrayList<>();
+                for (Target tg : targets) {
+                    Location t = tg.at().clone();
+                    int f = floorOf(t);
+                    org.bukkit.entity.Mob mob = mobs.get(f);
+                    if (tg.name().startsWith("樓梯")) {
+                        // 從這座樓梯的底部出發
+                        mob = mobs.get(Math.max(0, f - 1));
+                    }
+                    var path = mob.getPathfinder().findPath(t);
+                    Location end = path == null ? null : path.getFinalPoint();
+                    if (end != null && end.getWorld().equals(t.getWorld()) && end.distance(t) <= tg.near()) ok++;
+                    else fails.add(tg.name() + (end == null ? "（找不到路）" : "（只走到 " + end.getBlockX() + "," + end.getBlockY() + "," + end.getBlockZ()
+                            + "，目標 " + t.getBlockX() + "," + t.getBlockY() + "," + t.getBlockZ() + " " + t.getBlock().getType() + "/"
+                            + t.clone().add(0, -1, 0).getBlock().getType() + "）"));
+                }
+                later.accept("AI 鬼尋路：找得到路 " + ok + "/" + targets.size() + (fails.isEmpty() ? "" : "｜走不到：" + String.join("、", fails))
+                        + (lever == null ? "" : "｜電源開關在 " + lever.getBlockX() + "," + lever.getBlockY() + "," + lever.getBlockZ() + " " + lever.getBlock().getType()));
+            } finally {
+                mobs.forEach(org.bukkit.entity.Entity::remove);
+                holdChunks(plugin, false);
+            }
+        }, 20L);
+    }
+
+    private int floorOf(Location l) {
+        return Math.max(0, Math.min(b.layout.floors - 1, (int) Math.floor((l.getY() - b.layout.floorY(0) - 1) / b.layout.floorHeight)));
+    }
+
+    /** 把大樓範圍的區塊掛上／拿掉外掛票：沒有玩家在附近時生物也會動（AI 鬼、自我檢查用）。 */
+    void holdChunks(Plugin plugin, boolean on) {
+        int cx0 = (b.layout.ox - 8) >> 4, cz0 = (b.layout.oz - 8) >> 4;
+        int cx1 = (b.layout.ox + b.layout.size + 8) >> 4, cz1 = (b.layout.oz + b.layout.size + 8) >> 4;
+        for (int cx = cx0; cx <= cx1; cx++)
+            for (int cz = cz0; cz <= cz1; cz++) {
+                if (on) world.getChunkAt(cx, cz).addPluginChunkTicket(plugin);
+                else world.removePluginChunkTicket(cx, cz, plugin);
+            }
     }
 
     /** 開局說明：每個人這局要做什麼、怎麼操作。 */
@@ -228,7 +315,9 @@ public final class Match {
                 "障礙物：拿著右鍵門口的黃色地毯｜門口旁邊的深色木頭櫃子：右鍵推倒擋住門口｜蹲下右鍵雙開門：卡門（每扇一次）",
                 "1F 地上的活板門通到地下通道（爬梯子下去），可以鑽到很遠的另一個房間；鬼要先撬開才能下去",
                 "被抓會關進監獄，隊友站在籠子旁邊就能救｜第 " + s.maxCaptures() + " 次被抓淘汰",
-                "注意：翻箱子、開電源會發出聲音，附近的鬼會知道方向"};
+                "注意：翻箱子、開電源會發出聲音，附近的鬼會知道方向",
+                aiGhost != null ? "這局的鬼是電腦：看得到、聽得到你；每 " + s.ai().senseInterval() / 20
+                        + " 秒會感應一次最近的人大概在哪（被盯上時你會聽到心跳加快）" : ""};
         String[] ghostLines = {
                 "【鬼】目標：把逃生者抓進監獄（鬼房 " + s.releaseDelay() / 20 + " 秒後打開）",
                 "左鍵打到就抓到；每揮一次手（揮空也算）" + s.attackFatigue() / 20.0 + " 秒內幾乎走不動、抓不到人，要看準再揮",
@@ -237,7 +326,7 @@ public final class Match {
                 "門禁卡位置每 " + o.revealInterval() / 20 + " 秒亮一次：拿「搬卡」右鍵，把卡搬走並鎖起來",
                 "右鍵障礙物、推倒的櫃子可以拆掉；右鍵卡住的門可以撞開；右鍵牆上的小洞可以打大；右鍵 1F 的活板門可以撬開地洞",
                 nightmare != null ? "夢魘：拿「熄燈」右鍵關掉整棟的燈，熄燈時看得到附近逃生者的軌跡" : ""};
-        for (Player p : survivorPlayers()) for (String l : survivorLines) p.sendMessage(Component.text(l, NamedTextColor.GREEN));
+        for (Player p : survivorPlayers()) for (String l : survivorLines) if (!l.isEmpty()) p.sendMessage(Component.text(l, NamedTextColor.GREEN));
         if (g != null) for (String l : ghostLines) if (!l.isEmpty()) g.sendMessage(Component.text(l, NamedTextColor.RED));
     }
 
@@ -667,7 +756,7 @@ public final class Match {
         if (!b.doorBlocks.containsKey(lower)) return false;
         final Pos door = lower;
         Pos other = doorPair.get(door);
-        Location at = loc(door).add(0.5, 1, 0.5);
+        Location at = loc(door).add(0, 1, 0);
         String key = "door:" + Math.min(door.hashCode(), other == null ? Integer.MAX_VALUE : other.hashCode());
         if (jammed.contains(door)) {
             if (isGhost(p)) {
@@ -743,7 +832,7 @@ public final class Match {
         LivingEntity g = ghostEntity();
         if (g == null || idx < 0 || idx >= b.barricadeSpots.size() || !barricaded.getOrDefault(idx, false) || acts.busy(ghost)) return false;
         Building.BarricadeSpot spot = b.barricadeSpots.get(idx);
-        Location at = loc(spot.blocks().get(0)).add(0.5, 0.5, 0.5);
+        Location at = loc(spot.blocks().get(0)).add(0, 0.5, 0);
         Interactions.Act a = acts.startAct(g, "break:" + idx, "拆障礙物", s.breakBarricade(), false, false, at, () -> {
             removeBarricade(spot);
             barricaded.put(idx, false);
@@ -761,7 +850,7 @@ public final class Match {
         LivingEntity g = ghostEntity();
         if (g == null || !released || doorLower == null || !jammed.contains(doorLower)) return false;
         Pos other = doorPair.get(doorLower);
-        Location at = loc(doorLower).add(0.5, 1, 0.5);
+        Location at = loc(doorLower).add(0, 1, 0);
         String key = "door:" + Math.min(doorLower.hashCode(), other == null ? Integer.MAX_VALUE : other.hashCode());
         Interactions.Act a = acts.startAct(g, key, "撞開卡住的門", o.breakJam(), false, false, at, () -> {
             setJam(doorLower, other, false);
@@ -780,7 +869,7 @@ public final class Match {
         LivingEntity g = ghostEntity();
         if (g == null || !released || i < 0 || i >= b.hatches.size() || pried.contains(i)) return false;
         Building.Hatch h = b.hatches.get(i);
-        Location at = loc(h.trapdoor()).add(0.5, 0.5, 0.5);
+        Location at = loc(h.trapdoor()).add(0, 0.5, 0);
         Interactions.Act a = acts.startAct(g, "pry:" + i, "撬開地洞", o.widenHole(), false, false, at, () -> {
             pried.add(i);
             block(h.trapdoor()).setBlockData(h.ladder(), false); // 換成梯子：大家都能上下
@@ -919,7 +1008,7 @@ public final class Match {
             Block bl = block(h.trapdoor());
             if (!(bl.getBlockData() instanceof org.bukkit.block.data.type.TrapDoor td) || !td.isOpen()) continue;
             boolean near = false;
-            Location c = loc(h.trapdoor()).add(0.5, 0, 0.5);
+            Location c = loc(h.trapdoor());
             for (Player q : world.getPlayers()) {
                 if (q.getGameMode() == GameMode.SPECTATOR) continue;
                 Location l = q.getLocation();
@@ -1030,6 +1119,10 @@ public final class Match {
         ended = true;
         if (task != null) task.cancel();
         if (nightmare != null) nightmare.stop();
+        if (aiGhost != null) {
+            aiGhost.remove();
+            holdChunks(plugin, false);
+        }
         acts.cancelAll();
         obj.cleanup();
         items.cleanup();

@@ -15,7 +15,7 @@ record AiGhostSettings(
     static AiGhostSettings from(FileConfiguration c) {
         return new AiGhostSettings(
                 c.getString("ai-ghost.mob", "HUSK"),
-                c.getDouble("ai-ghost.base-speed", 0.13),
+                c.getDouble("ai-ghost.base-speed", 0.45),
                 c.getDouble("ai-ghost.sight-range", 24), c.getDouble("ai-ghost.sight-range-dark", 14),
                 Math.max(1, c.getInt("ai-ghost.think-every", 5)), t(c, "ai-ghost.reaction", 0.3),
                 c.getDouble("ai-ghost.attack-range", 2.5), t(c, "ai-ghost.search-time", 10),

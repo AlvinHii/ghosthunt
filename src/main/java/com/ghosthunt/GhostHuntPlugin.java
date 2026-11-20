@@ -77,7 +77,8 @@ public final class GhostHuntPlugin extends JavaPlugin {
                 }
                 World w = ArenaWorld.getOrCreate(BuildingSettings.from(getConfig()).worldName());
                 try {
-                    for (String line : com.ghosthunt.game.Match.selfTest(this, building, w, com.ghosthunt.game.GameSettings.from(getConfig())))
+                    for (String line : com.ghosthunt.game.Match.selfTest(this, building, w, com.ghosthunt.game.GameSettings.from(getConfig()),
+                            line -> msg(sender, "[自我檢查] " + line, line.contains("走不到") ? NamedTextColor.RED : NamedTextColor.AQUA)))
                         msg(sender, "[自我檢查] " + line, NamedTextColor.AQUA);
                     msg(sender, "[自我檢查] 完成，沒有錯誤。", NamedTextColor.GREEN);
                 } catch (RuntimeException e) {
@@ -138,6 +139,20 @@ public final class GhostHuntPlugin extends JavaPlugin {
             return;
         }
         List<Player> players = new java.util.ArrayList<>(getServer().getOnlinePlayers());
+        // /gh start ai：PvE，所有玩家都是逃生者，鬼是電腦；/gh start ai solo：沒有逃生者，只看 AI 鬼巡邏（測試用）
+        if (args.length >= 2 && args[1].equalsIgnoreCase("ai")) {
+            boolean solo = args.length >= 3 && args[2].equalsIgnoreCase("solo");
+            if (players.isEmpty() && !solo) {
+                msg(sender, "沒有玩家在線上。", NamedTextColor.RED);
+                return;
+            }
+            World world = ArenaWorld.getOrCreate(BuildingSettings.from(getConfig()).worldName());
+            match = com.ghosthunt.game.Match.pve(this, building, world, com.ghosthunt.game.GameSettings.from(getConfig()),
+                    solo ? List.of() : players, () -> match = null);
+            match.start();
+            if (!building.pve) msg(sender, "提醒：這是大樓，不是 PvE 小地圖（/gh build pve）。", NamedTextColor.YELLOW);
+            return;
+        }
         if (players.isEmpty()) {
             msg(sender, "沒有玩家在線上。", NamedTextColor.RED);
             return;

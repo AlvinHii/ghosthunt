@@ -60,6 +60,7 @@ final class AiGhost {
     private int jailedBefore;
     private final ArrayDeque<Location> visited = new ArrayDeque<>();
     private Location patrolTarget;
+    private long patrolUntil;
     private final Set<Integer> checkedHoles = new HashSet<>();
     private final Set<Location> followedTunnel = new HashSet<>();
 
@@ -104,6 +105,12 @@ final class AiGhost {
         if (follow != null) follow.setBaseValue(128);
         var speed = mob.getAttribute(Attribute.MOVEMENT_SPEED);
         if (speed != null) speed.setBaseValue(c.baseSpeed()); // 0.13 ≈ 玩家跑步的速度，加成和揮拳減速由 Match 處理
+        var jump = mob.getAttribute(Attribute.JUMP_STRENGTH);
+        if (jump != null) jump.setBaseValue(0); // 不跳
+        // 原版尋路會規劃「上一格高」的路線（假設能跳），不能跳又不能跨就會卡在一格高的家具、樓梯側面前面。
+        // 讓牠直接跨上一格（不是跳）：兩格以上的東西（障礙物、推倒的櫃子、門、蹲伏小洞、籠子）照樣擋得住。
+        var step = mob.getAttribute(Attribute.STEP_HEIGHT);
+        if (step != null) step.setBaseValue(1.0);
         var kb = mob.getAttribute(Attribute.KNOCKBACK_RESISTANCE);
         if (kb != null) kb.setBaseValue(1.0);
         Pathfinder pf = mob.getPathfinder();
@@ -170,9 +177,13 @@ final class AiGhost {
         }
         openDoorsAhead();
         boolean busy = m.acts.busy(mob.getUniqueId());
-        if (!busy && moveTarget != null && stuck.update(m.tick, mob.getLocation().getX(), mob.getLocation().getY(), mob.getLocation().getZ()))
-            onStuck();
+        // 只有「有路線、離目標還遠」時才算卡住（走到目的地站著等不算）
+        if (!busy && moveTarget != null && mob.getPathfinder().hasPath() && moveTarget.distance(mob.getLocation()) > 2) {
+            if (stuck.update(m.tick, mob.getLocation().getX(), mob.getLocation().getY(), mob.getLocation().getZ())) onStuck();
+        } else stuck.reset();
         if (m.tick % c.thinkEvery() != 0) return;
+        if (m.survivors.isEmpty() && m.tick % 40 == 0) // 單人測試（沒有逃生者）時每 2 秒記一次在做什麼
+            m.plugin.getLogger().info("[AI 鬼] " + debug() + "｜位置 " + mob.getLocation().getBlockX() + "," + mob.getLocation().getBlockY() + "," + mob.getLocation().getBlockZ() + "｜卡住 " + stuckCount);
 
         Player seen = perceive();
         if (busy) {
@@ -305,10 +316,11 @@ final class AiGhost {
             case CUT_POWER -> {
                 Location lever = m.obj.leverLocation();
                 if (lever == null) return;
-                if (lever.clone().add(0.5, 0, 0.5).distance(here) <= 2.5) {
+                Location stand = lever.clone().add(0, -1, 0); // 拉桿裝在牆上（眼睛高度），站在它下面那格
+                if (stand.distance(here) <= 2.5) {
                     mob.getPathfinder().stopPathfinding();
                     m.obj.ghostCutPower(mob);
-                } else moveTo(lever);
+                } else moveTo(stand);
             }
             case GUARD_JAIL -> {
                 Location jail = toLoc(g.target());
@@ -325,11 +337,11 @@ final class AiGhost {
         followedTunnel.add(lastSeen);
         List<Building.Hatch> hs = m.b.hatches;
         for (int i = 0; i < hs.size(); i++) {
-            Location t = m.loc(hs.get(i).trapdoor()).add(0.5, 1, 0.5);
+            Location t = m.loc(hs.get(i).trapdoor()).add(0, 1, 0);
             if (t.distance(lastSeen) > 2 || m.rnd.nextDouble() >= c.followTunnelChance()) continue;
             int other = i ^ 1; // 生成時兩個出入口一組：0-1、2-3……
             if (other >= hs.size()) return false;
-            Location end = m.loc(hs.get(other).trapdoor()).add(0.5, 1, 0.5);
+            Location end = m.loc(hs.get(other).trapdoor()).add(0, 1, 0);
             lastSeen = end;
             lastSeenTick = m.tick;
             moveTo(end);
@@ -348,7 +360,7 @@ final class AiGhost {
                 if (m.loc(h.lower()).distance(m.loc(r.center())) > 3) continue;
                 checkedHoles.add(i);
                 if (m.rnd.nextDouble() >= c.checkHideoutChance()) continue;
-                Location hole = m.loc(h.lower()).add(0.5, 0, 0.5);
+                Location hole = m.loc(h.lower());
                 if (hole.distance(mob.getLocation()) <= 2.5) {
                     mob.getPathfinder().stopPathfinding();
                     m.ghostWidenHole(i);
@@ -365,7 +377,11 @@ final class AiGhost {
     /** 巡邏：挑一間最近沒去過的房間（偶爾換樓層）。 */
     private void patrol() {
         Location here = mob.getLocation();
-        if (patrolTarget != null && patrolTarget.distance(here) > 2.5 && moveTarget != null) return;
+        // 還沒到、也還沒超過 30 秒：繼續走（moveTo 只在需要時重新找路）
+        if (patrolTarget != null && patrolTarget.distance(here) > 3 && m.tick < patrolUntil) {
+            moveTo(patrolTarget);
+            return;
+        }
         if (patrolTarget != null) {
             visited.addLast(patrolTarget);
             while (visited.size() > 4) visited.removeFirst();
@@ -373,7 +389,7 @@ final class AiGhost {
         List<Location> same = new ArrayList<>(), other = new ArrayList<>();
         for (Building.Room r : m.b.rooms) {
             if (r.hideout() || r.type() == com.ghosthunt.building.RoomType.GHOST_ROOM) continue;
-            Location l = m.loc(r.center()).add(0.5, 0, 0.5);
+            Location l = walkableNear(m.loc(r.center())); // 房間中心那格可能擺了家具，找旁邊站得到的格子
             boolean seenRecently = false;
             for (Location v : visited) if (v.distance(l) < 3) seenRecently = true;
             if (seenRecently || l.distance(here) < 4) continue;
@@ -383,6 +399,8 @@ final class AiGhost {
         if (pool.isEmpty()) return;
         pool.sort(java.util.Comparator.comparingDouble(l -> l.distance(here)));
         patrolTarget = pool.get(m.rnd.nextInt(Math.min(3, pool.size())));
+        patrolUntil = m.tick + 30 * 20;
+        moveTarget = null;
         moveTo(patrolTarget);
     }
 
@@ -392,12 +410,57 @@ final class AiGhost {
         moveTo(walkableNear(jitter(center, radius)));
     }
 
+    /**
+     * 走到 to。不同樓層時先走到樓梯：往上走到最近那座樓梯的底部，往下走到樓梯頂端，再繼續（原版尋路一次找太遠會放棄）。
+     */
     private void moveTo(Location to) {
         if (to == null) return;
-        if (moveTarget == null || moveTarget.distance(to) > 1.5 || !mob.getPathfinder().hasPath()) {
-            moveTarget = to.clone();
-            mob.getPathfinder().moveTo(to, 1.0);
+        Location step = waypoint(to);
+        if (moveTarget == null || moveTarget.distance(step) > 1.5 || !mob.getPathfinder().hasPath()) {
+            if (moveTarget != null && moveTarget.distance(step) <= 1.5 && step.distance(mob.getLocation()) <= 1.5) return; // 已經到了
+            moveTarget = step.clone();
+            var path = mob.getPathfinder().findPath(step);
+            Location end = path == null ? null : path.getFinalPoint();
+            boolean noProgress = end == null || end.distance(mob.getLocation()) < 1.5 && step.distance(mob.getLocation()) > 2.5;
+            if (noProgress) {
+                // 路只到原地：先看身邊是不是被擋住（障礙物、卡住的門……），不是的話換目標
+                moveTarget = null;
+                if (!breakBlockerNearby() && goal != null && goal.kind() == Kind.PATROL) patrolTarget = null;
+                return;
+            }
+            mob.getPathfinder().moveTo(path, 1.0);
         }
+    }
+
+    private int floorOf(Location l) {
+        var L = m.b.layout;
+        return Math.max(0, Math.min(L.floors - 1, (int) Math.floor((l.getY() - L.floorY(0) - 1) / L.floorHeight)));
+    }
+
+    private Location waypoint(Location to) {
+        int from = floorOf(mob.getLocation()), dest = floorOf(to);
+        if (from == dest) return to;
+        Location here = mob.getLocation();
+        Location best = null;
+        double bd = Double.MAX_VALUE;
+        for (Pos[] link : m.b.stairLinks) { // {下層平台, 上層抵達點}
+            Pos p = dest > from ? link[0] : link[1];
+            Location l = m.loc(p);
+            if (floorOf(l) != from) continue;
+            double d = l.distance(here);
+            if (d < bd) {
+                bd = d;
+                best = l;
+            }
+        }
+        if (best == null) return to;
+        if (bd > 1.5) return best;
+        // 已經在樓梯口：目標改成樓梯另一端
+        for (Pos[] link : m.b.stairLinks) {
+            Pos near = dest > from ? link[0] : link[1], far = dest > from ? link[1] : link[0];
+            if (m.loc(near).distance(best) < 0.5) return m.loc(far);
+        }
+        return to;
     }
 
     /** 路線上前面 1.5 格內關著的雙開門：幫它開門（卡住的門不開，要撞）。 */
@@ -487,7 +550,7 @@ final class AiGhost {
                 best = p;
             }
         }
-        return best == null ? at : m.loc(best).add(0.5, 0, 0.5);
+        return best == null ? at : m.loc(best);
     }
 
     private static Point pt(Location l) {
