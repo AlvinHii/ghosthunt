@@ -41,6 +41,7 @@ ghost:
   capture-cooldown: 3          # 抓到人之後多久不能再抓
   cut-power-time: 3            # 鬼關電源要站多久（一局一次）
   attack-fatigue: 1.5          # 每揮一次手（打到或揮空）之後的疲勞時間，期間抓不到人
+  night-vision: true           # 鬼整場自帶夜視（停電、熄燈時也看得清楚）
   attack-fatigue-slow: 0.9     # 疲勞時減速多少（0.9 = 速度只剩 10%，幾乎停住）
   break-door-jam: 2.5          # 鬼撞開被卡住的門要站多久（撞開後那扇門不能再卡）
   break-barricade: 3.5         # 鬼破壞障礙物所需時間

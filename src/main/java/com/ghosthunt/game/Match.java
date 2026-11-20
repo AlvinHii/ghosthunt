@@ -159,6 +159,9 @@ public final class Match {
         stats.put("rescues", 0);
         Player g = ghost();
         preparePlayer(g);
+        // 鬼自帶夜視：停電、熄燈時也看得清楚（逃生者沒有）
+        if (s.ghostNightVision())
+            g.addPotionEffect(new PotionEffect(PotionEffectType.NIGHT_VISION, PotionEffect.INFINITE_DURATION, 0, false, false));
         double bonus = GameSettings.bySurvivors(s.ghostSpeedBySurvivors(), survivors.size());
         ghostBonus = bonus;
         g.getAttribute(Attribute.MOVEMENT_SPEED).addTransientModifier(

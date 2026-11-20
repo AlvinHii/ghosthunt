@@ -13,7 +13,7 @@ public record GameSettings(
         int rescueBoostTime, double rescueBoostBonus, int rescueProtection, int maxCaptures,
         int nmFirstUse, int nmDuration, int nmCooldown, double nmTrailRadius, int nmIdleHint, double nmWhisperRadius,
         String nmFog, String normalFog,
-        int glowStart, int timeLimit, int emergencyLight, double holeSpeedBonus) {
+        int glowStart, int timeLimit, int emergencyLight, double holeSpeedBonus, boolean ghostNightVision) {
 
     private static int t(FileConfiguration c, String path, double def) {
         return (int) Math.round(c.getDouble(path, def) * 20);
@@ -36,7 +36,8 @@ public record GameSettings(
                 c.getDouble("nightmare.trail-radius", 12), t(c, "nightmare.idle-hint-after", 15), c.getDouble("nightmare.whisper-radius", 8),
                 c.getString("nightmare.fog-distance", "8"), c.getString("map.fog-distance", "off"),
                 t(c, "match.glow-start", 900), t(c, "match.time-limit", 1020), c.getInt("map.emergency-light-level", 1),
-                c.getDouble("survivor.crawl-hole-speed-bonus", 0.3));
+                c.getDouble("survivor.crawl-hole-speed-bonus", 0.3),
+                c.getBoolean("ghost.night-vision", true));
     }
 
     /** 依逃生者人數取值：3 人用第 1 個，4 人第 2 個，5 人以上第 3 個（少於 3 人也用第 1 個）。 */
