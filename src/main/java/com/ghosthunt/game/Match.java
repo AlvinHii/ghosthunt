@@ -113,6 +113,8 @@ public final class Match {
     /** 被卡住的門（下半部）、這局已經卡過的門。 */
     private final java.util.Set<Pos> jammed = new java.util.HashSet<>(), jamUsed = new java.util.HashSet<>();
     final Nightmare nightmare;
+    /** PvE：AI 鬼（真人鬼時是 null）。 */
+    AiGhost aiGhost;
     final ObjectiveSettings o;
     final Interactions acts;
     final Objectives obj;
@@ -344,6 +346,7 @@ public final class Match {
         obj.tick(g);
         if (tick % 20 == 0 && hud != null) hud.update();
         items.tick(g);
+        if (aiGhost != null) aiGhost.tick();
         escapes();
         if (nightmare != null) nightmare.tick(g);
         if (tick % 10 == 0 && g instanceof Player gp) ghostHud(gp);
@@ -975,6 +978,7 @@ public final class Match {
         if (g == null || !released || !sameFloor(g.getLocation(), at)) return;
         double d = horiz(g.getLocation(), at);
         if (d > o.noiseRadius()) return;
+        if (aiGhost != null) aiGhost.hearNoise(at);
         double target = Math.toDegrees(Math.atan2(-(at.getX() - g.getLocation().getX()), at.getZ() - g.getLocation().getZ()));
         double rel = ((target - g.getLocation().getYaw()) % 360 + 540) % 360 - 180; // -180..180，正的是右邊
         String[] arrows = {"↓", "↙", "←", "↖", "↑", "↗", "→", "↘"};

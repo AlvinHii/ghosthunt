@@ -65,6 +65,23 @@ movement:
   allow-jump: false            # 逃生者和鬼都不能跳
   allow-sprint: true
 
+ai-ghost:                      # PvE 的 AI 鬼（/gh start ai）
+  mob: HUSK                    # 用哪種怪物當身體（要跟玩家差不多高：過得了門、鑽不過蹲伏小洞）
+  base-speed: 0.13             # 基本速度（約等於玩家跑步）；依人數的加成、揮拳減速跟真人鬼一樣
+  sight-range: 24              # 看得到人的距離（同一層、視線沒被擋）
+  sight-range-dark: 14         # 停電時看得到的距離
+  think-every: 5               # 每幾 tick 想一次下一步（tick）
+  reaction: 0.3                # 進入攻擊距離後多久才揮拳
+  attack-range: 2.5
+  search-time: 10              # 追丟後找多久；聽到的聲音也記這麼久
+  noise-error: 3               # 聽到聲音的位置誤差（格）
+  sense-interval: 60           # 每隔多久「感應」一次最近的逃生者大概在哪（那個人會聽到心跳加快）
+  sense-error: 8               # 感應的位置誤差（格）
+  guard-jail-chance: 0.5       # 有人被關時去守監獄的機率
+  check-hideout-chance: 0.4    # 追丟時去查附近暗格的機率
+  follow-tunnel-chance: 0.5    # 看到人鑽進地洞時，走去通道另一端的機率
+  stuck-time: 3                # 幾秒幾乎沒移動算卡住
+
 survivor:
   dash-duration: 1.5           # 緊急衝刺（F 鍵）持續時間
   dash-speed-bonus: 0.5        # 衝刺速度 +50%（不跟其他加速疊加，取最高）

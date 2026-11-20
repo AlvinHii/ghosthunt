@@ -93,6 +93,7 @@ final class ItemUse {
         if (g == null || !g.getWorld().equals(at.getWorld())) return;
         if (g.getLocation().distance(at) <= o.smokeRadius() || g.getEyeLocation().distance(at) <= o.smokeRadius()) {
             g.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, o.smokeBlind(), 0, false, false));
+            if (m.aiGhost != null) m.aiGhost.blind(o.smokeBlind()); // AI 鬼：一段時間看不到人
             m.acts.cancel(g.getUniqueId(), "煙霧彈");
             m.ghostMessage(Component.text("被煙霧彈打到了！", NamedTextColor.GRAY));
         }
