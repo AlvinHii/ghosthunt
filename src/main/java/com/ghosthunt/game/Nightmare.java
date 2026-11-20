@@ -4,7 +4,6 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.title.Title;
 import org.bukkit.Bukkit;
-import org.bukkit.Color;
 import org.bukkit.Location;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
@@ -27,7 +26,6 @@ final class Nightmare {
     private record Trail(Location at, long tick) {}
 
     private static final int TRAIL_LIFE = 60;       // 軌跡留 3 秒
-    private static final Particle.DustOptions TRAIL_DUST = new Particle.DustOptions(Color.fromRGB(170, 0, 255), 1.2f);
 
     private final Match m;
     boolean active;
@@ -115,7 +113,8 @@ final class Nightmare {
         while (it.hasNext()) {
             Trail t = it.next();
             if (m.tick - t.tick() > TRAIL_LIFE) it.remove();
-            else if (m.tick % 4 == 0) g.spawnParticle(Particle.DUST, t.at(), 2, 0.15, 0.02, 0.15, 0, TRAIL_DUST);
+            // 熄燈時亮度 0，一般的粒子（DUST）會跟著變黑看不到，所以用自己會發光的靈魂火焰
+            else if (m.tick % 4 == 0) g.spawnParticle(Particle.SOUL_FIRE_FLAME, t.at(), 1, 0.12, 0.0, 0.12, 0);
         }
         // 站太久的人：每 2 秒冒一次靈魂粒子（只有鬼看得到）
         if (m.tick % 40 == 0) {
@@ -123,7 +122,7 @@ final class Nightmare {
                 if (sv.status != Match.Status.FREE) continue;
                 Player p = Bukkit.getPlayer(sv.id);
                 if (p == null || m.tick - sv.stillSince < m.s.nmIdleHint()) continue;
-                g.spawnParticle(Particle.SOUL, p.getLocation().add(0, 1, 0), 12, 0.3, 0.6, 0.3, 0.02);
+                g.spawnParticle(Particle.SOUL_FIRE_FLAME, p.getLocation().add(0, 1, 0), 12, 0.3, 0.6, 0.3, 0.02);
             }
         }
     }
@@ -142,7 +141,7 @@ final class Nightmare {
         active = false;
         trails.clear();
         m.refreshLights();
-        // 把逃生者的霧換回平常的（世界本身一直是平常的霧，所以送世界現在的樣子就好）
+        // 把逃生者的霧換回平常的（世界本身沒有霧）
         if (fogged != null) m.personalFog(m.s.normalFog(), fogged);
         fogged = null;
         for (Match.Survivor sv : m.survivors.values()) {

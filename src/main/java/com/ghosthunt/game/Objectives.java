@@ -19,7 +19,12 @@ import org.bukkit.block.data.Directional;
 import org.bukkit.block.data.FaceAttachable;
 import org.bukkit.block.data.type.Switch;
 import org.bukkit.block.data.type.TrapDoor;
+import org.bukkit.entity.BlockDisplay;
+import org.bukkit.entity.Display;
 import org.bukkit.entity.Player;
+import org.bukkit.util.Transformation;
+import org.joml.AxisAngle4f;
+import org.joml.Vector3f;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -62,6 +67,8 @@ final class Objectives {
     private long nextReveal = Long.MAX_VALUE;
     long revealUntil = -1;
     private boolean movedThisReveal;
+    /** 亮起期間標出門禁卡箱子的發光方塊（只有鬼看得到，外框會穿牆）。 */
+    private final Map<Pos, BlockDisplay> markers = new HashMap<>();
 
     // ---- 大門 ----
     static final class GateState {
@@ -528,12 +535,16 @@ final class Objectives {
             g.showTitle(Title.title(Component.empty(), Component.text("門禁卡位置亮起（拿「搬卡」右鍵可以搬走一張）", NamedTextColor.AQUA),
                     Title.Times.times(Duration.ZERO, Duration.ofSeconds(2), Duration.ofMillis(300))));
         }
-        if (m.tick <= revealUntil && m.tick % 5 == 0) {
-            for (Map.Entry<Pos, String> e : content.entrySet()) {
-                if (!e.getValue().startsWith(Items.KEYCARD)) continue;
-                Location l = m.loc(e.getKey()).add(0, 1, 0);
-                for (int i = 0; i < 6; i++) g.spawnParticle(Particle.END_ROD, l.clone().add(0, i * 0.8, 0), 1, 0.05, 0.05, 0.05, 0);
+        if (m.tick <= revealUntil) {
+            if (m.tick % 5 == 0) {
+                syncMarkers(g);
+                for (Pos p : cardPositions()) {
+                    Location l = m.loc(p).add(0, 1, 0);
+                    for (int i = 0; i < 6; i++) g.spawnParticle(Particle.END_ROD, l.clone().add(0, i * 0.8, 0), 1, 0.05, 0.05, 0.05, 0);
+                }
             }
+        } else if (!markers.isEmpty()) {
+            clearMarkers();
         }
         // 大門倒數
         for (GateState gs : gates) {
@@ -577,12 +588,74 @@ final class Objectives {
         return out;
     }
 
-    String ghostHud() {
-        if (m.tick <= revealUntil) return "門禁卡位置亮起中！" + (movedThisReveal ? "（這次已搬過）" : "（拿搬卡右鍵）");
+    private List<Pos> cardPositions() {
+        List<Pos> out = new ArrayList<>();
+        for (Map.Entry<Pos, String> e : content.entrySet()) if (e.getValue().startsWith(Items.KEYCARD)) out.add(e.getKey());
+        return out;
+    }
+
+    /**
+     * 門禁卡箱子上放一個發光的方塊展示實體：只給鬼看（其他人看不到），發光外框會穿牆、不受亮度影響，
+     * 不同樓層、隔好幾面牆也看得到（原本的粒子會被牆擋住、離太遠也不會畫）。
+     */
+    private void syncMarkers(Player g) {
+        List<Pos> cards = cardPositions();
+        markers.entrySet().removeIf(e -> {
+            if (cards.contains(e.getKey()) && e.getValue().isValid()) return false;
+            e.getValue().remove();
+            return true;
+        });
+        for (Pos p : cards) {
+            if (markers.containsKey(p)) continue;
+            BlockData data = m.block(p).getBlockData();
+            BlockDisplay d = m.world.spawn(m.loc(p), BlockDisplay.class, e -> {
+                e.setBlock(data);
+                e.setPersistent(false);
+                e.setVisibleByDefault(false);
+                e.setGlowing(true);
+                e.setGlowColorOverride(org.bukkit.Color.AQUA);
+                e.setBrightness(new Display.Brightness(15, 15));
+                e.setViewRange(4f);
+                e.setTransformation(new Transformation(new Vector3f(-0.02f, -0.02f, -0.02f), new AxisAngle4f(),
+                        new Vector3f(1.04f, 1.04f, 1.04f), new AxisAngle4f()));
+            });
+            g.showEntity(m.plugin, d);
+            markers.put(p, d);
+        }
+    }
+
+    private void clearMarkers() {
+        markers.values().forEach(org.bukkit.entity.Entity::remove);
+        markers.clear();
+    }
+
+    /** 門禁卡在哪：「2F 西北 23 格」，給鬼看的。 */
+    private String cardDirections(Player g) {
+        Location me = g.getLocation();
+        List<String> parts = new ArrayList<>();
+        for (Pos p : cardPositions()) {
+            Location l = m.loc(p);
+            double dx = l.getX() + 0.5 - me.getX(), dz = l.getZ() + 0.5 - me.getZ();
+            double dist = Math.hypot(dx, dz);
+            String dir = dist < 3 ? "這附近" : compass(dx, dz);
+            parts.add((floorOf(p) + 1) + "F " + dir + " " + Math.round(dist) + " 格");
+        }
+        return String.join("｜", parts);
+    }
+
+    private static String compass(double dx, double dz) {
+        String[] names = {"北", "東北", "東", "東南", "南", "西南", "西", "西北"};
+        double deg = (Math.toDegrees(Math.atan2(dx, -dz)) + 360) % 360; // 0 = 北（-z），順時針
+        return names[(int) Math.round(deg / 45.0) % 8];
+    }
+
+    String ghostHud(Player g) {
+        if (m.tick <= revealUntil) return "門禁卡亮起：" + cardDirections(g) + (movedThisReveal ? "（這次已搬過）" : "（拿搬卡右鍵）");
         return "下次門禁卡亮起：" + Math.max(0, (nextReveal - m.tick) / 20) + " 秒" + (powerOn ? "" : "｜停電中");
     }
 
     void cleanup() {
+        clearMarkers();
         for (GateState gs : gates) stopCountdown(gs);
     }
 

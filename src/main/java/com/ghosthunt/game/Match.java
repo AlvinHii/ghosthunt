@@ -60,6 +60,8 @@ public final class Match {
         long lastHeartbeat;
         Location lastSample;
         long stillSince;
+        boolean inHole;
+        double holeBonus;
 
         Survivor(Player p) {
             this.id = p.getUniqueId();
@@ -71,6 +73,8 @@ public final class Match {
     static final NamespacedKey GHOST_SPEED_KEY = new NamespacedKey("ghosthunt", "ghost_speed");
     static final NamespacedKey BOOST_KEY = new NamespacedKey("ghosthunt", "boost");
     static final NamespacedKey FATIGUE_KEY = new NamespacedKey("ghosthunt", "fatigue");
+    static final NamespacedKey HOLE_SNEAK_KEY = new NamespacedKey("ghosthunt", "hole_sneak");
+    static final NamespacedKey HOLE_SPEED_KEY = new NamespacedKey("ghosthunt", "hole_speed");
 
     final Plugin plugin;
     final Building b;
@@ -173,6 +177,7 @@ public final class Match {
         briefing(g);
         hud = new Hud(this);
         hud.show();
+        refreshSurvivorFog();
 
         task = plugin.getServer().getScheduler().runTaskTimer(plugin, this::tick, 1L, 1L);
     }
@@ -236,6 +241,8 @@ public final class Match {
         sp.removeModifier(GHOST_SPEED_KEY);
         sp.removeModifier(BOOST_KEY);
         sp.removeModifier(FATIGUE_KEY);
+        sp.removeModifier(HOLE_SPEED_KEY);
+        p.getAttribute(Attribute.SNEAKING_SPEED).removeModifier(HOLE_SNEAK_KEY);
     }
 
     /** 把上一局留下的東西復原：鬼房封起來、障礙物拿掉、燈恢復、霧恢復。 */
@@ -247,7 +254,7 @@ public final class Match {
             block(h.slab()).setBlockData(h.slabData(), false);
         }
         setLights(s.emergencyLight());
-        applyFog(s.normalFog());
+        applyFog("off"); // 世界本身不放霧（鬼看不到霧），霧只用封包送給逃生者
     }
 
     /** 逃生者出生點：離鬼房至少 25 格、彼此至少 10 格，優先放在跟鬼不同的樓層。 */
@@ -290,9 +297,13 @@ public final class Match {
             Player p = Bukkit.getPlayer(sv.id);
             if (p == null) continue;
             applyBoost(sv, p);
-            if (sv.status != Status.FREE) continue;
+            if (sv.status != Status.FREE) {
+                if (sv.inHole) setHoleSpeed(sv, p, false);
+                continue;
+            }
             heartbeat(sv, p, g);
             trackStillness(sv, p);
+            holeSpeed(sv, p);
             if (glowing && !p.hasPotionEffect(PotionEffectType.GLOWING)) {
                 p.addPotionEffect(new PotionEffect(PotionEffectType.GLOWING, PotionEffect.INFINITE_DURATION, 0, false, false));
             }
@@ -309,6 +320,7 @@ public final class Match {
         escapes();
         if (nightmare != null) nightmare.tick(g);
         if (tick % 10 == 0) ghostHud(g);
+        if (tick % 200 == 0) refreshSurvivorFog();
 
         // 只有鬼一個人時（單人測試用）不會因為沒有逃生者而結束
         if (!survivors.isEmpty() && freeCount() == 0) end("場上沒有能自由行動的逃生者");
@@ -642,7 +654,7 @@ public final class Match {
         String text;
         if (!released) text = "放出倒數：" + ((s.releaseDelay() - tick) / 20 + 1) + " 秒";
         else if (tick < fatigueUntil) text = "攻擊後疲勞……";
-        else text = (nightmare != null ? nightmare.hud() + "｜" : "") + obj.ghostHud();
+        else text = (nightmare != null ? nightmare.hud() + "｜" : "") + obj.ghostHud(g);
         g.sendActionBar(Component.text(text, NamedTextColor.DARK_PURPLE));
     }
 
@@ -709,6 +721,7 @@ public final class Match {
         obj.cleanup();
         items.cleanup();
         if (hud != null) hud.hide();
+        personalFog("off", survivorPlayers());
         long secs = tick / 20;
         broadcast("遊戲結束：" + reason + "（" + secs / 60 + " 分 " + secs % 60 + " 秒）", NamedTextColor.GOLD);
         for (Survivor sv : survivors.values()) {
@@ -889,16 +902,70 @@ public final class Match {
     }
 
     /**
-     * 只給這些玩家看 setting 的霧，世界本身（和鬼）維持平常的霧。
+     * 只給這些玩家看 setting 的霧，世界本身（和鬼）沒有霧。
      * 送封包失敗時退回成所有人都有霧。
      */
     void personalFog(String setting, java.util.Collection<Player> players) {
         Biome show = fogBiome(setting);
-        Biome base = fogBiome(s.normalFog());
+        Biome base = FogExperiment.defaultBiome();
         if (show == null || base == null) return;
         if (!FogExperiment.sendPersonal(world, b.layout, show, base, players, plugin.getLogger())) {
             FogExperiment.apply(world, b.layout, show);
         }
+    }
+
+    /** 逃生者現在該看到的霧：熄燈中用熄燈的霧，否則用平常的霧。 */
+    String survivorFog() {
+        return nightmare != null && nightmare.active ? s.nmFog() : s.normalFog();
+    }
+
+    /**
+     * 重送逃生者的霧。個人霧是用封包送的，區塊被整個重傳（例如傳送、走遠再回來）就會消失，所以每 10 秒補送一次。
+     * 平常的霧是 off 而且沒在熄燈時不用送。
+     */
+    void refreshSurvivorFog() {
+        String f = survivorFog();
+        if (f == null || f.equalsIgnoreCase("off")) return;
+        personalFog(f, survivorPlayers());
+    }
+
+    // ---- 蹲伏破洞：逃生者蹲著鑽洞不減速 ----
+
+    /**
+     * 逃生者在破洞附近蹲著走時，蹲下的速度懲罰拿掉，而且補回跑步的速度（蹲下會中斷跑步）。
+     * 補回的速度不跟衝刺／被救加速疊加：有加速時只補差額（加速效果不疊加）。
+     */
+    private void holeSpeed(Survivor sv, Player p) {
+        boolean crouched = p.isSneaking() || p.getPose() == org.bukkit.entity.Pose.SNEAKING;
+        setHoleSpeed(sv, p, crouched && !p.isSprinting() && nearHole(p.getLocation()));
+    }
+
+    private void setHoleSpeed(Survivor sv, Player p, boolean on) {
+        double bonus = on ? Math.max(0, s.holeSpeedBonus() - sv.appliedBoost) : 0;
+        if (on == sv.inHole && bonus == sv.holeBonus) return;
+        AttributeInstance sneak = p.getAttribute(Attribute.SNEAKING_SPEED);
+        AttributeInstance sp = p.getAttribute(Attribute.MOVEMENT_SPEED);
+        if (on != sv.inHole) {
+            sneak.removeModifier(HOLE_SNEAK_KEY);
+            // 蹲下速度上限是 1（= 不減速）
+            if (on) sneak.addTransientModifier(new AttributeModifier(HOLE_SNEAK_KEY, 1.0, AttributeModifier.Operation.ADD_NUMBER));
+        }
+        sp.removeModifier(HOLE_SPEED_KEY);
+        if (bonus > 0) sp.addTransientModifier(new AttributeModifier(HOLE_SPEED_KEY, bonus, AttributeModifier.Operation.ADD_SCALAR));
+        sv.inHole = on;
+        sv.holeBonus = bonus;
+    }
+
+    /** 站在破洞那格、或洞口前後 1.5 格內（同一層）。 */
+    private boolean nearHole(Location l) {
+        for (int i = 0; i < b.crawlHoles.size(); i++) {
+            if (widened.contains(i)) continue;
+            Pos h = b.crawlHoles.get(i).lower();
+            if (Math.abs(l.getY() - h.y()) > 1.0) continue;
+            double dx = l.getX() - (h.x() + 0.5), dz = l.getZ() - (h.z() + 0.5);
+            if (dx * dx + dz * dz <= 2.0 * 2.0) return true;
+        }
+        return false;
     }
 
     /** 所有還在線上的逃生者（不管有沒有被抓）。 */

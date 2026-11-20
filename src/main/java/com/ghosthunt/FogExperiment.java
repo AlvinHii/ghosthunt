@@ -27,7 +27,7 @@ import java.util.Set;
 public final class FogExperiment {
 
     /** 霧完全看不見的距離（格）。 */
-    public static final List<Integer> DISTANCES = List.of(4, 6, 8, 12, 16, 24, 32, 48);
+    public static final List<Integer> DISTANCES = List.of(4, 6, 8, 12, 14, 16, 24, 32, 48);
     private static final String PACK = "ghosthunt_fog";
 
     private FogExperiment() {}

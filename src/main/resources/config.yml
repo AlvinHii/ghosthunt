@@ -9,7 +9,7 @@ map:
   door-chance: 0.5            # 一般房間的門口有多少機率是雙開門（其他是可以放障礙物的空門口）
   crawl-hole-chance: 0.4       # 一般房間有多少機率多一個蹲伏破洞（逃生者蹲下鑽得過，鬼過不去）
   corridor-clutter: 0.06       # 走廊地上雜物的密度（每格放的機率）；走廊天花板另有通風管
-  fog-distance: "off"          # 平常的霧：off 或 4/6/8/12/16/24/32/48（幾格外完全看不見）
+  fog-distance: "14"           # 平常的霧（只送給逃生者，鬼看不到）：off 或 4/6/8/12/14/16/24/32/48（幾格外完全看不見）
   normal-light-level: 10       # 電源開著時的燈光亮度（0～15）
   emergency-light-level: 1     # 緊急照明亮度（0～15）；實測 4 以下看起來差不多，先用 1
   floor-height: 5              # 層高：樓板 1 格＋牆 4 格（樓梯 5 階，房間格至少要 8 格寬）
@@ -41,6 +41,7 @@ survivor:
   dash-cooldown: 45            # 緊急衝刺冷卻
   coop-max-players: 2          # 合作開／修電源最多算幾人
   coop-radius: 3
+  crawl-hole-speed-bonus: 0.3  # 蹲著鑽破洞時：不吃蹲下的減速，另外補回跑步的速度（+30%）；有衝刺／被救加速時不疊加
 
 interaction:                   # 點一下開始，站著不動等進度條；走動超過半格、被抓、開背包會中斷
   cancel-move-distance: 0.5
