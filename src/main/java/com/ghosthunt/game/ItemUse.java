@@ -11,6 +11,7 @@ import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.block.Block;
 import org.bukkit.block.data.Levelled;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
@@ -88,16 +89,16 @@ final class ItemUse {
     void onSmokeHit(Location at) {
         m.world.spawnParticle(Particle.CAMPFIRE_COSY_SMOKE, at, 80, 1.6, 1.2, 1.6, 0.01);
         m.world.playSound(at, Sound.BLOCK_FIRE_EXTINGUISH, 2f, 0.7f);
-        Player g = m.ghost();
+        LivingEntity g = m.ghostEntity();
         if (g == null || !g.getWorld().equals(at.getWorld())) return;
         if (g.getLocation().distance(at) <= o.smokeRadius() || g.getEyeLocation().distance(at) <= o.smokeRadius()) {
             g.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, o.smokeBlind(), 0, false, false));
             m.acts.cancel(g.getUniqueId(), "煙霧彈");
-            g.sendActionBar(Component.text("被煙霧彈打到了！", NamedTextColor.GRAY));
+            m.ghostMessage(Component.text("被煙霧彈打到了！", NamedTextColor.GRAY));
         }
     }
 
-    void tick(Player g) {
+    void tick(LivingEntity g) {
         for (Map.Entry<UUID, Boolean> e : flashOn.entrySet()) {
             if (!e.getValue()) continue;
             Player p = Bukkit.getPlayer(e.getKey());
@@ -166,7 +167,7 @@ final class ItemUse {
     }
 
     /** 手電筒照到夢魘：短暫打斷牠的追蹤。 */
-    private void flashNightmare(Player p, Player g) {
+    private void flashNightmare(Player p, LivingEntity g) {
         if (m.nightmare == null || !m.nightmare.active || m.tick - lastFlashHit < 20) return;
         if (!p.getWorld().equals(g.getWorld())) return;
         Vector to = g.getEyeLocation().toVector().subtract(p.getEyeLocation().toVector());

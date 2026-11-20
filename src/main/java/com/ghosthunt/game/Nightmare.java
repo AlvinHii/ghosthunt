@@ -7,6 +7,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
@@ -78,12 +79,12 @@ final class Nightmare {
         g.playSound(g.getLocation(), Sound.ENTITY_ELDER_GUARDIAN_CURSE, 0.6f, 0.6f);
     }
 
-    void tick(Player g) {
+    void tick(LivingEntity g) {
         if (!active) return;
         if (m.tick >= activeUntil) {
             lightsOn();
             readyAt = m.tick + m.s.nmCooldown();
-            g.sendActionBar(Component.text("燈亮了，熄燈冷卻中", NamedTextColor.GRAY));
+            m.ghostMessage(Component.text("燈亮了，熄燈冷卻中", NamedTextColor.GRAY));
             return;
         }
         // 燈光閃爍：偶爾亮一下
@@ -114,7 +115,7 @@ final class Nightmare {
             Trail t = it.next();
             if (m.tick - t.tick() > TRAIL_LIFE) it.remove();
             // 熄燈時亮度 0，一般的粒子（DUST）會跟著變黑看不到，所以用自己會發光的靈魂火焰
-            else if (m.tick % 4 == 0) g.spawnParticle(Particle.SOUL_FIRE_FLAME, t.at(), 1, 0.12, 0.0, 0.12, 0);
+            else if (m.tick % 4 == 0 && g instanceof Player gp) gp.spawnParticle(Particle.SOUL_FIRE_FLAME, t.at(), 1, 0.12, 0.0, 0.12, 0);
         }
         // 站太久的人：每 2 秒冒一次靈魂粒子（只有鬼看得到）
         if (m.tick % 40 == 0) {
@@ -122,13 +123,13 @@ final class Nightmare {
                 if (sv.status != Match.Status.FREE) continue;
                 Player p = Bukkit.getPlayer(sv.id);
                 if (p == null || m.tick - sv.stillSince < m.s.nmIdleHint()) continue;
-                g.spawnParticle(Particle.SOUL_FIRE_FLAME, p.getLocation().add(0, 1, 0), 12, 0.3, 0.6, 0.3, 0.02);
+                if (g instanceof Player gp) gp.spawnParticle(Particle.SOUL_FIRE_FLAME, p.getLocation().add(0, 1, 0), 12, 0.3, 0.6, 0.3, 0.02);
             }
         }
     }
 
     /** 熄燈期間沒有心跳；鬼在低語範圍內時聽到低語聲。 */
-    void whisper(Match.Survivor sv, Player p, Player g) {
+    void whisper(Match.Survivor sv, Player p, LivingEntity g) {
         if (!p.getWorld().equals(g.getWorld())) return;
         double d = p.getLocation().distance(g.getLocation());
         if (d > m.s.nmWhisperRadius()) return;
@@ -152,8 +153,7 @@ final class Nightmare {
 
     void disrupt(int ticks) {
         disruptedUntil = Math.max(disruptedUntil, m.tick + ticks);
-        Player g = m.ghost();
-        if (g != null) g.sendActionBar(Component.text("被手電筒照到了！追蹤暫時失效", NamedTextColor.YELLOW));
+        m.ghostMessage(Component.text("被手電筒照到了！追蹤暫時失效", NamedTextColor.YELLOW));
     }
 
     boolean tracking() {

@@ -4,6 +4,7 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 
 import java.util.HashMap;
@@ -58,17 +59,17 @@ final class Interactions {
      * @param noisy  做的時候會不會發出聲音讓鬼聽到方向
      * @return 開始或加入成功
      */
-    boolean start(Player p, String key, String label, int neededTicks, boolean coop, boolean noisy, Location at, Runnable onDone) {
+    boolean start(Entity p, String key, String label, int neededTicks, boolean coop, boolean noisy, Location at, Runnable onDone) {
         return startAct(p, key, label, neededTicks, coop, noisy, at, onDone) != null;
     }
 
     /** 同 start，但回傳互動本身（失敗時回傳 null），可以再設定 onTick、onCancel。 */
-    Act startAct(Player p, String key, String label, int neededTicks, boolean coop, boolean noisy, Location at, Runnable onDone) {
+    Act startAct(Entity p, String key, String label, int neededTicks, boolean coop, boolean noisy, Location at, Runnable onDone) {
         if (byPlayer.containsKey(p.getUniqueId())) return null;
         Act a = byKey.get(key);
         if (a != null) {
             if (!a.coop || a.who.size() >= m.o.coopMax()) {
-                p.sendActionBar(Component.text("有人正在" + a.label, NamedTextColor.GRAY));
+                p.sendActionBar(Component.text("有人正在" + a.label, NamedTextColor.GRAY)); // 不是玩家時沒有效果
                 return null;
             }
             a.who.put(p.getUniqueId(), p.getLocation());
@@ -114,10 +115,10 @@ final class Interactions {
         for (Act a : new java.util.ArrayList<>(byKey.values())) {
             // 走開、被抓、離線的人退出
             a.who.entrySet().removeIf(e -> {
-                Player p = Bukkit.getPlayer(e.getKey());
-                boolean ok = p != null && p.getWorld().equals(e.getValue().getWorld())
+                Entity p = Bukkit.getEntity(e.getKey());
+                boolean ok = p != null && p.isValid() && p.getWorld().equals(e.getValue().getWorld())
                         && p.getLocation().distanceSquared(e.getValue()) <= 0.25
-                        && (m.isGhost(p) || m.isFreeSurvivor(p));
+                        && (m.isGhostId(p.getUniqueId()) || p instanceof Player pl && m.isFreeSurvivor(pl));
                 if (!ok) {
                     byPlayer.remove(e.getKey());
                     if (p != null) p.sendActionBar(Component.text(a.label + "中斷了", NamedTextColor.RED));

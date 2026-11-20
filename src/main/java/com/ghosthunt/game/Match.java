@@ -21,6 +21,7 @@ import org.bukkit.block.Biome;
 import org.bukkit.block.Block;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.block.data.Levelled;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.potion.PotionEffect;
@@ -157,7 +158,7 @@ public final class Match {
         stats.put("survivors", survivors.size());
         stats.put("captures", 0);
         stats.put("rescues", 0);
-        Player g = ghost();
+        Player g = ghostPlayer();
         preparePlayer(g);
         // 鬼自帶夜視：停電、熄燈時也看得清楚（逃生者沒有）
         if (s.ghostNightVision())
@@ -311,8 +312,8 @@ public final class Match {
     private void tick() {
         if (ended) return;
         tick++;
-        Player g = ghost();
-        if (g == null) {
+        LivingEntity g = ghostEntity();
+        if (g == null || !g.isValid()) {
             end("鬼離開了");
             return;
         }
@@ -345,7 +346,7 @@ public final class Match {
         items.tick(g);
         escapes();
         if (nightmare != null) nightmare.tick(g);
-        if (tick % 10 == 0) ghostHud(g);
+        if (tick % 10 == 0 && g instanceof Player gp) ghostHud(gp);
         if (tick % 200 == 0) refreshSurvivorFog();
         if (tick % 10 == 0) closeHatches();
 
@@ -358,7 +359,7 @@ public final class Match {
         released = true;
         ghostCaptureReady = tick;
         for (Pos p : b.ghostDoorBlocks.keySet()) block(p).setType(Material.AIR, false);
-        Player g = ghost();
+        Player g = ghostPlayer();
         world.playSound(loc(b.ghostRoomCenter), Sound.BLOCK_IRON_DOOR_OPEN, 4f, 0.5f);
         broadcast("鬼出來了！", NamedTextColor.DARK_RED);
         if (g != null) g.showTitle(Title.title(Component.empty(), Component.text("去抓人吧", NamedTextColor.RED),
@@ -373,9 +374,10 @@ public final class Match {
     public void onGhostHit(Player victim) {
         Survivor sv = survivors.get(victim.getUniqueId());
         if (sv == null || sv.status != Status.FREE || !released) return;
-        Player g = ghost();
+        LivingEntity g = ghostEntity();
+        if (g == null) return;
         if (tick < sv.protectedUntil) {
-            g.sendActionBar(Component.text(victim.getName() + " 剛被救出來，暫時抓不到", NamedTextColor.GRAY));
+            ghostMessage(Component.text(victim.getName() + " 剛被救出來，暫時抓不到", NamedTextColor.GRAY));
             onGhostSwing();
             return;
         }
@@ -411,7 +413,7 @@ public final class Match {
         }
     }
 
-    private int farthestJail(Player g) {
+    private int farthestJail(LivingEntity g) {
         int best = 0;
         double bd = -1;
         for (Map.Entry<Integer, Pos> e : b.jailCages.entrySet()) {
@@ -430,7 +432,7 @@ public final class Match {
         fatigueUntil = tick + s.attackFatigue();
     }
 
-    private void applyFatigue(Player g) {
+    private void applyFatigue(LivingEntity g) {
         boolean want = tick < fatigueUntil;
         if (want == fatigueApplied) return;
         AttributeInstance sp = g.getAttribute(Attribute.MOVEMENT_SPEED);
@@ -445,7 +447,7 @@ public final class Match {
 
     // ---- 救援 ----
 
-    private void rescues(Player g) {
+    private void rescues(LivingEntity g) {
         for (Map.Entry<Integer, Pos> e : b.jailCages.entrySet()) {
             int f = e.getKey();
             Location cage = loc(e.getValue());
@@ -539,7 +541,7 @@ public final class Match {
 
     // ---- 心跳 ----
 
-    private void heartbeat(Survivor sv, Player p, Player g) {
+    private void heartbeat(Survivor sv, Player p, LivingEntity g) {
         if (nightmare != null && nightmare.active) {
             nightmare.whisper(sv, p, g);
             return;
@@ -894,7 +896,7 @@ public final class Match {
      * 不給精確位置、牆不擋。夢魘熄燈時（追蹤沒被打斷）另外看到聲音來源的精確位置。
      */
     void noise(Location at) {
-        Player g = ghost();
+        LivingEntity g = ghostEntity();
         if (g == null || !released || !sameFloor(g.getLocation(), at)) return;
         double d = horiz(g.getLocation(), at);
         if (d > o.noiseRadius()) return;
@@ -904,8 +906,9 @@ public final class Match {
         int idx = (int) Math.round((rel + 180) / 45.0) % 8;
         noiseText = "聽到聲音 " + arrows[idx];
         noiseUntil = tick + 30;
-        g.sendActionBar(Component.text(noiseText, NamedTextColor.GOLD));
-        if (nightmare != null && nightmare.tracking()) g.spawnParticle(Particle.SOUL_FIRE_FLAME, at, 12, 0.3, 0.4, 0.3, 0.01);
+        ghostMessage(Component.text(noiseText, NamedTextColor.GOLD));
+        if (nightmare != null && nightmare.tracking() && g instanceof Player gp)
+            gp.spawnParticle(Particle.SOUL_FIRE_FLAME, at, 12, 0.3, 0.4, 0.3, 0.01);
     }
 
     // ---- 逃出 ----
@@ -1052,7 +1055,7 @@ public final class Match {
     /** 線上的參加者（鬼＋所有逃生者）。 */
     List<Player> participants() {
         List<Player> out = new ArrayList<>();
-        Player g = ghost();
+        Player g = ghostPlayer();
         if (g != null) out.add(g);
         out.addAll(survivorPlayers());
         return out;
@@ -1073,8 +1076,30 @@ public final class Match {
         survivorPlayers().forEach(p -> p.sendMessage(c));
     }
 
-    Player ghost() {
+    /** 鬼的實體：真人鬼是 Player，AI 鬼是怪物；不在線／不存在回傳 null。 */
+    LivingEntity ghostEntity() {
+        return Bukkit.getEntity(ghost) instanceof LivingEntity le ? le : null;
+    }
+
+    /** 真人鬼（AI 鬼時回傳 null）。 */
+    Player ghostPlayer() {
         return Bukkit.getPlayer(ghost);
+    }
+
+    boolean isGhostId(java.util.UUID id) {
+        return ghost.equals(id);
+    }
+
+    /** 只有真人鬼才看得到的畫面下方提示。 */
+    void ghostMessage(Component c) {
+        Player g = ghostPlayer();
+        if (g != null) g.sendActionBar(c);
+    }
+
+    /** 只有真人鬼才看得到的標題。 */
+    void ghostTitle(Title t) {
+        Player g = ghostPlayer();
+        if (g != null) g.showTitle(t);
     }
 
     int freeCount() {

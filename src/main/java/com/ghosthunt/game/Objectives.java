@@ -21,6 +21,7 @@ import org.bukkit.block.data.type.Switch;
 import org.bukkit.block.data.type.TrapDoor;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.util.Transformation;
 import org.joml.AxisAngle4f;
@@ -356,7 +357,7 @@ final class Objectives {
     }
 
     /** 離鬼最近、還在箱子裡、還沒被搬過的卡所在的箱子。 */
-    private Pos cardToMove(Player g) {
+    private Pos cardToMove(LivingEntity g) {
         Pos best = null;
         double bd = Double.MAX_VALUE;
         for (Map.Entry<Pos, String> e : content.entrySet()) {
@@ -493,7 +494,7 @@ final class Objectives {
         gs.bar = BossBar.bossBar(Component.text(where + " 開啟中", NamedTextColor.GOLD), 0f, BossBar.Color.YELLOW, BossBar.Overlay.PROGRESS);
         for (Player p : m.participants()) p.showBossBar(gs.bar);
         m.broadcast(where + "開始倒數 " + gs.remaining / 20 + " 秒！警報響了，鬼知道是哪一扇。", NamedTextColor.GOLD);
-        Player g = m.ghost();
+        Player g = m.ghostPlayer();
         if (g != null) g.showTitle(Title.title(Component.empty(), Component.text(where + "開始倒數", NamedTextColor.RED),
                 Title.Times.times(Duration.ZERO, Duration.ofSeconds(2), Duration.ofMillis(500))));
     }
@@ -528,7 +529,7 @@ final class Objectives {
     // 每 tick
     // =====================================================================
 
-    void tick(Player g) {
+    void tick(LivingEntity g) {
         // 隨機斷電：一局最多幾次，修好後一段時間內不會再斷
         if (powerOn && blackoutAt >= 0 && blackouts < o.blackoutMax() && m.tick >= blackoutAt && m.tick >= graceUntil) {
             blackouts++;
@@ -539,18 +540,19 @@ final class Objectives {
             revealUntil = m.tick + o.revealDuration();
             nextReveal = m.tick + o.revealInterval();
             movedThisReveal = false;
-            g.showTitle(Title.title(Component.empty(), Component.text("門禁卡位置亮起（拿「搬卡」右鍵可以搬走一張）", NamedTextColor.AQUA),
+            m.ghostTitle(Title.title(Component.empty(), Component.text("門禁卡位置亮起（拿「搬卡」右鍵可以搬走一張）", NamedTextColor.AQUA),
                     Title.Times.times(Duration.ZERO, Duration.ofSeconds(2), Duration.ofMillis(300))));
         }
-        if (m.tick <= revealUntil) {
+        if (m.tick <= revealUntil && g instanceof Player gp) {
+            Player g0 = gp;
             if (m.tick % 5 == 0) {
-                syncMarkers(g);
+                syncMarkers(g0);
                 for (Pos p : cardPositions()) {
                     Location l = m.loc(p).add(0, 1, 0);
-                    for (int i = 0; i < 6; i++) g.spawnParticle(Particle.END_ROD, l.clone().add(0, i * 0.8, 0), 1, 0.05, 0.05, 0.05, 0);
+                    for (int i = 0; i < 6; i++) g0.spawnParticle(Particle.END_ROD, l.clone().add(0, i * 0.8, 0), 1, 0.05, 0.05, 0.05, 0);
                 }
             }
-        } else if (!markers.isEmpty()) {
+        } else if (m.tick > revealUntil && !markers.isEmpty()) {
             clearMarkers();
         }
         // 大門倒數
@@ -639,7 +641,7 @@ final class Objectives {
     }
 
     /** 門禁卡在哪：「2F 西北 23 格」，給鬼看的。 */
-    private String cardDirections(Player g) {
+    private String cardDirections(LivingEntity g) {
         Location me = g.getLocation();
         List<String> parts = new ArrayList<>();
         for (Pos p : cardPositions()) {
