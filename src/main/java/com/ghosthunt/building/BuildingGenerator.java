@@ -36,6 +36,10 @@ public final class BuildingGenerator {
             List<String> gateErrors = pickGates(b, map, s, rnd);
             map.connectPanes();
             for (Pos p : b.ghostDoors) b.ghostDoorBlocks.put(p, map.get(p));
+            for (Pos p : b.doors) {
+                b.doorBlocks.put(p, map.get(p));
+                b.doorBlocks.put(p.add(0, 1, 0), map.get(p.add(0, 1, 0)));
+            }
             for (Building.Gate g : b.gates) for (Pos p : g.opening()) b.gateBlocks.put(p, map.get(p));
             List<String> errors = new ArrayList<>(gateErrors);
             errors.addAll(Validator.validate(b, map, s, rooms));

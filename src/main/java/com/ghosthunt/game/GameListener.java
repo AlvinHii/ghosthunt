@@ -138,6 +138,19 @@ public final class GameListener implements Listener {
                 m.obj.onReader(p, gs);
                 return;
             }
+            if (m.obj.isTerminal(clicked)) {
+                e.setCancelled(true);
+                m.obj.onTerminal(p, clicked);
+                return;
+            }
+            if (m.tryTopple(p, clicked)) {
+                e.setCancelled(true);
+                return;
+            }
+            if (m.onDoor(p, clicked)) {
+                e.setCancelled(true);
+                return;
+            }
             // 裝飾方塊（高爐、煙燻爐、投擲器、織布機……）不給開介面，免得以為那些也能翻；門照常可以開關。
             // 只擋方塊本身，手上的道具還是可以用（例如對著牆丟煙霧彈）。
             if (!org.bukkit.Tag.DOORS.isTagged(clicked.getType())) e.setUseInteractedBlock(org.bukkit.event.Event.Result.DENY);

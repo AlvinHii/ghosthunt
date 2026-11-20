@@ -37,6 +37,10 @@ final class IrregularGenerator {
     private static final int OUT = -1, WALL = 0, CORR = 1;
     private static final int MAX_ATTEMPTS = 30;
     private static final int[][] DIRS = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+    /** 門的種類：鬼房的鐵欄杆、雙開門、空門口（可以放障礙物）、空門口（樓梯間、監獄，不能擋）。 */
+    private static final int DOOR_BARS = 0, DOOR_DOUBLE = 1, DOOR_OPEN = 2, DOOR_SPECIAL = 3;
+    static final Material CABINET = Material.DARK_OAK_LOG;
+    static final Material TERMINAL = Material.CRAFTER;
 
     // ---- 資料 ----
 
@@ -117,6 +121,12 @@ final class IrregularGenerator {
         final Set<Integer> cageInside = new HashSet<>();
         final List<int[]> power = new ArrayList<>();
         final List<GateSpot> gateSpots = new ArrayList<>();
+        /** 每扇門的種類（DOOR_*）。 */
+        final Map<Opening, Integer> kind = new HashMap<>();
+        /** 可以推倒的櫃子：門口 → 櫃子那一格。 */
+        final Map<Opening, int[]> topple = new HashMap<>();
+        /** 保全室的終端機。 */
+        final List<int[]> terminals = new ArrayList<>();
 
         Plan(int f) {
             this.f = f;
@@ -251,6 +261,10 @@ final class IrregularGenerator {
         map.connectPanes();
         for (Pos p : b.ghostDoors) b.ghostDoorBlocks.put(p, map.get(p));
         for (Building.Gate g : b.gates) for (Pos p : g.opening()) b.gateBlocks.put(p, map.get(p));
+        for (Pos p : b.doors) {
+            b.doorBlocks.put(p, map.get(p));
+            b.doorBlocks.put(p.add(0, 1, 0), map.get(p.add(0, 1, 0)));
+        }
         errors.addAll(validate(map, plans));
         if (!errors.isEmpty()) return null;
         record(plans);
@@ -805,6 +819,12 @@ final class IrregularGenerator {
             if (!clearOf(p, o)) continue;
             p.doors.add(o);
             markOpening(p, o, 2);
+            Room a = p.rooms.get(o.neg()), c = p.rooms.get(o.pos());
+            int kind;
+            if (a.type == RoomType.GHOST_ROOM || c.type == RoomType.GHOST_ROOM) kind = DOOR_BARS;
+            else if (a.type == RoomType.STAIRWELL || c.type == RoomType.STAIRWELL || a.type == RoomType.JAIL || c.type == RoomType.JAIL) kind = DOOR_SPECIAL;
+            else kind = rnd.nextDouble() < s.doorChance() ? DOOR_DOUBLE : DOOR_OPEN;
+            p.kind.put(o, kind);
             return true;
         }
         return false;
@@ -973,12 +993,46 @@ final class IrregularGenerator {
     }
 
     private void furnishFloor(Plan p) {
+        cabinets(p);
         for (Room r : p.rooms.values()) {
             if (r.hideout) continue;
             if (r.corridor) clutter(p, r);
             else furnish(p, r);
             repair(p, r);
             if (r.type == RoomType.ELECTRICAL) powerTiles(p, r);
+        }
+        // 修完之後櫃子、終端機被拿掉的話就不算
+        p.topple.values().removeIf(t -> !p.furn.containsKey(key(t[0], t[1])));
+        p.terminals.removeIf(t -> !p.furn.containsKey(key(t[0], t[1])));
+    }
+
+    /**
+     * 可以推倒的櫃子：空門口（能放障礙物的那種）旁邊、靠著牆，2 格高。
+     * 放在門口沒有告示牌的那一端（告示牌在第一格前面的門框）。
+     */
+    private void cabinets(Plan p) {
+        for (Opening o : p.doors) {
+            if (p.kind.getOrDefault(o, -1) != DOOR_OPEN || rnd.nextDouble() >= s.toppleChance()) continue;
+            int ax = o.xn() ? -1 : 0, az = o.xn() ? 0 : -1;
+            int tx = o.xn() ? 0 : 1, tz = o.xn() ? 1 : 0;
+            int[] last = o.tiles().get(o.tiles().size() - 1);
+            int fx0 = last[0] + tx, fz0 = last[1] + tz; // 門框（開口後一格的牆）
+            if (p.at(fx0, fz0) != WALL) continue;
+            List<int[]> sides = new ArrayList<>();
+            for (int sgn : new int[]{1, -1}) sides.add(new int[]{fx0 + ax * sgn, fz0 + az * sgn, sgn});
+            Collections.shuffle(sides, rnd);
+            for (int[] c : sides) {
+                Room r = p.room(c[0], c[1]);
+                if (r == null || r.hideout) continue;
+                int k = key(c[0], c[1]);
+                if (p.reserved.contains(k) || p.blocked.contains(k) || p.occupied(c[0], c[1])) continue;
+                // 櫃子往房間裡那一格要能站人（推的時候站那裡）
+                if (p.at(c[0] + ax * c[2], c[1] + az * c[2]) != r.id) continue;
+                put(p, c[0], c[1], stack(CABINET, CABINET));
+                p.reserved.add(key(c[0] + ax * c[2], c[1] + az * c[2]));
+                p.topple.put(o, new int[]{c[0], c[1]});
+                break;
+            }
         }
     }
 
@@ -1031,6 +1085,19 @@ final class IrregularGenerator {
             case OPEN_OFFICE -> desks(p, r, bb, false, false);
             case CUBICLES -> desks(p, r, bb, true, false);
             case SECURITY -> {
+                // 終端機（門禁卡授權）：靠牆，前面一格要空著
+                List<int[]> tc = new ArrayList<>();
+                for (int[] t : r.tiles) {
+                    int[] d = wallSide(p, r, t[0], t[1]);
+                    if (d == null || !free(p, r, t[0], t[1]) || !free(p, r, t[0] - d[0], t[1] - d[1])) continue;
+                    tc.add(new int[]{t[0], t[1], d[0], d[1]});
+                }
+                if (!tc.isEmpty()) {
+                    int[] t = tc.get(rnd.nextInt(tc.size()));
+                    put(p, t[0], t[1], bd(TERMINAL));
+                    p.reserved.add(key(t[0] - t[2], t[1] - t[3]));
+                    p.terminals.add(new int[]{t[0], t[1]});
+                }
                 desks(p, r, bb, false, true);
                 for (int[] t : r.tiles)
                     if (ring(p, r, t[0], t[1]) && wallSide(p, r, t[0], t[1]) != null && rnd.nextInt(5) == 0 && free(p, r, t[0], t[1]))
@@ -1380,6 +1447,7 @@ final class IrregularGenerator {
                 b.containers.add(pos);
             }
             for (int[] t : p.power) b.powerCandidates.add(at(f, t[0], 0, t[1]));
+            for (int[] t : p.terminals) b.securityTerminals.add(at(f, t[0], 0, t[1]));
             // 燈、蜘蛛網
             for (Room r : p.rooms.values()) {
                 if (r.hideout) continue;
@@ -1443,8 +1511,8 @@ final class IrregularGenerator {
         Room a = p.rooms.get(o.neg()), c = p.rooms.get(o.pos());
         List<Pos> lower = new ArrayList<>();
         for (int[] t : o.tiles()) lower.add(at(f, t[0], 0, t[1]));
-        boolean ghost = a.type == RoomType.GHOST_ROOM || c.type == RoomType.GHOST_ROOM;
-        if (ghost) {
+        int kind = p.kind.getOrDefault(o, DOOR_SPECIAL);
+        if (kind == DOOR_BARS) {
             for (Pos q : lower)
                 for (int dy = 0; dy <= 2; dy++) {
                     map.set(q.add(0, dy, 0), Material.IRON_BARS);
@@ -1455,9 +1523,8 @@ final class IrregularGenerator {
         // 告示牌：門口旁邊，寫另一邊的房間名稱（走廊那邊不寫）
         sign(map, p, o, true, c);
         sign(map, p, o, false, a);
-        boolean special = a.type == RoomType.STAIRWELL || c.type == RoomType.STAIRWELL || a.type == RoomType.JAIL || c.type == RoomType.JAIL;
         BlockFace facing = o.xn() ? BlockFace.EAST : BlockFace.SOUTH;
-        if (!special && rnd.nextDouble() < s.doorChance()) {
+        if (kind == DOOR_DOUBLE) {
             BlockFace left = facing == BlockFace.EAST ? BlockFace.NORTH : BlockFace.EAST;
             Pos p0 = lower.get(0), p1 = lower.get(1);
             int dot = (p1.x() - p0.x()) * left.getModX() + (p1.z() - p0.z()) * left.getModZ();
@@ -1467,7 +1534,7 @@ final class IrregularGenerator {
             return;
         }
         for (Pos q : lower) for (int dy = 0; dy <= 2; dy++) map.set(q.add(0, dy, 0), Material.AIR);
-        if (!special) {
+        if (kind == DOOR_OPEN) {
             List<Pos> blocks = new ArrayList<>();
             for (Pos q : lower) {
                 blocks.add(q);
@@ -1475,6 +1542,12 @@ final class IrregularGenerator {
                 map.set(q, RoomBuilder.BARRICADE_MARK);
             }
             b.barricadeSpots.add(new Building.BarricadeSpot(blocks, lower));
+            int[] cab = p.topple.get(o);
+            if (cab != null) {
+                Map<Pos, BlockData> blocksOf = new HashMap<>();
+                for (int dy = 0; dy <= 1; dy++) blocksOf.put(at(f, cab[0], dy, cab[1]), bd(CABINET));
+                b.toppleSpots.add(new Building.ToppleSpot(blocksOf, b.barricadeSpots.size() - 1));
+            }
         }
     }
 
@@ -1631,6 +1704,14 @@ final class IrregularGenerator {
             if (!ok) errors.add((g.floor() + 1) + "F 大門讀卡機走不到");
         }
         if (b.ghostRoom == null) errors.add("沒有鬼房");
+        int terminals = 0;
+        for (Pos t : b.securityTerminals) {
+            for (int[] d : DIRS) if (reach.contains(t.add(d[0], 0, d[1]))) {
+                terminals++;
+                break;
+            }
+        }
+        if (terminals < b.securityRooms.size()) errors.add("保全室的終端機走不到（" + terminals + "/" + b.securityRooms.size() + "）");
         if (errors.isEmpty()) {
             for (Plan p : plans) {
                 int f = p.f;

@@ -67,6 +67,8 @@ final class Objectives {
     private long nextReveal = Long.MAX_VALUE;
     long revealUntil = -1;
     private boolean movedThisReveal;
+    /** 已經在保全室授權過的門禁卡編號。 */
+    final Set<Integer> authorized = new HashSet<>();
     /** 亮起期間標出門禁卡箱子的發光方塊（只有鬼看得到，外框會穿牆）。 */
     private final Map<Pos, BlockDisplay> markers = new HashMap<>();
 
@@ -218,9 +220,10 @@ final class Objectives {
             int n = Integer.parseInt(c.substring(Items.KEYCARD.length()));
             content.remove(pos);
             searched.add(pos);
-            p.getInventory().addItem(Items.keycard(n));
+            p.getInventory().addItem(Items.keycard(n, !authRequired() || authorized.contains(n)));
             p.showTitle(Title.title(Component.text("找到門禁卡！", NamedTextColor.AQUA),
-                    Component.text("拿去大門旁的讀卡機刷（要先開電源）", NamedTextColor.GRAY)));
+                    Component.text(authRequired() && !authorized.contains(n) ? "先拿到保全室的終端機授權，再去大門刷"
+                            : "拿去大門旁的讀卡機刷（要先開電源）", NamedTextColor.GRAY)));
             p.playSound(p.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1f, 1.2f);
             m.survivorMessage(p.getName() + " 找到了門禁卡 #" + n + "。", NamedTextColor.AQUA);
             m.stat("firstCardAt", m.tick / 20, false);
@@ -467,12 +470,16 @@ final class Objectives {
             p.sendActionBar(Component.text("要門禁卡才能刷", NamedTextColor.GRAY));
             return;
         }
+        if (usableCard(p) == 0) {
+            p.sendActionBar(Component.text("這張卡還沒授權：先拿到保全室的終端機授權", NamedTextColor.GRAY));
+            return;
+        }
         if (!powerOn) {
             p.sendActionBar(Component.text("讀卡機沒電，先去電力室開總電源", NamedTextColor.GRAY));
             return;
         }
         m.acts.start(p, "gate:" + gs.index, "刷卡", o.swipe(), false, true, at, () -> {
-            int n = Items.keycardOn(p);
+            int n = usableCard(p);
             if (n == 0) return;
             Items.take(p, Items.KEYCARD + n);
             gs.unlocked = true;
@@ -559,6 +566,8 @@ final class Objectives {
     List<String> selfTestReport() {
         List<String> out = new ArrayList<>();
         out.add("總電源拉桿：" + (lever == null ? "沒有（找不到牆）" : lever + " → " + m.block(lever).getType()));
+        out.add("保全室終端機 " + b.securityTerminals.size() + " 台（" + (authRequired() ? "門禁卡要授權" : "不用授權") + "）｜可推倒的櫃子 "
+                + b.toppleSpots.size() + " 個｜雙開門 " + b.doors.size() / 2 + " 組（可以卡門）"); 
         long cards = content.values().stream().filter(c -> c.startsWith(Items.KEYCARD)).count();
         Map<String, Integer> items = new HashMap<>();
         for (String c : content.values()) if (!c.startsWith(Items.KEYCARD)) items.merge(Items.label(c), 1, Integer::sum);
@@ -652,6 +661,60 @@ final class Objectives {
     String ghostHud(Player g) {
         if (m.tick <= revealUntil) return "門禁卡亮起：" + cardDirections(g) + (movedThisReveal ? "（這次已搬過）" : "（拿搬卡右鍵）");
         return "下次門禁卡亮起：" + Math.max(0, (nextReveal - m.tick) / 20) + " 秒" + (powerOn ? "" : "｜停電中");
+    }
+
+    // =====================================================================
+    // 門禁卡授權（保全室的終端機）
+    // =====================================================================
+
+    /** 要不要授權：設定打開而且大樓有保全室終端機（舊的九宮格大樓沒有）。 */
+    boolean authRequired() {
+        return o.requireAuth() && !b.securityTerminals.isEmpty();
+    }
+
+    /** 身上可以刷的卡（授權過的；不用授權時任何一張）。沒有回傳 0。 */
+    int usableCard(Player p) {
+        for (int n : Items.keycardsOn(p)) if (!authRequired() || authorized.contains(n)) return n;
+        return 0;
+    }
+
+    boolean isTerminal(Block block) {
+        return b.securityTerminals.contains(pos(block));
+    }
+
+    void onTerminal(Player p, Block block) {
+        if (m.isGhost(p)) {
+            p.sendActionBar(Component.text("保全室的終端機：逃生者在這裡授權門禁卡", NamedTextColor.GRAY));
+            return;
+        }
+        if (!m.isFreeSurvivor(p)) return;
+        if (!authRequired()) {
+            p.sendActionBar(Component.text("這局門禁卡不用授權，直接去大門刷", NamedTextColor.GRAY));
+            return;
+        }
+        int n = 0;
+        for (int c : Items.keycardsOn(p)) if (!authorized.contains(c)) {
+            n = c;
+            break;
+        }
+        if (n == 0) {
+            p.sendActionBar(Component.text(Items.keycardOn(p) == 0 ? "要拿門禁卡來授權" : "你的卡已經授權過了，去大門刷", NamedTextColor.GRAY));
+            return;
+        }
+        if (!powerOn) {
+            p.sendActionBar(Component.text("終端機沒電，先去電力室開總電源", NamedTextColor.GRAY));
+            return;
+        }
+        final int card = n;
+        Location at = m.loc(pos(block)).add(0.5, 0.5, 0.5);
+        m.acts.start(p, "authorize:" + pos(block), "授權門禁卡 #" + card, o.authorize(), false, true, at, () -> {
+            if (!Items.keycardsOn(p).contains(card)) return;
+            authorized.add(card);
+            Items.replaceKeycard(p, card, true);
+            m.world.playSound(at, Sound.BLOCK_NOTE_BLOCK_CHIME, 1.5f, 1.4f);
+            m.survivorMessage(p.getName() + " 把門禁卡 #" + card + " 授權了，可以去大門刷了。", NamedTextColor.AQUA);
+            m.stat("firstAuthorizeAt", m.tick / 20, false);
+        });
     }
 
     void cleanup() {

@@ -24,6 +24,7 @@ map:
     - "....###.."
   hideouts-per-floor: 3        # 不規則大樓：每層幾個牆中暗格（只能蹲著鑽進去躲）
   crawl-tunnels-per-floor: 4   # 不規則大樓：每層幾條房間之間的鑽洞通道
+  topple-cabinet-chance: 0.45  # 不規則大樓：空門口旁邊放「可以推倒的櫃子」的機率（逃生者右鍵推倒，把門口擋住，鬼要拆）
   floor-height: 5              # 層高：樓板 1 格＋牆 4 格（樓梯 5 階，房間格至少要 8 格寬）
   floors: 3
   rooms-per-side: 3            # （grid）每層 3×3 個房間格（中間那格四面都接走廊）
@@ -39,7 +40,8 @@ ghost:
   capture-cooldown: 3          # 抓到人之後多久不能再抓
   cut-power-time: 3            # 鬼關電源要站多久（一局一次）
   attack-fatigue: 1.5          # 每揮一次手（打到或揮空）之後的疲勞時間，期間抓不到人
-  attack-fatigue-speed: 0.9    # 疲勞時的速度，是逃生者的幾倍（0.9 = 比逃生者慢 10%）
+  attack-fatigue-slow: 0.9     # 疲勞時減速多少（0.9 = 速度只剩 10%，幾乎停住）
+  break-door-jam: 2.5          # 鬼撞開被卡住的門要站多久（撞開後那扇門不能再卡）
   break-barricade: 3.5         # 鬼破壞障礙物所需時間
   widen-crawl-hole: 4          # 鬼打大蹲伏洞所需時間
 
@@ -63,6 +65,8 @@ interaction:                   # 點一下開始，站著不動等進度條；�
   power-repair: 6              # 修電源（被鬼關掉或隨機斷電）
   swipe-card: 3                # 刷卡
   restart-gate: 3              # 重新啟動故障的大門（不用卡）
+  jam-door: 1                  # 逃生者卡門（蹲下右鍵雙開門）；每扇門一局只能卡一次，卡住後誰都打不開，鬼要撞開
+  authorize-card: 5            # 在保全室的終端機授權門禁卡（會發出聲音）
   team-power-multiplier: 1.5   # 兩人一起開／修電源的速度倍率
   noise-radius: 16             # 同一層多少格內的鬼收到聲音方向（八個方向箭頭；牆不擋；不同樓層聽不到）
 
@@ -91,6 +95,7 @@ keycard:
   ghost-move-channel: 4        # 鬼搬卡要站多久；在亮起期間開始就算數，原地發動；每次亮起只能搬一張
   ghost-moves-per-card: 1
   decoy-locked-containers: 3   # 另外放幾個裝普通道具的上鎖箱
+  require-authorization: true  # 門禁卡要先拿到保全室的終端機授權才能刷（大樓沒有保全室時自動關掉）
 
 gate:
   count: 2                     # 大門數量，位置每局隨機

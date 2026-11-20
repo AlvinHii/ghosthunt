@@ -7,7 +7,7 @@ import java.util.List;
 /** 對局用的數值，全部從 config.yml 讀（秒換成 tick）。 */
 public record GameSettings(
         int releaseDelay, List<Double> ghostSpeedBySurvivors, int captureCooldown, int breakBarricade,
-        int attackFatigue, double fatigueSpeed,
+        int attackFatigue, double fatigueSlow,
         int dashDuration, double dashBonus, int dashCooldown,
         List<Integer> rescueBySurvivors, double campRadius, int campTime, int campRescue, int campRecover,
         int rescueBoostTime, double rescueBoostBonus, int rescueProtection, int maxCaptures,
@@ -26,7 +26,7 @@ public record GameSettings(
         if (rescue.isEmpty()) rescue = List.of(4, 5, 6);
         return new GameSettings(
                 t(c, "ghost.release-delay", 30), speed, t(c, "ghost.capture-cooldown", 3), t(c, "ghost.break-barricade", 3.5),
-                t(c, "ghost.attack-fatigue", 1.5), c.getDouble("ghost.attack-fatigue-speed", 0.9),
+                t(c, "ghost.attack-fatigue", 1.5), c.getDouble("ghost.attack-fatigue-slow", 0.9),
                 t(c, "survivor.dash-duration", 1.5), c.getDouble("survivor.dash-speed-bonus", 0.5), t(c, "survivor.dash-cooldown", 45),
                 rescue, c.getDouble("jail.camp-radius", 12), t(c, "jail.camp-time", 10), t(c, "jail.camp-rescue-time", 2),
                 t(c, "jail.camp-recover-time", 10),

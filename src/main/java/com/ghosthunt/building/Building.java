@@ -32,8 +32,19 @@ public final class Building {
     public final List<Room> rooms = new ArrayList<>();
     /** 每層的平面圖（俯視圖用）：一格一個字元。 */
     public final Map<Integer, List<String>> plans = new HashMap<>();
-    /** 保全室中心（之後門禁卡授權用）。 */
+    /** 保全室中心。 */
     public final List<Pos> securityRooms = new ArrayList<>();
+    /** 保全室的終端機（門禁卡授權用）。 */
+    public final List<Pos> securityTerminals = new ArrayList<>();
+
+    /**
+     * 可以推倒的櫃子：blocks 是櫃子本身（2 格高）和原本的方塊，barricade 是推倒後擋住的門口（b.barricadeSpots 的編號）。
+     */
+    public record ToppleSpot(Map<Pos, org.bukkit.block.data.BlockData> blocks, int barricade) {}
+
+    public final List<ToppleSpot> toppleSpots = new ArrayList<>();
+    /** 雙開門原本的方塊（上下兩半，關著的），每局開始時復原。 */
+    public final Map<Pos, org.bukkit.block.data.BlockData> doorBlocks = new HashMap<>();
 
     /** 可以放障礙物的門口：blocks 是放障礙物時要填滿的 4 格，markers 是地上的黃色記號。 */
     public record BarricadeSpot(List<Pos> blocks, List<Pos> markers) {}

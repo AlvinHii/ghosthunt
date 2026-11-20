@@ -103,6 +103,12 @@ public final class Match {
     private long lastHoleMsg;
     /** 障礙物：門口編號 → 是否已放。 */
     private final Map<Integer, Boolean> barricaded = new HashMap<>();
+    /** 已經推倒的櫃子（b.toppleSpots 的編號）。 */
+    private final java.util.Set<Integer> toppled = new java.util.HashSet<>();
+    /** 雙開門：下半部 → 旁邊那扇的下半部。 */
+    private final Map<Pos, Pos> doorPair = new HashMap<>();
+    /** 被卡住的門（下半部）、這局已經卡過的門。 */
+    private final java.util.Set<Pos> jammed = new java.util.HashSet<>(), jamUsed = new java.util.HashSet<>();
     final Nightmare nightmare;
     final ObjectiveSettings o;
     final Interactions acts;
@@ -206,18 +212,21 @@ public final class Match {
         String[] survivorLines = {
                 "【逃生者】目標：從大門逃出去",
                 "1. 到電力室開總電源（右鍵拉桿，站 " + o.powerOn() / 20 + " 秒；兩個人一起更快）",
-                "2. 翻木桶找門禁卡（共 " + nCards + " 張），拿去大門旁的讀卡機（磁石）刷，大門倒數 " + o.openCountdown() / 20 + " 秒後打開",
+                obj.authRequired()
+                        ? "2. 翻木桶找門禁卡（共 " + nCards + " 張），先拿到保全室的終端機授權（右鍵，站 " + o.authorize() / 20 + " 秒，要有電），再去大門旁的讀卡機（磁石）刷，大門倒數 " + o.openCountdown() / 20 + " 秒後打開"
+                        : "2. 翻木桶找門禁卡（共 " + nCards + " 張），拿去大門旁的讀卡機（磁石）刷，大門倒數 " + o.openCountdown() / 20 + " 秒後打開",
                 "3. 穿過打開的大門就算逃出",
                 "操作：右鍵木桶／拉桿／讀卡機 → 站著不動等進度條｜F 衝刺｜蹲下鑽牆上的小洞（鬼過不去）",
-                "障礙物：拿著右鍵門口的黃色地毯｜被抓會關進監獄，隊友站在籠子旁邊就能救｜第 " + s.maxCaptures() + " 次被抓淘汰",
+                "障礙物：拿著右鍵門口的黃色地毯｜門口旁邊的深色木頭櫃子：右鍵推倒擋住門口｜蹲下右鍵雙開門：卡門（每扇一次）",
+                "被抓會關進監獄，隊友站在籠子旁邊就能救｜第 " + s.maxCaptures() + " 次被抓淘汰",
                 "注意：翻箱子、開電源會發出聲音，附近的鬼會知道方向"};
         String[] ghostLines = {
                 "【鬼】目標：把逃生者抓進監獄（鬼房 " + s.releaseDelay() / 20 + " 秒後打開）",
-                "左鍵打到就抓到；每揮一次手會疲勞一下（變慢、抓不到人）",
+                "左鍵打到就抓到；每揮一次手（揮空也算）" + s.attackFatigue() / 20.0 + " 秒內幾乎走不動、抓不到人，要看準再揮",
                 "畫面下方的箭頭 = 附近逃生者做事的聲音方向",
                 "右鍵拉桿可以關一次電源；右鍵倒數中的讀卡機可以弄壞大門（每扇一次）",
                 "門禁卡位置每 " + o.revealInterval() / 20 + " 秒亮一次：拿「搬卡」右鍵，把卡搬走並鎖起來",
-                "右鍵障礙物可以拆掉；右鍵牆上的小洞可以打大",
+                "右鍵障礙物、推倒的櫃子可以拆掉；右鍵卡住的門可以撞開；右鍵牆上的小洞可以打大",
                 nightmare != null ? "夢魘：拿「熄燈」右鍵關掉整棟的燈，熄燈時看得到附近逃生者的軌跡" : ""};
         for (Player p : survivorPlayers()) for (String l : survivorLines) p.sendMessage(Component.text(l, NamedTextColor.GREEN));
         if (g != null) for (String l : ghostLines) if (!l.isEmpty()) g.sendMessage(Component.text(l, NamedTextColor.RED));
@@ -252,6 +261,16 @@ public final class Match {
         for (Building.CrawlHole h : b.crawlHoles) {
             block(h.lower()).setType(Material.AIR, false);
             block(h.slab()).setBlockData(h.slabData(), false);
+        }
+        for (Building.ToppleSpot t : b.toppleSpots)
+            for (Map.Entry<Pos, BlockData> e : t.blocks().entrySet()) block(e.getKey()).setBlockData(e.getValue(), false);
+        for (Map.Entry<Pos, BlockData> e : b.doorBlocks.entrySet()) block(e.getKey()).setBlockData(e.getValue(), false);
+        java.util.Set<Pos> doorSet = new java.util.HashSet<>(b.doors);
+        for (Pos d : b.doors) {
+            for (int[] dd : new int[][]{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
+                Pos o2 = d.add(dd[0], 0, dd[1]);
+                if (doorSet.contains(o2)) doorPair.put(d, o2);
+            }
         }
         setLights(s.emergencyLight());
         applyFog("off"); // 世界本身不放霧（鬼看不到霧），霧只用封包送給逃生者
@@ -397,7 +416,7 @@ public final class Match {
         return best;
     }
 
-    /** 鬼揮一次手（打到或揮空都算）：接下來一段時間變得比逃生者慢。疲勞中再揮不會延長。 */
+    /** 鬼揮一次手（打到或揮空都算）：接下來一段時間大幅減速（預設只剩 10%）。疲勞中再揮不會延長。 */
     public void onGhostSwing() {
         if (!released || tick < fatigueUntil) return;
         fatigueUntil = tick + s.attackFatigue();
@@ -409,9 +428,9 @@ public final class Match {
         AttributeInstance sp = g.getAttribute(Attribute.MOVEMENT_SPEED);
         sp.removeModifier(FATIGUE_KEY);
         if (want) {
-            // 鬼平常是逃生者的 (1 + bonus) 倍；加上這個之後變成 fatigueSpeed 倍
-            sp.addTransientModifier(new AttributeModifier(FATIGUE_KEY, s.fatigueSpeed() - 1 - ghostBonus,
-                    AttributeModifier.Operation.ADD_SCALAR));
+            // 最後再乘上 (1 - fatigueSlow)：0.9 = 速度只剩 10%
+            sp.addTransientModifier(new AttributeModifier(FATIGUE_KEY, -s.fatigueSlow(),
+                    AttributeModifier.Operation.MULTIPLY_SCALAR_1));
         }
         fatigueApplied = want;
     }
@@ -550,14 +569,9 @@ public final class Match {
         }
         if (barricaded.getOrDefault(idx, false)) return true;
         Building.BarricadeSpot spot = b.barricadeSpots.get(idx);
-        for (Pos q : spot.blocks()) {
-            org.bukkit.util.BoundingBox box = org.bukkit.util.BoundingBox.of(block(q));
-            for (Player other : world.getPlayers()) {
-                if (other.getGameMode() != GameMode.SPECTATOR && other.getBoundingBox().overlaps(box)) {
-                    p.sendActionBar(Component.text("門口有人，放不下去", NamedTextColor.GRAY));
-                    return true;
-                }
-            }
+        if (doorwayOccupied(spot)) {
+            p.sendActionBar(Component.text("門口有人，放不下去", NamedTextColor.GRAY));
+            return true;
         }
         for (Pos q : spot.blocks()) block(q).setType(Material.SPRUCE_PLANKS, false);
         barricaded.put(idx, true);
@@ -566,6 +580,147 @@ public final class Match {
         world.playSound(clicked.getLocation(), Sound.BLOCK_WOOD_BREAK, 1.5f, 0.8f);
         p.sendActionBar(Component.text("門口擋起來了", NamedTextColor.GOLD));
         return true;
+    }
+
+    /** 門口有沒有人（放障礙物、推倒櫃子前檢查，免得把人卡在裡面）。 */
+    private boolean doorwayOccupied(Building.BarricadeSpot spot) {
+        for (Pos q : spot.blocks()) {
+            org.bukkit.util.BoundingBox box = org.bukkit.util.BoundingBox.of(block(q));
+            for (Player other : world.getPlayers()) {
+                if (other.getGameMode() != GameMode.SPECTATOR && other.getBoundingBox().overlaps(box)) return true;
+            }
+        }
+        return false;
+    }
+
+    // ---- 推倒櫃子 ----
+
+    private int toppleAt(Block clicked) {
+        Pos p = new Pos(clicked.getX(), clicked.getY(), clicked.getZ());
+        for (int i = 0; i < b.toppleSpots.size(); i++) if (b.toppleSpots.get(i).blocks().containsKey(p)) return i;
+        return -1;
+    }
+
+    /**
+     * 逃生者右鍵門口旁邊的櫃子：馬上推倒，把門口擋住（跟障礙物一樣，鬼要花時間拆）。每個櫃子一局一次。
+     * 回傳 true 表示點到的是櫃子（事件要取消）。
+     */
+    public boolean tryTopple(Player p, Block clicked) {
+        if (clicked == null) return false;
+        int i = toppleAt(clicked);
+        if (i < 0 || toppled.contains(i)) return false;
+        if (!isFreeSurvivor(p)) return true;
+        Building.ToppleSpot t = b.toppleSpots.get(i);
+        int idx = t.barricade();
+        if (barricaded.getOrDefault(idx, false)) {
+            p.sendActionBar(Component.text("門口已經擋住了", NamedTextColor.GRAY));
+            return true;
+        }
+        Building.BarricadeSpot spot = b.barricadeSpots.get(idx);
+        if (doorwayOccupied(spot)) {
+            p.sendActionBar(Component.text("門口有人，推不下去", NamedTextColor.GRAY));
+            return true;
+        }
+        for (Pos q : t.blocks().keySet()) block(q).setType(Material.AIR, false);
+        for (Pos q : spot.blocks()) {
+            org.bukkit.block.data.Orientable log = (org.bukkit.block.data.Orientable) Bukkit.createBlockData(Material.STRIPPED_DARK_OAK_LOG);
+            Pos a0 = spot.blocks().get(0), a1 = spot.blocks().get(spot.blocks().size() - 1);
+            log.setAxis(a0.x() != a1.x() ? org.bukkit.Axis.X : org.bukkit.Axis.Z);
+            block(q).setBlockData(log, false);
+        }
+        barricaded.put(idx, true);
+        toppled.add(i);
+        Location at = loc(spot.blocks().get(0));
+        world.playSound(at, Sound.ENTITY_ZOMBIE_BREAK_WOODEN_DOOR, 3f, 0.7f);
+        world.playSound(at, Sound.BLOCK_WOOD_BREAK, 2f, 0.6f);
+        noise(at);
+        p.sendActionBar(Component.text("把櫃子推倒，門口擋住了！", NamedTextColor.GOLD));
+        stats.merge("toppled", 1, (x, y) -> (Integer) x + (Integer) y);
+        return true;
+    }
+
+    // ---- 卡門 ----
+
+    /**
+     * 有人右鍵雙開門。回傳 true 表示要取消原版的開關門。
+     * 逃生者蹲下右鍵：站著卡門（兩扇一起關上卡住，誰都打不開；每扇門一局一次）。
+     * 卡住的門：鬼右鍵撞開（很大聲），逃生者蹲下右鍵可以自己拆掉。
+     */
+    public boolean onDoor(Player p, Block clicked) {
+        if (clicked == null || !org.bukkit.Tag.DOORS.isTagged(clicked.getType())) return false;
+        Pos lower = new Pos(clicked.getX(), clicked.getY(), clicked.getZ());
+        if (clicked.getBlockData() instanceof org.bukkit.block.data.Bisected bi && bi.getHalf() == org.bukkit.block.data.Bisected.Half.TOP)
+            lower = lower.add(0, -1, 0);
+        if (!b.doorBlocks.containsKey(lower)) return false;
+        final Pos door = lower;
+        Pos other = doorPair.get(door);
+        Location at = loc(door).add(0.5, 1, 0.5);
+        String key = "door:" + Math.min(door.hashCode(), other == null ? Integer.MAX_VALUE : other.hashCode());
+        if (jammed.contains(door)) {
+            if (isGhost(p)) {
+                if (!released) return true;
+                Interactions.Act a = acts.startAct(p, key, "撞開卡住的門", o.breakJam(), false, false, at, () -> {
+                    setJam(door, other, false);
+                    setDoorOpen(door, true);
+                    if (other != null) setDoorOpen(other, true);
+                    world.playSound(at, Sound.ENTITY_ZOMBIE_BREAK_WOODEN_DOOR, 6f, 0.8f);
+                });
+                if (a != null) a.onTick = () -> {
+                    if (tick % 10 == 0) world.playSound(at, Sound.ENTITY_ZOMBIE_ATTACK_WOODEN_DOOR, 6f, 0.9f);
+                };
+                return true;
+            }
+            if (isFreeSurvivor(p) && p.isSneaking()) {
+                acts.start(p, key, "拆掉卡門", o.jamDoor(), false, false, at, () -> {
+                    setJam(door, other, false);
+                    world.playSound(at, Sound.BLOCK_CHAIN_BREAK, 1.5f, 1f);
+                });
+            } else {
+                p.sendActionBar(Component.text("門被卡住了" + (isGhost(p) ? "" : "（蹲下右鍵可以拆掉）"), NamedTextColor.GRAY));
+            }
+            return true;
+        }
+        if (!isFreeSurvivor(p) || !p.isSneaking()) return false;
+        if (jamUsed.contains(door)) {
+            p.sendActionBar(Component.text("這扇門已經卡過了，卡不住了", NamedTextColor.GRAY));
+            return true;
+        }
+        acts.start(p, key, "卡門", o.jamDoor(), false, false, at, () -> {
+            for (Player q : world.getPlayers()) {
+                if (q.getGameMode() == GameMode.SPECTATOR) continue;
+                if (q.getBoundingBox().overlaps(org.bukkit.util.BoundingBox.of(block(door)))
+                        || other != null && q.getBoundingBox().overlaps(org.bukkit.util.BoundingBox.of(block(other)))) {
+                    p.sendActionBar(Component.text("門口有人，卡不住", NamedTextColor.GRAY));
+                    return;
+                }
+            }
+            setDoorOpen(door, false);
+            if (other != null) setDoorOpen(other, false);
+            setJam(door, other, true);
+            world.playSound(at, Sound.BLOCK_CHAIN_PLACE, 1.5f, 0.8f);
+            p.sendActionBar(Component.text("門卡住了！鬼要花時間撞開", NamedTextColor.GOLD));
+            stats.merge("doorsJammed", 1, (x, y) -> (Integer) x + (Integer) y);
+        });
+        return true;
+    }
+
+    private void setJam(Pos door, Pos other, boolean on) {
+        for (Pos d : other == null ? List.of(door) : List.of(door, other)) {
+            if (on) {
+                jammed.add(d);
+                jamUsed.add(d);
+            } else jammed.remove(d);
+        }
+    }
+
+    private void setDoorOpen(Pos lower, boolean open) {
+        for (int dy = 0; dy <= 1; dy++) {
+            Block bl = block(lower.add(0, dy, 0));
+            if (bl.getBlockData() instanceof org.bukkit.block.data.type.Door d) {
+                d.setOpen(open);
+                bl.setBlockData(d, false);
+            }
+        }
     }
 
     /** 鬼右鍵障礙物開始拆。回傳 true 表示有處理。 */

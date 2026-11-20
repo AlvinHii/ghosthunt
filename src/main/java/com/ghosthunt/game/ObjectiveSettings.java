@@ -23,7 +23,9 @@ record ObjectiveSettings(
         double smokeRadius, int smokeBlind, double speedBonus, int speedDuration,
         double flashRange, double flashAngle, int flashBattery, int flashDisrupt, int scannerDuration,
         // 蹲伏破洞
-        int widenHole) {
+        int widenHole,
+        // 卡門、門禁卡授權
+        int jamDoor, int breakJam, int authorize, boolean requireAuth) {
 
     private static int t(FileConfiguration c, String path, double def) {
         return (int) Math.round(c.getDouble(path, def) * 20);
@@ -59,7 +61,9 @@ record ObjectiveSettings(
                 c.getDouble("items.speed-potion-bonus", 0.4), t(c, "items.speed-potion-duration", 5),
                 c.getDouble("items.flashlight-range", 8), c.getDouble("items.flashlight-angle", 30),
                 t(c, "items.flashlight-battery", 20), t(c, "items.flashlight-disrupt", 5), t(c, "items.scanner-duration", 5),
-                t(c, "ghost.widen-crawl-hole", 4));
+                t(c, "ghost.widen-crawl-hole", 4),
+                t(c, "interaction.jam-door", 1), t(c, "ghost.break-door-jam", 2.5), t(c, "interaction.authorize-card", 5),
+                c.getBoolean("keycard.require-authorization", true));
     }
 
     int maxOf(String itemId) {

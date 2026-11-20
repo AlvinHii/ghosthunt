@@ -50,8 +50,35 @@ public final class Items {
     }
 
     public static ItemStack keycard(int n) {
-        return make(Material.TRIAL_KEY, KEYCARD + n, "門禁卡 #" + n, NamedTextColor.AQUA,
+        return keycard(n, true);
+    }
+
+    /** authorized = false：還沒到保全室授權的卡。 */
+    public static ItemStack keycard(int n, boolean authorized) {
+        if (!authorized) {
+            return make(Material.TRIAL_KEY, KEYCARD + n, "門禁卡 #" + n + "（未授權）", NamedTextColor.GRAY,
+                    "先拿到保全室的終端機授權（右鍵、站著等，要有電）", "授權後才能在大門旁的讀卡機刷");
+        }
+        return make(Material.OMINOUS_TRIAL_KEY, KEYCARD + n, "門禁卡 #" + n + "（已授權）", NamedTextColor.AQUA,
                 "拿著它右鍵大門旁的讀卡機（要先開電源）", "刷了就會用掉");
+    }
+
+    /** 把玩家身上的門禁卡 #n 換成授權過／沒授權的樣子。 */
+    public static void replaceKeycard(Player p, int n, boolean authorized) {
+        ItemStack[] contents = p.getInventory().getContents();
+        for (int i = 0; i < contents.length; i++) {
+            if ((KEYCARD + n).equals(id(contents[i]))) p.getInventory().setItem(i, keycard(n, authorized));
+        }
+    }
+
+    /** 玩家身上所有門禁卡的編號。 */
+    public static List<Integer> keycardsOn(Player p) {
+        List<Integer> out = new java.util.ArrayList<>();
+        for (ItemStack it : p.getInventory().getContents()) {
+            String id = id(it);
+            if (id != null && id.startsWith(KEYCARD)) out.add(Integer.parseInt(id.substring(KEYCARD.length())));
+        }
+        return out;
     }
 
     public static ItemStack of(String id) {
