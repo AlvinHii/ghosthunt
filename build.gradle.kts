@@ -12,6 +12,14 @@ repositories {
 
 dependencies {
     compileOnly("io.papermc.paper:paper-api:26.3.build.+")
+    // 單元測試：只測不碰伺服器的純邏輯（例如 AI 鬼的大腦）
+    testImplementation("io.papermc.paper:paper-api:26.3.build.+")
+    testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
 
 // 用本機已安裝的 JDK（26）編譯，輸出 Java 25 位元組碼，符合 Paper 26.3 的最低需求
