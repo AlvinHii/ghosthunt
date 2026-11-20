@@ -1,0 +1,8 @@
+.gradle/
+build/
+test-server/
+!test-server/eula.txt
+*.iml
+.idea/
+__pycache__/
+*.pyc

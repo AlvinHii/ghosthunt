@@ -1,0 +1,121 @@
+# 鬼抓人：大樓逃生 設定檔（企劃書 v3.1）
+# 數值都要實際玩過才知道對不對，改完用 /ghosthunt reload 重新載入
+# 時間單位：秒；距離單位：格；「依人數」的值依序是 3 / 4 / 5 個逃生者
+
+map:
+  world: ghosthunt_arena       # 遊戲用的虛空世界（沒有會自動建立）
+  origin: {x: 0, y: 64, z: 0}  # 大樓西北角的位置
+  blocks-per-tick: 4000        # 蓋大樓時每 tick 放幾個方塊（太大會卡）
+  door-chance: 0.5            # 一般房間的門口有多少機率是雙開門（其他是可以放障礙物的空門口）
+  crawl-hole-chance: 0.4       # 一般房間有多少機率多一個蹲伏破洞（逃生者蹲下鑽得過，鬼過不去）
+  corridor-clutter: 0.06       # 走廊地上雜物的密度（每格放的機率）；走廊天花板另有通風管
+  fog-distance: "off"          # 平常的霧：off 或 4/6/8/12/16/24/32/48（幾格外完全看不見）
+  normal-light-level: 10       # 電源開著時的燈光亮度（0～15）
+  emergency-light-level: 1     # 緊急照明亮度（0～15）；實測 4 以下看起來差不多，先用 1
+  floor-height: 5              # 層高：樓板 1 格＋牆 4 格（樓梯 5 階，房間格至少要 8 格寬）
+  floors: 3
+  rooms-per-side: 3            # 每層 3×3 個房間格（中間那格四面都接走廊）
+  room-size: 20                # 每個房間格 20×20（內部 18×18，平面圖見 docs/房間設計v2.md），整層 68×68
+  corridor-layout: grid        # 井字走廊：第 1、2 排和第 3、4 排房間格之間各一條（整層 38×38，待實際看過再定）
+  corridor-width: 3
+  stairwells-per-floor: 2      # 放在對角兩端
+  max-dead-ends-per-floor: 2   # 生成後檢查：每層最多幾條死路
+
+ghost:
+  release-delay: 30            # 鬼開局被關在鬼房的時間
+  speed-bonus-by-survivors: [0.03, 0.05, 0.07]  # 鬼比逃生者快多少，依人數；開局決定，整場不變
+  capture-cooldown: 3          # 抓到人之後多久不能再抓
+  cut-power-time: 3            # 鬼關電源要站多久（一局一次）
+  attack-fatigue: 1.5          # 每揮一次手（打到或揮空）之後的疲勞時間，期間抓不到人
+  attack-fatigue-speed: 0.9    # 疲勞時的速度，是逃生者的幾倍（0.9 = 比逃生者慢 10%）
+  break-barricade: 3.5         # 鬼破壞障礙物所需時間
+  widen-crawl-hole: 4          # 鬼打大蹲伏洞所需時間
+
+movement:
+  allow-jump: false            # 逃生者和鬼都不能跳
+  allow-sprint: true
+
+survivor:
+  dash-duration: 1.5           # 緊急衝刺（F 鍵）持續時間
+  dash-speed-bonus: 0.5        # 衝刺速度 +50%（不跟其他加速疊加，取最高）
+  dash-cooldown: 45            # 緊急衝刺冷卻
+  coop-max-players: 2          # 合作開／修電源最多算幾人
+  coop-radius: 3
+
+interaction:                   # 點一下開始，站著不動等進度條；走動超過半格、被抓、開背包會中斷
+  cancel-move-distance: 0.5
+  search-container: 2          # 翻容器
+  pry-locked-container: 5      # 撬開上鎖箱
+  power-on: 5                  # 開總電源
+  power-repair: 6              # 修電源（被鬼關掉或隨機斷電）
+  swipe-card: 3                # 刷卡
+  restart-gate: 3              # 重新啟動故障的大門（不用卡）
+  team-power-multiplier: 1.5   # 兩人一起開／修電源的速度倍率
+  noise-radius: 16             # 同一層多少格內的鬼收到聲音方向（八個方向箭頭；牆不擋；不同樓層聽不到）
+
+jail:
+  per-floor: true              # 每層一間監獄，傳送到離鬼最遠的那間
+  rescue-time-by-survivors: [4, 5, 6]   # 一次救出那間監獄裡的所有人；多人一起救不加速
+  camp-radius: 12              # 鬼在監獄多少格內算守監獄（同一層、直線距離、隔牆也算；每間監獄分開算）
+  camp-time: 10                # 累計守多久後救援時間縮短
+  camp-rescue-time: 2          # 守監獄時的救援時間
+  camp-recover-time: 10        # 鬼離開多久後計時完全歸零
+  rescue-speed-boost: 3        # 被救後加速秒數
+  rescue-speed-bonus: 0.4      # 被救後加速 +40%
+  rescue-protection: 3         # 被救後不能被抓的秒數
+  max-captures: 2              # 第幾次被抓就淘汰
+  dropped-card-radius: 15      # 拿卡的人被抓，卡藏進同一層多少格內的容器（不算鬼的搬卡次數）
+
+power:
+  random-blackout-max: 1       # 一局最多幾次隨機斷電
+  random-blackout-window: [300, 600]  # 電源開啟後多久之間隨機發生
+  blackout-grace: 90           # 修好電源後多久內不會再斷電
+
+keycard:
+  count: 2                     # 刷卡會用掉卡，讀卡機保持解鎖
+  reveal-interval: 90          # 鬼每隔多久看到卡的位置
+  reveal-duration: 5           # 位置亮多久
+  ghost-move-channel: 4        # 鬼搬卡要站多久；在亮起期間開始就算數，原地發動；每次亮起只能搬一張
+  ghost-moves-per-card: 1
+  decoy-locked-containers: 3   # 另外放幾個裝普通道具的上鎖箱
+
+gate:
+  count: 2                     # 大門數量，位置每局隨機
+  min-distance: 25             # 兩扇門至少相隔多遠（且必在不同樓層）
+  open-countdown: 25           # 刷卡後開門倒數（自動跑，不用守門）
+  ghost-sabotage-time: 4       # 鬼讓大門故障要站多久（倒數回到滿，每門一次）
+
+items:
+  spawn-by-survivors:          # 地圖上生成的總數，依人數 3 / 4 / 5
+    smoke: [3, 4, 5]
+    speed-potion: [3, 4, 5]
+    flashlight: [2, 2, 3]
+    scanner: [2, 3, 3]
+    barricade: [2, 3, 4]       # 另外每人開局 1 個
+  allow-drop-to-teammates: true
+  max-carry: 1                 # 每種道具最多拿幾個
+  max-barricades: 2
+  smoke-radius: 4              # 球形，隔牆也有效
+  smoke-blind: 3
+  speed-potion-bonus: 0.4
+  speed-potion-duration: 5
+  flashlight-range: 8
+  flashlight-angle: 30         # 扇形角度，會被牆擋住
+  flashlight-battery: 20
+  flashlight-disrupt: 5        # 照到夢魘時打斷追蹤幾秒
+  scanner-duration: 5
+
+nightmare:
+  first-use-delay: 60          # 離開鬼房後多久才能第一次關燈
+  lights-out-duration: 90
+  lights-out-cooldown: 150     # 從燈亮回來開始算
+  trail-radius: 12
+  idle-hint-after: 15
+  whisper-radius: 8
+  fog-distance: "8"             # 熄燈時的霧（同 map.fog-distance 的選項）
+
+match:
+  glow-start: 900              # 15 分鐘起還沒逃出的人全部發光（監獄裡的不發光）
+  time-limit: 1020             # 17 分鐘強制結束
+  record-stats: true           # 每局結束把數據寫進記錄檔
+  # 不分勝負：場上沒有能自由行動的逃生者時立刻結束，只顯示每個人的結果
