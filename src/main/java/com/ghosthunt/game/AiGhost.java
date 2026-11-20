@@ -66,6 +66,11 @@ final class AiGhost {
 
     // ---- 走路 ----
     private Location moveTarget;
+    /** 正在爬的樓梯另一端（爬到一半時高度還算原本那層，不能重新判斷，不然會在樓梯上來回走）。 */
+    private Location stairGoal;
+    private long stairUntil, stairDoneUntil;
+    /** 這一步的速度倍率（巡邏用走的、追人用跑的）。 */
+    private double speedMul = 1.0, pathSpeed = -1;
     private int stuckCount;
     private Goal goal;
 
@@ -266,6 +271,11 @@ final class AiGhost {
 
     private void act(Goal g, Player seen) {
         Location here = mob.getLocation();
+        speedMul = switch (g.kind()) {
+            case ATTACK, CHASE -> c.chaseSpeed();
+            case SEARCH_LAST_SEEN, INVESTIGATE_NOISE, GO_SENSED, SABOTAGE_GATE -> c.searchSpeed();
+            default -> c.patrolSpeed();
+        };
         switch (g.kind()) {
             case ATTACK -> {
                 moveTo(seen.getLocation());
@@ -416,7 +426,7 @@ final class AiGhost {
     private void moveTo(Location to) {
         if (to == null) return;
         Location step = waypoint(to);
-        if (moveTarget == null || moveTarget.distance(step) > 1.5 || !mob.getPathfinder().hasPath()) {
+        if (moveTarget == null || moveTarget.distance(step) > 1.5 || !mob.getPathfinder().hasPath() || pathSpeed != speedMul) {
             if (moveTarget != null && moveTarget.distance(step) <= 1.5 && step.distance(mob.getLocation()) <= 1.5) return; // 已經到了
             moveTarget = step.clone();
             var path = mob.getPathfinder().findPath(step);
@@ -428,7 +438,8 @@ final class AiGhost {
                 if (!breakBlockerNearby() && goal != null && goal.kind() == Kind.PATROL) patrolTarget = null;
                 return;
             }
-            mob.getPathfinder().moveTo(path, 1.0);
+            mob.getPathfinder().moveTo(path, speedMul);
+            pathSpeed = speedMul;
         }
     }
 
@@ -438,6 +449,15 @@ final class AiGhost {
     }
 
     private Location waypoint(Location to) {
+        if (stairGoal != null) {
+            if (stairGoal.distance(mob.getLocation()) <= 1.5) {
+                // 爬到另一端了：站在最上面那階時腳底還差半格才算上一層，先直接走向目標 3 秒，不要又判斷成要下樓
+                stairGoal = null;
+                stairDoneUntil = m.tick + 60;
+            } else if (m.tick > stairUntil) stairGoal = null;
+            else return stairGoal;
+        }
+        if (m.tick < stairDoneUntil) return to;
         int from = floorOf(mob.getLocation()), dest = floorOf(to);
         if (from == dest) return to;
         Location here = mob.getLocation();
@@ -458,7 +478,11 @@ final class AiGhost {
         // 已經在樓梯口：目標改成樓梯另一端
         for (Pos[] link : m.b.stairLinks) {
             Pos near = dest > from ? link[0] : link[1], far = dest > from ? link[1] : link[0];
-            if (m.loc(near).distance(best) < 0.5) return m.loc(far);
+            if (m.loc(near).distance(best) < 0.5) {
+                stairGoal = m.loc(far); // 一路爬到另一端才重新判斷
+                stairUntil = m.tick + 15 * 20;
+                return stairGoal;
+            }
         }
         return to;
     }

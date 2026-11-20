@@ -81,6 +81,9 @@ ai-ghost:                      # PvE 的 AI 鬼（/gh start ai）
   check-hideout-chance: 0.4    # 追丟時去查附近暗格的機率
   follow-tunnel-chance: 0.5    # 看到人鑽進地洞時，走去通道另一端的機率
   stuck-time: 3                # 幾秒幾乎沒移動算卡住
+  chase-speed: 1.0             # 看到人追的時候的速度倍率（1.0 = base-speed，約等於跑步）
+  search-speed: 0.9            # 去聽到聲音、感應到的位置、追丟後找人、去弄壞大門
+  patrol-speed: 0.75           # 巡邏、守監獄、去關電源（約等於走路）
 
 survivor:
   dash-duration: 1.5           # 緊急衝刺（F 鍵）持續時間
