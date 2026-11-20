@@ -173,6 +173,7 @@ public final class Match {
         if (aiGhost != null) {
             // PvE：在鬼房生出 AI 鬼，鬼的 UUID 換成牠的
             holdChunks(plugin, true); // 玩家走遠時 AI 鬼也照樣會動
+            allowMonsters(true);
             org.bukkit.entity.Mob mob = aiGhost.spawn(loc(b.ghostRoomCenter));
             ghost = mob.getUniqueId();
             g = mob;
@@ -245,6 +246,7 @@ public final class Match {
      */
     private void aiPathTest(Plugin plugin, java.util.function.Consumer<String> later) {
         holdChunks(plugin, true);
+        allowMonsters(true);
         // 每層一隻（原版尋路一次找太遠會放棄；AI 鬼實際走的時候也是先走到樓梯再換層）
         List<org.bukkit.entity.Mob> mobs = new ArrayList<>();
         for (int f = 0; f < b.layout.floors; f++) mobs.add(new AiGhost(this, s.ai()).spawn(loc(b.layout.crossing(f))));
@@ -282,12 +284,31 @@ public final class Match {
             } finally {
                 mobs.forEach(org.bukkit.entity.Entity::remove);
                 holdChunks(plugin, false);
+                allowMonsters(false);
             }
         }, 20L);
     }
 
     private int floorOf(Location l) {
         return Math.max(0, Math.min(b.layout.floors - 1, (int) Math.floor((l.getY() - b.layout.floorY(0) - 1) / b.layout.floorHeight)));
+    }
+
+    private org.bukkit.Difficulty savedDifficulty;
+
+    /**
+     * 和平難度會把敵對怪物（AI 鬼的身體）一生出來就刪掉：AI 局和自我檢查期間暫時調成簡單，結束後改回來。
+     * 大樓世界本來就關掉怪物自然生成，飢餓值也鎖住，AI 鬼不會攻擊也不會受傷，所以調難度沒有副作用。
+     */
+    void allowMonsters(boolean on) {
+        if (on) {
+            if (world.getDifficulty() == org.bukkit.Difficulty.PEACEFUL) {
+                savedDifficulty = org.bukkit.Difficulty.PEACEFUL;
+                world.setDifficulty(org.bukkit.Difficulty.EASY);
+            }
+        } else if (savedDifficulty != null) {
+            world.setDifficulty(savedDifficulty);
+            savedDifficulty = null;
+        }
     }
 
     /** 把大樓範圍的區塊掛上／拿掉外掛票：沒有玩家在附近時生物也會動（AI 鬼、自我檢查用）。 */
@@ -405,7 +426,7 @@ public final class Match {
         tick++;
         LivingEntity g = ghostEntity();
         if (g == null || !g.isValid()) {
-            end("鬼離開了");
+            end(aiGhost != null ? "AI 鬼不見了（被其他插件或世界設定刪掉？）" : "鬼離開了");
             return;
         }
         if (!released && tick >= s.releaseDelay()) release();
@@ -1122,6 +1143,7 @@ public final class Match {
         if (aiGhost != null) {
             aiGhost.remove();
             holdChunks(plugin, false);
+            allowMonsters(false);
         }
         acts.cancelAll();
         obj.cleanup();
