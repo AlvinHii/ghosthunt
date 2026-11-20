@@ -20,6 +20,7 @@ public final class BuildingGenerator {
     private static final int MAX_ATTEMPTS = 20;
 
     public static Result generate(BuildingSettings s, long seed) {
+        if (s.irregular()) return IrregularGenerator.generate(s, seed);
         List<String> problems = checkSettings(s);
         if (!problems.isEmpty()) return new Result(null, null, 0, problems, List.of());
 

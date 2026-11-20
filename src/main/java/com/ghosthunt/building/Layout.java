@@ -22,6 +22,33 @@ public final class Layout {
 
     private final int[] cellStart;
     private final List<Integer> corridorStarts;
+    /** 不規則大樓：每層的起點（相對座標），檢查走不走得到、傳送都從這裡開始；九宮格大樓是 null。 */
+    private int[] start;
+
+    /** 不規則大樓：n = 0（沒有九宮格），size 是外框的邊長。 */
+    public static Layout irregular(int size, int floors, int floorHeight, int ox, int oy, int oz, int startX, int startZ) {
+        Layout L = new Layout(0, 1, 1, floors, floorHeight, ox, oy, oz, size);
+        L.start = new int[]{startX, startZ};
+        return L;
+    }
+
+    private Layout(int n, int room, int corridor, int floors, int floorHeight, int ox, int oy, int oz, int size) {
+        this.n = n;
+        this.room = room;
+        this.corridor = corridor;
+        this.floors = floors;
+        this.floorHeight = floorHeight;
+        this.ox = ox;
+        this.oy = oy;
+        this.oz = oz;
+        this.cellStart = new int[0];
+        this.corridorStarts = List.of();
+        this.size = size;
+    }
+
+    public boolean isIrregular() {
+        return start != null;
+    }
 
     public Layout(int n, int room, int corridor, int floors, int floorHeight, int ox, int oy, int oz) {
         this.n = n;
@@ -93,6 +120,7 @@ public final class Layout {
 
     /** 第一個走廊交叉口中心（走路高度）。 */
     public Pos crossing(int f) {
+        if (start != null) return rel(start[0], floorY(f) + 1, start[1]);
         int c = corridorStarts.get(0) + corridor / 2;
         return rel(c, floorY(f) + 1, c);
     }

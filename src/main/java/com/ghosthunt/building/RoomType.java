@@ -15,7 +15,8 @@ public enum RoomType {
     ELECTRICAL("電力室", "電"),
     SERVER("伺服器機房", "機"),
     COPY_ROOM("影印室", "印"),
-    TOILET("公共廁所", "廁");
+    TOILET("公共廁所", "廁"),
+    SECURITY("保全室", "保");
 
     /** 一般房間（隨機分配的那些）。 */
     public static final List<RoomType> NORMAL = List.of(

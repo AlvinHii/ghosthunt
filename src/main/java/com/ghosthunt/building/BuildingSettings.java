@@ -14,7 +14,22 @@ public record BuildingSettings(
         int gateCount, double gateMinDistance,
         int emergencyLight, int blocksPerTick,
         double doorChance, double corridorClutter, double crawlHoleChance,
-        int minContainers) {
+        int minContainers,
+        String generator, List<String> shape, int cellSize, int hideoutsPerFloor, int crawlTunnelsPerFloor) {
+
+    /** 不規則大樓的預設外型（# = 大樓範圍，. = 外面；一格 cell-size × cell-size）。 */
+    public static final List<String> DEFAULT_SHAPE = List.of(
+            "..#####..",
+            "########.",
+            "#########",
+            "########.",
+            ".########",
+            ".#######.",
+            "....###..");
+
+    public boolean irregular() {
+        return !"grid".equalsIgnoreCase(generator);
+    }
 
     public static BuildingSettings from(FileConfiguration c) {
         int cards = c.getInt("keycard.count", 2);
@@ -43,7 +58,12 @@ public record BuildingSettings(
                 c.getDouble("map.door-chance", 0.5),
                 c.getDouble("map.corridor-clutter", 0.06),
                 c.getDouble("map.crawl-hole-chance", 0.4),
-                cards + decoys + items);
+                cards + decoys + items,
+                c.getString("map.generator", "irregular"),
+                c.getStringList("map.shape").isEmpty() ? DEFAULT_SHAPE : c.getStringList("map.shape"),
+                c.getInt("map.cell-size", 10),
+                c.getInt("map.hideouts-per-floor", 3),
+                c.getInt("map.crawl-tunnels-per-floor", 4));
     }
 
     public Layout layout() {

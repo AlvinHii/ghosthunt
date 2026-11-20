@@ -263,6 +263,16 @@ public final class GhostHuntPlugin extends JavaPlugin {
             js.append(i == 0 ? "" : ",").append("[").append(posList(b, java.util.List.of(s2[0]))).append(',')
                     .append(posList(b, java.util.List.of(s2[1]))).append(']');
         }
+        js.append("],\"crawlHoles\":");
+        java.util.List<Pos> holes = new java.util.ArrayList<>();
+        for (Building.CrawlHole h : b.crawlHoles) holes.add(h.lower());
+        js.append(posList(b, holes));
+        js.append(",\"rooms\":[");
+        for (int i = 0; i < b.rooms.size(); i++) {
+            Building.Room r = b.rooms.get(i);
+            js.append(i == 0 ? "" : ",").append("{\"type\":\"").append(r.type().symbol).append("\",\"hideout\":").append(r.hideout())
+                    .append(",\"at\":").append(posList(b, java.util.List.of(r.center()))).append('}');
+        }
         js.append("]}");
         try {
             java.nio.file.Path out = getDataFolder().toPath().resolve("layouts").resolve(b.seed + ".json");
@@ -404,7 +414,21 @@ public final class GhostHuntPlugin extends JavaPlugin {
         Layout L = b.layout;
         msg(sender, "種子 " + b.seed + "｜每層 " + L.size + "×" + L.size + " 格（含外牆）｜" + L.floors + " 層｜層高 " + L.floorHeight,
                 NamedTextColor.GRAY);
-        for (int f = L.floors - 1; f >= 0; f--) {
+        if (L.isIrregular()) {
+            // 不規則大樓：每個小格中間是哪種房間（＝ 走廊、＃ 牆）
+            for (int f = L.floors - 1; f >= 0; f--) {
+                msg(sender, (f + 1) + "F（北在上）：", NamedTextColor.WHITE);
+                for (String row : b.plans.getOrDefault(f, java.util.List.of())) msg(sender, "  " + row, NamedTextColor.WHITE);
+            }
+            for (int f = 0; f < L.floors; f++) {
+                final int ff = f;
+                long rooms = b.rooms.stream().filter(r -> r.floor() == ff && !r.hideout()).count();
+                long hide = b.rooms.stream().filter(r -> r.floor() == ff && r.hideout()).count();
+                msg(sender, (f + 1) + "F：房間 " + rooms + " 間、暗格 " + hide + " 個", NamedTextColor.GRAY);
+            }
+            msg(sender, "鑽洞 " + b.crawlHoles.size() + " 個（含暗格入口）｜保全室 " + b.securityRooms.size() + " 間", NamedTextColor.GRAY);
+        }
+        for (int f = L.isIrregular() ? -1 : L.floors - 1; f >= 0; f--) {
             msg(sender, (f + 1) + "F（北在上）：", NamedTextColor.WHITE);
             for (int cz = 0; cz < L.n; cz++) {
                 StringBuilder sb = new StringBuilder("  ");

@@ -25,6 +25,16 @@ public final class Building {
 
     public final List<CrawlHole> crawlHoles = new ArrayList<>();
 
+    /** 不規則大樓的一間房間（俯視圖、/ghosthunt info 用）。tiles 是走路高度的位置。 */
+    public record Room(int floor, RoomType type, Pos center, int area, boolean hideout) {}
+
+    /** 不規則大樓的所有房間（舊的九宮格大樓是空的，用 types）。 */
+    public final List<Room> rooms = new ArrayList<>();
+    /** 每層的平面圖（俯視圖用）：一格一個字元。 */
+    public final Map<Integer, List<String>> plans = new HashMap<>();
+    /** 保全室中心（之後門禁卡授權用）。 */
+    public final List<Pos> securityRooms = new ArrayList<>();
+
     /** 可以放障礙物的門口：blocks 是放障礙物時要填滿的 4 格，markers 是地上的黃色記號。 */
     public record BarricadeSpot(List<Pos> blocks, List<Pos> markers) {}
 
