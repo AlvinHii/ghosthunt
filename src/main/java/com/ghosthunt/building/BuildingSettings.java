@@ -15,7 +15,7 @@ public record BuildingSettings(
         int emergencyLight, int blocksPerTick,
         double doorChance, double corridorClutter, double crawlHoleChance,
         int minContainers,
-        String generator, List<String> shape, int cellSize, int hideoutsPerFloor, int crawlTunnelsPerFloor, double toppleChance) {
+        String generator, List<String> shape, int cellSize, int hideoutsPerFloor, int crawlTunnelsPerFloor, double toppleChance, int tunnels) {
 
     /** 不規則大樓的預設外型（# = 大樓範圍，. = 外面；一格 cell-size × cell-size）。 */
     public static final List<String> DEFAULT_SHAPE = List.of(
@@ -64,7 +64,8 @@ public record BuildingSettings(
                 c.getInt("map.cell-size", 10),
                 c.getInt("map.hideouts-per-floor", 3),
                 c.getInt("map.crawl-tunnels-per-floor", 4),
-                c.getDouble("map.topple-cabinet-chance", 0.45));
+                c.getDouble("map.topple-cabinet-chance", 0.45),
+                c.getInt("map.tunnels", 4));
     }
 
     public Layout layout() {

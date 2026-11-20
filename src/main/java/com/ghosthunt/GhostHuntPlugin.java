@@ -426,7 +426,8 @@ public final class GhostHuntPlugin extends JavaPlugin {
                 long hide = b.rooms.stream().filter(r -> r.floor() == ff && r.hideout()).count();
                 msg(sender, (f + 1) + "F：房間 " + rooms + " 間、暗格 " + hide + " 個", NamedTextColor.GRAY);
             }
-            msg(sender, "鑽洞 " + b.crawlHoles.size() + " 個（含暗格入口）｜保全室 " + b.securityRooms.size() + " 間", NamedTextColor.GRAY);
+            msg(sender, "鑽洞 " + b.crawlHoles.size() + " 個（含暗格入口）｜保全室 " + b.securityRooms.size() + " 間｜地下通道 "
+                    + b.tunnels + " 條（出入口 " + b.hatches.size() + " 個）｜可推倒的櫃子 " + b.toppleSpots.size() + " 個", NamedTextColor.GRAY);
         }
         for (int f = L.isIrregular() ? -1 : L.floors - 1; f >= 0; f--) {
             msg(sender, (f + 1) + "F（北在上）：", NamedTextColor.WHITE);

@@ -107,6 +107,8 @@ public final class Match {
     private final java.util.Set<Integer> toppled = new java.util.HashSet<>();
     /** 雙開門：下半部 → 旁邊那扇的下半部。 */
     private final Map<Pos, Pos> doorPair = new HashMap<>();
+    /** 被鬼撬開的地下通道出入口（b.hatches 的編號）。 */
+    private final java.util.Set<Integer> pried = new java.util.HashSet<>();
     /** 被卡住的門（下半部）、這局已經卡過的門。 */
     private final java.util.Set<Pos> jammed = new java.util.HashSet<>(), jamUsed = new java.util.HashSet<>();
     final Nightmare nightmare;
@@ -218,6 +220,7 @@ public final class Match {
                 "3. 穿過打開的大門就算逃出",
                 "操作：右鍵木桶／拉桿／讀卡機 → 站著不動等進度條｜F 衝刺｜蹲下鑽牆上的小洞（鬼過不去）",
                 "障礙物：拿著右鍵門口的黃色地毯｜門口旁邊的深色木頭櫃子：右鍵推倒擋住門口｜蹲下右鍵雙開門：卡門（每扇一次）",
+                "1F 地上的活板門通到地下通道（爬梯子下去），可以鑽到很遠的另一個房間；鬼要先撬開才能下去",
                 "被抓會關進監獄，隊友站在籠子旁邊就能救｜第 " + s.maxCaptures() + " 次被抓淘汰",
                 "注意：翻箱子、開電源會發出聲音，附近的鬼會知道方向"};
         String[] ghostLines = {
@@ -226,7 +229,7 @@ public final class Match {
                 "畫面下方的箭頭 = 附近逃生者做事的聲音方向",
                 "右鍵拉桿可以關一次電源；右鍵倒數中的讀卡機可以弄壞大門（每扇一次）",
                 "門禁卡位置每 " + o.revealInterval() / 20 + " 秒亮一次：拿「搬卡」右鍵，把卡搬走並鎖起來",
-                "右鍵障礙物、推倒的櫃子可以拆掉；右鍵卡住的門可以撞開；右鍵牆上的小洞可以打大",
+                "右鍵障礙物、推倒的櫃子可以拆掉；右鍵卡住的門可以撞開；右鍵牆上的小洞可以打大；右鍵 1F 的活板門可以撬開地洞",
                 nightmare != null ? "夢魘：拿「熄燈」右鍵關掉整棟的燈，熄燈時看得到附近逃生者的軌跡" : ""};
         for (Player p : survivorPlayers()) for (String l : survivorLines) p.sendMessage(Component.text(l, NamedTextColor.GREEN));
         if (g != null) for (String l : ghostLines) if (!l.isEmpty()) g.sendMessage(Component.text(l, NamedTextColor.RED));
@@ -265,6 +268,7 @@ public final class Match {
         for (Building.ToppleSpot t : b.toppleSpots)
             for (Map.Entry<Pos, BlockData> e : t.blocks().entrySet()) block(e.getKey()).setBlockData(e.getValue(), false);
         for (Map.Entry<Pos, BlockData> e : b.doorBlocks.entrySet()) block(e.getKey()).setBlockData(e.getValue(), false);
+        for (Building.Hatch h : b.hatches) block(h.trapdoor()).setBlockData(h.closed(), false);
         java.util.Set<Pos> doorSet = new java.util.HashSet<>(b.doors);
         for (Pos d : b.doors) {
             for (int[] dd : new int[][]{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
@@ -340,6 +344,7 @@ public final class Match {
         if (nightmare != null) nightmare.tick(g);
         if (tick % 10 == 0) ghostHud(g);
         if (tick % 200 == 0) refreshSurvivorFog();
+        if (tick % 10 == 0) closeHatches();
 
         // 只有鬼一個人時（單人測試用）不會因為沒有逃生者而結束
         if (!survivors.isEmpty() && freeCount() == 0) end("場上沒有能自由行動的逃生者");
@@ -755,6 +760,14 @@ public final class Match {
     /** 鬼要走進還沒打大的破洞：擋下來。回傳 true 表示要取消這次移動。 */
     public boolean blocksGhost(Player p, Location to) {
         if (!isGhost(p)) return false;
+        int hi = hatchColumn(to);
+        if (hi >= 0 && !pried.contains(hi)) {
+            if (tick - lastHoleMsg > 40) {
+                lastHoleMsg = tick;
+                p.sendActionBar(Component.text("鬼下不去地洞（對著活板門右鍵，站 " + o.widenHole() / 20 + " 秒可以撬開）", NamedTextColor.GRAY));
+            }
+            return true;
+        }
         int i = holeAt(to.getBlockX(), to.getBlockY(), to.getBlockZ());
         if (i < 0 || widened.contains(i)) return false;
         if (tick - lastHoleMsg > 40) {
@@ -762,6 +775,66 @@ public final class Match {
             p.sendActionBar(Component.text("鬼鑽不過破洞（對著洞右鍵，站 " + o.widenHole() / 20 + " 秒可以打大）", NamedTextColor.GRAY));
         }
         return true;
+    }
+
+    // ---- 地下通道的出入口 ----
+
+    private int hatchAt(Block clicked) {
+        Pos p = new Pos(clicked.getX(), clicked.getY(), clicked.getZ());
+        for (int i = 0; i < b.hatches.size(); i++) if (b.hatches.get(i).trapdoor().equals(p)) return i;
+        return -1;
+    }
+
+    /** to 是不是在某個出入口的洞裡（活板門那格到梯子底）。 */
+    private int hatchColumn(Location to) {
+        for (int i = 0; i < b.hatches.size(); i++) {
+            Pos t = b.hatches.get(i).trapdoor();
+            if (to.getBlockX() == t.x() && to.getBlockZ() == t.z() && to.getY() < t.y() + 0.99 && to.getY() > t.y() - 4) return i;
+        }
+        return -1;
+    }
+
+    /**
+     * 有人右鍵活板門。回傳 null 表示不是出入口；true 表示要取消（鬼不能開，改成開始撬）；false 表示照原版開關。
+     * 逃生者可以自由開關、爬下去；鬼要先撬開（站著幾秒），撬開後那個出入口大家都能走、不會再關。
+     */
+    public Boolean onHatch(Player p, Block clicked) {
+        if (clicked == null) return null;
+        int i = hatchAt(clicked);
+        if (i < 0) return null;
+        if (isGhost(p)) {
+            if (pried.contains(i) || !released) return true;
+            Building.Hatch h = b.hatches.get(i);
+            Location at = loc(h.trapdoor()).add(0.5, 0.5, 0.5);
+            Interactions.Act a = acts.startAct(p, "pry:" + i, "撬開地洞", o.widenHole(), false, false, at, () -> {
+                pried.add(i);
+                block(h.trapdoor()).setBlockData(h.ladder(), false); // 換成梯子：大家都能上下
+                world.playSound(at, Sound.BLOCK_WOOD_BREAK, 3f, 0.6f);
+            });
+            if (a != null) a.onTick = () -> {
+                if (tick % 10 == 0) world.playSound(at, Sound.BLOCK_WOOD_HIT, 2f, 0.6f);
+            };
+            return true;
+        }
+        return !isFreeSurvivor(p);
+    }
+
+    /** 沒人在旁邊的出入口自動關上（免得鬼從打開的洞掉下去）。 */
+    private void closeHatches() {
+        for (int i = 0; i < b.hatches.size(); i++) {
+            if (pried.contains(i)) continue;
+            Building.Hatch h = b.hatches.get(i);
+            Block bl = block(h.trapdoor());
+            if (!(bl.getBlockData() instanceof org.bukkit.block.data.type.TrapDoor td) || !td.isOpen()) continue;
+            boolean near = false;
+            Location c = loc(h.trapdoor()).add(0.5, 0, 0.5);
+            for (Player q : world.getPlayers()) {
+                if (q.getGameMode() == GameMode.SPECTATOR) continue;
+                Location l = q.getLocation();
+                if (Math.abs(l.getX() - c.getX()) < 1.6 && Math.abs(l.getZ() - c.getZ()) < 1.6 && l.getY() > c.getY() - 4.5 && l.getY() < c.getY() + 2.5) near = true;
+            }
+            if (!near) bl.setBlockData(h.closed(), false);
+        }
     }
 
     /** 鬼右鍵破洞開始打大。回傳 true 表示有處理。 */

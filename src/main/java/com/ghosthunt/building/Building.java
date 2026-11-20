@@ -43,6 +43,16 @@ public final class Building {
     public record ToppleSpot(Map<Pos, org.bukkit.block.data.BlockData> blocks, int barricade) {}
 
     public final List<ToppleSpot> toppleSpots = new ArrayList<>();
+
+    /**
+     * 地下通道的出入口：1F 地板上的活板門（關著時跟地板一樣平），下面是梯子通到地下通道。
+     * trapdoor 是活板門的位置和原本（關著）的方塊，shaftTop 是梯子最上面那格（活板門正下方）。
+     */
+    public record Hatch(Pos trapdoor, org.bukkit.block.data.BlockData closed, Pos shaftTop, org.bukkit.block.data.BlockData ladder) {}
+
+    public final List<Hatch> hatches = new ArrayList<>();
+    /** 地下通道的條數（info 用）。 */
+    public int tunnels;
     /** 雙開門原本的方塊（上下兩半，關著的），每局開始時復原。 */
     public final Map<Pos, org.bukkit.block.data.BlockData> doorBlocks = new HashMap<>();
 

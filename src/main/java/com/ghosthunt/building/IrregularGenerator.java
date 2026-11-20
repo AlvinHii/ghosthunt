@@ -127,6 +127,12 @@ final class IrregularGenerator {
         final Map<Opening, int[]> topple = new HashMap<>();
         /** 保全室的終端機。 */
         final List<int[]> terminals = new ArrayList<>();
+        /** 地下通道的出入口 {x, z, dx, dz}（梯子靠在 (x+dx, z+dz) 那面）和通道經過的格子（只有 1F）。 */
+        final List<int[]> hatches = new ArrayList<>();
+        final Set<Integer> tunnel = new HashSet<>();
+        /** 每條通道兩端的梯子 {ax, az, bx, bz}（檢查連通用）。 */
+        final List<int[]> tunnelEnds = new ArrayList<>();
+        int tunnelCount;
 
         Plan(int f) {
             this.f = f;
@@ -219,6 +225,7 @@ final class IrregularGenerator {
     private BlockMap attempt(long seed, List<String> errors) {
         rnd = new Random(seed);
         cache.clear();
+        floorOf.clear();
         if (!pickStairCells()) {
             errors.add("外型裡找不到兩個夠遠的樓梯間位置");
             return null;
@@ -423,6 +430,7 @@ final class IrregularGenerator {
         hideouts(p);
         if (!doors(p)) return "房間沒辦法全部用門連起來";
         crawlTunnels(p);
+        if (p.f == 0) tunnels(p);
         gateSpots(p);
         if (p.gateSpots.isEmpty()) return "外牆上找不到可以放大門的地方";
         return null;
@@ -1404,8 +1412,7 @@ final class IrregularGenerator {
                     int v = p.at(x, z);
                     if (v == OUT) continue;
                     Room r = p.rooms.get(v);
-                    map.set(L.rel(x, fy, z), r != null && r.type == RoomType.GHOST_ROOM && !r.hideout ? Material.SCULK
-                            : RoomBuilder.floorMaterial(f, x, z));
+                    map.set(L.rel(x, fy, z), roomFloor(f, r, x, z));
                     if (v == WALL) {
                         Material m = p.touchesOut(x, z) ? Material.LIGHT_GRAY_CONCRETE : wallM;
                         for (int y = fy + 1; y < fy + fh; y++) map.set(L.rel(x, y, z), m);
@@ -1413,6 +1420,8 @@ final class IrregularGenerator {
                 }
             }
         }
+        // 地下通道（1F 底下）
+        basement(map, plans.get(0));
         // 第二輪：樓梯
         for (int f = 0; f < floors - 1; f++) for (int[] sc : stairCells) stairs(map, f, sc);
         // 第三輪：門、鑽洞、家具、燈
@@ -1711,6 +1720,28 @@ final class IrregularGenerator {
                 break;
             }
         }
+        // 地下通道：每條兩端的梯子要連得到
+        Plan p0 = plans.get(0);
+        int ty = L.floorY(0) - 3;
+        for (int[] e : p0.tunnelEnds) {
+            Set<Integer> seen = new HashSet<>();
+            ArrayDeque<int[]> q = new ArrayDeque<>();
+            q.add(new int[]{e[0], e[1]});
+            seen.add(key(e[0], e[1]));
+            boolean ok = false;
+            while (!q.isEmpty() && !ok) {
+                int[] t = q.poll();
+                if (t[0] == e[2] && t[1] == e[3]) ok = true;
+                for (int[] d : DIRS) {
+                    int nx = t[0] + d[0], nz = t[1] + d[1];
+                    if (!seen.add(key(nx, nz))) continue;
+                    Material lo = map.type(L.rel(nx, ty, nz)), hi = map.type(L.rel(nx, ty + 1, nz));
+                    boolean through = (lo.isAir() || lo == Material.LADDER) && (hi.isAir() || hi == Material.LADDER || hi == Material.LIGHT);
+                    if (through) q.add(new int[]{nx, nz});
+                }
+            }
+            if (!ok) errors.add("地下通道沒有接通（" + L.rel(e[0], ty, e[1]) + " → " + L.rel(e[2], ty, e[3]) + "）");
+        }
         if (terminals < b.securityRooms.size()) errors.add("保全室的終端機走不到（" + terminals + "/" + b.securityRooms.size() + "）");
         if (errors.isEmpty()) {
             for (Plan p : plans) {
@@ -1755,6 +1786,157 @@ final class IrregularGenerator {
     }
 
     // ---- 記錄房間、平面圖（info 用） ----
+
+    // ---- 每間房間不同顏色的地板（認路用） ----
+
+    private final Map<Integer, Material> floorOf = new HashMap<>();
+
+    private Material roomFloor(int f, Room r, int x, int z) {
+        if (r == null || r.corridor) return RoomBuilder.floorMaterial(f, x, z);
+        if (r.type == RoomType.GHOST_ROOM && !r.hideout) return Material.SCULK;
+        Material[] pal = switch (r.type) {
+            case STAIRWELL -> new Material[]{Material.STONE_BRICKS};
+            case JAIL -> new Material[]{Material.POLISHED_BLACKSTONE_BRICKS};
+            case TOILET -> new Material[]{((x + z) & 1) == 0 ? Material.WHITE_CONCRETE : Material.CYAN_TERRACOTTA};
+            case SERVER, ELECTRICAL -> new Material[]{Material.GRAY_CONCRETE, Material.POLISHED_ANDESITE, Material.SMOOTH_STONE};
+            case ARCHIVE, STORAGE -> new Material[]{Material.SPRUCE_PLANKS, Material.DARK_OAK_PLANKS, Material.OAK_PLANKS, Material.STRIPPED_SPRUCE_WOOD};
+            case SECURITY -> new Material[]{Material.BLUE_TERRACOTTA};
+            case LOUNGE -> new Material[]{Material.BROWN_WOOL, Material.GREEN_TERRACOTTA, Material.ORANGE_TERRACOTTA, Material.YELLOW_TERRACOTTA};
+            case BOARDROOM -> new Material[]{Material.RED_WOOL, Material.PURPLE_WOOL, Material.BROWN_WOOL};
+            case COPY_ROOM -> new Material[]{Material.LIGHT_GRAY_CONCRETE, Material.WHITE_TERRACOTTA, Material.LIGHT_BLUE_TERRACOTTA};
+            default -> new Material[]{Material.LIGHT_GRAY_WOOL, Material.CYAN_WOOL, Material.LIGHT_BLUE_WOOL, Material.GREEN_WOOL,
+                    Material.PINK_TERRACOTTA, Material.LIME_TERRACOTTA, Material.WHITE_WOOL, Material.GRAY_WOOL};
+        };
+        int k = r.hideout ? -r.id : r.id;
+        return floorOf.computeIfAbsent(f * 100000 + k, kk -> pal[rnd.nextInt(pal.length)]);
+    }
+
+    // ---- 地下通道 ----
+
+    /**
+     * 1F 底下的地下通道：每條連兩個離得遠的出入口（不同房間），出入口是地板上的活板門，下面是梯子。
+     * 通道寬 1 格、高 2 格，彎來彎去，會跟別條交叉（變成小網路）。
+     */
+    private void tunnels(Plan p) {
+        List<int[]> cand = new ArrayList<>();
+        for (Room r : p.rooms.values()) {
+            if (r.hideout || !(r.corridor || normalType(r.type))) continue;
+            for (int[] t : r.tiles) {
+                boolean ok = free(p, r, t[0], t[1]);
+                for (int[] d : DIRS) if (p.at(t[0] + d[0], t[1] + d[1]) != r.id || p.blocked.contains(key(t[0] + d[0], t[1] + d[1]))) ok = false;
+                if (ok) cand.add(t);
+            }
+        }
+        Collections.shuffle(cand, rnd);
+        Set<Integer> protect = new HashSet<>(); // 梯子靠的那面牆、梯子本身：通道不能挖
+        int made = 0;
+        for (int tries = 0; tries < 200 && made < s.tunnels(); tries++) {
+            if (cand.size() < 2) break;
+            int[] a = cand.get(rnd.nextInt(cand.size()));
+            List<int[]> far = new ArrayList<>();
+            for (int[] c : cand) {
+                double d = Math.hypot(c[0] - a[0], c[1] - a[1]);
+                if (d >= 18 && d <= 45 && p.at(c[0], c[1]) != p.at(a[0], a[1])) far.add(c);
+            }
+            if (far.isEmpty()) continue;
+            int[] bb = far.get(rnd.nextInt(far.size()));
+            if (tooClose(p, a) || tooClose(p, bb)) continue;
+            int[] da = DIRS[rnd.nextInt(4)], db = DIRS[rnd.nextInt(4)];
+            int[] sa = {a[0] - da[0], a[1] - da[1]}, sb = {bb[0] - db[0], bb[1] - db[1]};
+            if (protect.contains(key(sa[0], sa[1])) || protect.contains(key(sb[0], sb[1]))) continue;
+            // 這條自己的梯子、梯子背後那面也不能挖（不然放梯子時會把通道堵住）
+            Set<Integer> mine = new HashSet<>(protect);
+            for (int[] h : new int[][]{{a[0], a[1], da[0], da[1]}, {bb[0], bb[1], db[0], db[1]}}) {
+                mine.add(key(h[0], h[1]));
+                mine.add(key(h[0] + h[2], h[1] + h[3]));
+            }
+            if (mine.contains(key(sa[0], sa[1])) || mine.contains(key(sb[0], sb[1]))) continue;
+            // 梯子背後那面會填回石頭，不能壓在已經挖好的通道上
+            if (p.tunnel.contains(key(a[0] + da[0], a[1] + da[1])) || p.tunnel.contains(key(bb[0] + db[0], bb[1] + db[1]))) continue;
+            List<int[]> path = tunnelPath(sa, sb, mine);
+            if (path == null) continue;
+            p.tunnelEnds.add(new int[]{a[0], a[1], bb[0], bb[1]});
+            for (int[] t : path) p.tunnel.add(key(t[0], t[1]));
+            for (int[] h : new int[][]{{a[0], a[1], da[0], da[1]}, {bb[0], bb[1], db[0], db[1]}}) {
+                p.hatches.add(h);
+                p.blocked.add(key(h[0], h[1]));
+                for (int[] d : DIRS) p.reserved.add(key(h[0] + d[0], h[1] + d[1]));
+                protect.add(key(h[0], h[1]));
+                protect.add(key(h[0] + h[2], h[1] + h[3]));
+                p.tunnel.add(key(h[0], h[1]));
+            }
+            made++;
+        }
+        p.tunnelCount = made;
+    }
+
+    private boolean tooClose(Plan p, int[] t) {
+        for (int[] h : p.hatches) if (Math.abs(h[0] - t[0]) + Math.abs(h[1] - t[1]) < 6) return true;
+        return false;
+    }
+
+    /** 從 a 到 b 的彎曲路線（每段 2～6 格，大多往目標走、偶爾繞一下），只走大樓範圍內。 */
+    private List<int[]> tunnelPath(int[] a, int[] b, Set<Integer> protect) {
+        List<int[]> path = new ArrayList<>();
+        int x = a[0], z = a[1];
+        path.add(new int[]{x, z});
+        for (int guard = 0; guard < 400 && (x != b[0] || z != b[1]); guard++) {
+            int dx = Integer.signum(b[0] - x), dz = Integer.signum(b[1] - z);
+            int[] dir;
+            if (rnd.nextDouble() < 0.2) dir = DIRS[rnd.nextInt(4)];
+            else if (dx != 0 && (dz == 0 || rnd.nextBoolean())) dir = new int[]{dx, 0};
+            else dir = new int[]{0, dz};
+            int len = 2 + rnd.nextInt(5);
+            for (int i = 0; i < len && (x != b[0] || z != b[1]); i++) {
+                int nx = x + dir[0], nz = z + dir[1];
+                if (!inside(nx, nz) || nx <= 0 || nz <= 0 || nx >= W - 1 || nz >= H - 1 || protect.contains(key(nx, nz))) break;
+                if (dir[0] != 0 && nx == b[0] + dir[0] || dir[1] != 0 && nz == b[1] + dir[1]) break; // 不要衝過頭
+                x = nx;
+                z = nz;
+                path.add(new int[]{x, z});
+            }
+        }
+        return x == b[0] && z == b[1] ? path : null;
+    }
+
+    /** 放地下通道：1F 底下 4 層全部填實心，再挖出通道、梯子、活板門。 */
+    private void basement(BlockMap map, Plan p) {
+        int fy = L.floorY(0);
+        for (int z = 0; z < H; z++)
+            for (int x = 0; x < W; x++) {
+                if (p.at(x, z) == OUT) continue;
+                for (int y = fy - 4; y <= fy - 1; y++) map.set(L.rel(x, y, z), y == fy - 4 ? Material.DEEPSLATE_TILES : Material.STONE);
+            }
+        int n = 0;
+        for (int k : p.tunnel) {
+            int x = k % W, z = k / W;
+            map.set(L.rel(x, fy - 3, z), Material.AIR);
+            map.set(L.rel(x, fy - 2, z), Material.AIR);
+            if (Math.floorMod(x * 7 + z * 13, 9) == 0) {
+                Pos lp = L.rel(x, fy - 2, z);
+                map.set(lp, light());
+                b.lights.add(lp);
+            }
+            n++;
+        }
+        for (int[] h : p.hatches) {
+            int x = h[0], z = h[1];
+            BlockFace facing = face(new int[]{-h[2], -h[3]}); // 梯子背靠 (x+dx, z+dz)，面向另一邊
+            org.bukkit.block.data.type.Ladder ladder = (org.bukkit.block.data.type.Ladder) Bukkit.createBlockData(Material.LADDER);
+            ladder.setFacing(facing);
+            for (int y = fy - 3; y <= fy - 1; y++) map.set(L.rel(x, y, z), ladder);
+            map.set(L.rel(x + h[2], fy - 3, z + h[3]), Material.STONE);
+            map.set(L.rel(x + h[2], fy - 2, z + h[3]), Material.STONE);
+            org.bukkit.block.data.type.TrapDoor td = (org.bukkit.block.data.type.TrapDoor) Bukkit.createBlockData(Material.SPRUCE_TRAPDOOR);
+            td.setFacing(facing);
+            td.setHalf(Bisected.Half.TOP);
+            td.setOpen(false);
+            Pos top = L.rel(x, fy, z);
+            map.set(top, td);
+            b.hatches.add(new Building.Hatch(top, td, L.rel(x, fy - 1, z), ladder));
+        }
+        b.tunnels = p.tunnelCount;
+    }
 
     private void record(List<Plan> plans) {
         for (Plan p : plans) {
