@@ -86,7 +86,15 @@ public final class Match {
     UUID ghost;
     final String ghostName;
     final Map<UUID, Survivor> survivors = new LinkedHashMap<>();
-    final Random rnd = new Random();
+    /** 這局的隨機種子（大腦和執行共用，寫進記錄，出 bug 時可以用同一組種子重跑）。 */
+    final long rngSeed = java.util.concurrent.ThreadLocalRandom.current().nextLong();
+    final Random rnd = new Random(rngSeed);
+    /** 聲音等級：低（翻木桶、腳步、掃描器）＜ 中（開關門、推倒櫃子、卡門）＜ 高（刷卡、授權、開／修電源）。 */
+    static final int NOISE_LOW = 0, NOISE_MID = 1, NOISE_HIGH = 2;
+    /** 地圖變了（障礙物、卡門、打大洞口、撬開地洞）就加一，AI 鬼看到就重新找路。 */
+    long mapVersion;
+    /** 測試用的假逃生者（/gh dummy）。 */
+    final TestDummies dummies = new TestDummies(this);
 
     long tick;
     boolean released;
@@ -135,6 +143,16 @@ public final class Match {
 
     /** PvE：所有玩家都是逃生者，鬼是 AI（基本鬼）。 */
     public static Match pve(Plugin plugin, Building b, World world, GameSettings s, List<Player> survivors, Runnable onEnd) {
+        return pve(plugin, b, world, s, survivors, onEnd, null);
+    }
+
+    /** difficulty：easy／normal／hard（null 用 config 的 ai-ghost.difficulty）。 */
+    public static Match pve(Plugin plugin, Building b, World world, GameSettings s, List<Player> survivors, Runnable onEnd, String difficulty) {
+        if (difficulty != null) {
+            Match m = new Match(plugin, b, world, s, GhostType.BASIC, UUID.randomUUID(), "電腦", survivors, onEnd);
+            m.aiGhost = new AiGhost(m, AiGhostSettings.from(plugin.getConfig(), difficulty));
+            return m;
+        }
         Match m = new Match(plugin, b, world, s, GhostType.BASIC, UUID.randomUUID(), "電腦", survivors, onEnd);
         m.aiGhost = new AiGhost(m, s.ai());
         return m;
@@ -178,6 +196,7 @@ public final class Match {
             ghost = mob.getUniqueId();
             g = mob;
             stats.put("mode", "pve");
+            stats.put("rngSeed", rngSeed);
         } else {
             gp = ghostPlayer();
             preparePlayer(gp);
@@ -236,7 +255,7 @@ public final class Match {
         m.refreshLights();
         out.add("燈光（沒電）：" + m.ambientLight());
         m.aiPathTest(plugin, later);
-        out.add("AI 鬼尋路：檢查中（等鬼落地，約 1 秒後回報）");
+
         return out;
     }
 
@@ -245,48 +264,29 @@ public final class Match {
      * 再問尋路找不找得到路到各個關鍵點（電源、大門讀卡機、終端機、監獄），結果用 later 回報，然後移除。
      */
     private void aiPathTest(Plugin plugin, java.util.function.Consumer<String> later) {
-        holdChunks(plugin, true);
-        allowMonsters(true);
-        // 每層一隻（原版尋路一次找太遠會放棄；AI 鬼實際走的時候也是先走到樓梯再換層）
-        List<org.bukkit.entity.Mob> mobs = new ArrayList<>();
-        for (int f = 0; f < b.layout.floors; f++) mobs.add(new AiGhost(this, s.ai()).spawn(loc(b.layout.crossing(f))));
-        Bukkit.getScheduler().runTaskLater(plugin, () -> {
-            try {
-                record Target(String name, Location at, double near) {}
-                List<Target> targets = new ArrayList<>();
-                Location lever = obj.leverLocation();
-                if (lever != null) targets.add(new Target("電源開關", lever.clone().add(0, -1, 0), 2.5)); // 站在拉桿下面那格
-                for (Building.Gate gt : b.gates) targets.add(new Target((gt.floor() + 1) + "F 大門讀卡機", loc(gt.reader()), 2.5));
-                for (Pos t : b.securityTerminals) targets.add(new Target("終端機 " + t, loc(t), 2.5));
-                // 監獄籠子中心走不進去（籠子是鐵欄杆），到籠子外面 5 格內就算到
-                for (Map.Entry<Integer, Pos> e : b.jailCages.entrySet()) targets.add(new Target((e.getKey() + 1) + "F 監獄", loc(e.getValue()), 5.0));
-                // 樓梯：每座樓梯從底部走得到頂端
-                for (Pos[] link : b.stairLinks) targets.add(new Target("樓梯 " + link[0] + " 往上", loc(link[1]), 1.5));
-                int ok = 0;
-                List<String> fails = new ArrayList<>();
-                for (Target tg : targets) {
-                    Location t = tg.at().clone();
-                    int f = floorOf(t);
-                    org.bukkit.entity.Mob mob = mobs.get(f);
-                    if (tg.name().startsWith("樓梯")) {
-                        // 從這座樓梯的底部出發
-                        mob = mobs.get(Math.max(0, f - 1));
-                    }
-                    var path = mob.getPathfinder().findPath(t);
-                    Location end = path == null ? null : path.getFinalPoint();
-                    if (end != null && end.getWorld().equals(t.getWorld()) && end.distance(t) <= tg.near()) ok++;
-                    else fails.add(tg.name() + (end == null ? "（找不到路）" : "（只走到 " + end.getBlockX() + "," + end.getBlockY() + "," + end.getBlockZ()
-                            + "，目標 " + t.getBlockX() + "," + t.getBlockY() + "," + t.getBlockZ() + " " + t.getBlock().getType() + "/"
-                            + t.clone().add(0, -1, 0).getBlock().getType() + "）"));
-                }
-                later.accept("AI 鬼尋路：找得到路 " + ok + "/" + targets.size() + (fails.isEmpty() ? "" : "｜走不到：" + String.join("、", fails))
-                        + (lever == null ? "" : "｜電源開關在 " + lever.getBlockX() + "," + lever.getBlockY() + "," + lever.getBlockZ() + " " + lever.getBlock().getType()));
-            } finally {
-                mobs.forEach(org.bukkit.entity.Entity::remove);
-                holdChunks(plugin, false);
-                allowMonsters(false);
-            }
-        }, 20L);
+        // 用 AI 鬼自己的尋路圖（格子圖 A*）檢查：從 1F 起點走不走得到各個關鍵點（電源、大門讀卡機、終端機、監獄）
+        long t0 = System.nanoTime();
+        NavMap nm = NavMap.build(this);
+        long ms = (System.nanoTime() - t0) / 1_000_000;
+        record Target(String name, Location at, double near) {}
+        List<Target> targets = new ArrayList<>();
+        Location lever = obj.leverLocation();
+        if (lever != null) targets.add(new Target("電源開關", lever.clone().add(0, -1, 0), 2.5)); // 站在拉桿下面那格
+        for (Building.Gate gt : b.gates) targets.add(new Target((gt.floor() + 1) + "F 大門讀卡機", loc(gt.reader()), 2.5));
+        for (Pos t : b.securityTerminals) targets.add(new Target("終端機 " + t, loc(t), 2.5));
+        for (Map.Entry<Integer, Pos> e : b.jailCages.entrySet()) targets.add(new Target((e.getKey() + 1) + "F 監獄", loc(e.getValue()), 6.0));
+        for (int i = 0; i < b.hatches.size(); i++) targets.add(new Target("地洞出入口 " + i, loc(b.hatches.get(i).trapdoor()).add(0, 1, 0), 1.5));
+        int start = nm.nearestMain(loc(b.layout.crossing(0)), 3);
+        int ok = 0;
+        List<String> fails = new ArrayList<>();
+        for (Target tg : targets) {
+            int g = nm.nearestMain(tg.at(), tg.near());
+            var path = nm.nav.path(start, g, e -> 0);
+            if (g >= 0 && !path.isEmpty()) ok++;
+            else fails.add(tg.name() + (g < 0 ? "（附近沒有站得住的格子）" : "（找不到路）"));
+        }
+        later.accept("AI 鬼尋路：尋路圖 " + nm.nav.size() + " 格（" + ms + " ms），找得到路 " + ok + "/" + targets.size()
+                + (fails.isEmpty() ? "" : "｜走不到：" + String.join("、", fails)));
     }
 
     private int floorOf(Location l) {
@@ -304,11 +304,48 @@ public final class Match {
             if (world.getDifficulty() == org.bukkit.Difficulty.PEACEFUL) {
                 savedDifficulty = org.bukkit.Difficulty.PEACEFUL;
                 world.setDifficulty(org.bukkit.Difficulty.EASY);
+                // 伺服器中途當機的話，下次啟動時照這個檔案把難度改回來
+                try {
+                    java.nio.file.Files.writeString(recoveryFile(plugin), world.getName() + "\n" + savedDifficulty.name());
+                } catch (java.io.IOException ignored) {
+                }
             }
         } else if (savedDifficulty != null) {
             world.setDifficulty(savedDifficulty);
             savedDifficulty = null;
+            try {
+                java.nio.file.Files.deleteIfExists(recoveryFile(plugin));
+            } catch (java.io.IOException ignored) {
+            }
         }
+    }
+
+    static java.nio.file.Path recoveryFile(Plugin plugin) {
+        return plugin.getDataFolder().toPath().resolve("ai-state.txt");
+    }
+
+    /**
+     * 插件啟動時：上次 AI 局沒正常結束（當機）就把難度改回來、刪掉殘留的 AI 鬼。
+     */
+    public static void recoverAfterCrash(Plugin plugin) {
+        AiGhost.TAG = new org.bukkit.NamespacedKey(plugin, "ai_ghost");
+        java.nio.file.Path f = recoveryFile(plugin);
+        try {
+            if (java.nio.file.Files.exists(f)) {
+                String[] parts = java.nio.file.Files.readString(f).split("\n");
+                World w = Bukkit.getWorld(parts[0].trim());
+                if (w != null && parts.length > 1) {
+                    w.setDifficulty(org.bukkit.Difficulty.valueOf(parts[1].trim()));
+                    plugin.getLogger().info("上次 AI 局沒正常結束：把 " + w.getName() + " 的難度改回 " + parts[1].trim());
+                }
+                java.nio.file.Files.deleteIfExists(f);
+            }
+        } catch (Exception e) {
+            plugin.getLogger().warning("恢復 AI 局狀態失敗：" + e);
+        }
+        for (World w : Bukkit.getWorlds())
+            for (org.bukkit.entity.Entity e : w.getEntities())
+                if (e.getPersistentDataContainer().has(AiGhost.TAG)) e.remove();
     }
 
     /** 把大樓範圍的區塊掛上／拿掉外掛票：沒有玩家在附近時生物也會動（AI 鬼、自我檢查用）。 */
@@ -337,8 +374,8 @@ public final class Match {
                 "1F 地上的活板門通到地下通道（爬梯子下去），可以鑽到很遠的另一個房間；鬼要先撬開才能下去",
                 "被抓會關進監獄，隊友站在籠子旁邊就能救｜第 " + s.maxCaptures() + " 次被抓淘汰",
                 "注意：翻箱子、開電源會發出聲音，附近的鬼會知道方向",
-                aiGhost != null ? "這局的鬼是電腦：看得到、聽得到你；每 " + s.ai().senseInterval() / 20
-                        + " 秒會感應一次最近的人大概在哪（被盯上時你會聽到心跳加快）" : ""};
+                aiGhost != null ? "這局的鬼是電腦（" + aiGhost.settings().difficulty() + "）：只看得到前方、聽得到腳步和開門聲（蹲著走沒聲音）；"
+                        + "太久找不到人時會感應最近的人在哪一間房（被盯上時你會聽到心跳加快）；手電筒照它的臉 1 秒，它會暫時看不到人" : ""};
         String[] ghostLines = {
                 "【鬼】目標：把逃生者抓進監獄（鬼房 " + s.releaseDelay() / 20 + " 秒後打開）",
                 "左鍵打到就抓到；每揮一次手（揮空也算）" + s.attackFatigue() / 20.0 + " 秒內幾乎走不動、抓不到人，要看準再揮",
@@ -457,6 +494,7 @@ public final class Match {
         if (tick % 20 == 0 && hud != null) hud.update();
         items.tick(g);
         if (aiGhost != null) aiGhost.tick();
+        dummies.tick(g);
         escapes();
         if (nightmare != null) nightmare.tick(g);
         if (tick % 10 == 0 && g instanceof Player gp) ghostHud(gp);
@@ -507,6 +545,7 @@ public final class Match {
         obj.dropCards(victim, victim.getLocation());
         stats.merge("captures", 1, (a, c) -> (Integer) a + (Integer) c);
         stat("firstCaptureAt", tick / 20, false);
+        if (aiGhost != null) aiGhost.onCatch(victim.getUniqueId());
         victim.removePotionEffect(PotionEffectType.GLOWING);
         world.playSound(victim.getLocation(), Sound.ENTITY_PLAYER_HURT, 2f, 0.6f);
         if (sv.captures >= s.maxCaptures()) {
@@ -698,6 +737,7 @@ public final class Match {
         }
         for (Pos q : spot.blocks()) block(q).setType(Material.SPRUCE_PLANKS, false);
         barricaded.put(idx, true);
+        mapVersion++;
         org.bukkit.inventory.ItemStack hand = p.getInventory().getItemInMainHand();
         hand.setAmount(hand.getAmount() - 1);
         world.playSound(clicked.getLocation(), Sound.BLOCK_WOOD_BREAK, 1.5f, 0.8f);
@@ -752,11 +792,12 @@ public final class Match {
             block(q).setBlockData(log, false);
         }
         barricaded.put(idx, true);
+        mapVersion++;
         toppled.add(i);
         Location at = loc(spot.blocks().get(0));
         world.playSound(at, Sound.ENTITY_ZOMBIE_BREAK_WOODEN_DOOR, 3f, 0.7f);
         world.playSound(at, Sound.BLOCK_WOOD_BREAK, 2f, 0.6f);
-        noise(at);
+        noise(at, NOISE_MID);
         p.sendActionBar(Component.text("把櫃子推倒，門口擋住了！", NamedTextColor.GOLD));
         stats.merge("toppled", 1, (x, y) -> (Integer) x + (Integer) y);
         return true;
@@ -819,12 +860,20 @@ public final class Match {
     }
 
     private void setJam(Pos door, Pos other, boolean on) {
+        mapVersion++;
         for (Pos d : other == null ? List.of(door) : List.of(door, other)) {
             if (on) {
                 jammed.add(d);
                 jamUsed.add(d);
             } else jammed.remove(d);
         }
+    }
+
+    /** AI 鬼開門用：雙開門兩扇一起開（只開一扇的話，打開的門板加上另一扇會把通道擠得比鬼的身體還窄）。 */
+    void setDoorOpenPublic(Pos lower, boolean open) {
+        setDoorOpen(lower, open);
+        Pos other = doorPair.get(lower);
+        if (other != null && !jammed.contains(other)) setDoorOpen(other, open);
     }
 
     private void setDoorOpen(Pos lower, boolean open) {
@@ -857,6 +906,7 @@ public final class Match {
         Interactions.Act a = acts.startAct(g, "break:" + idx, "拆障礙物", s.breakBarricade(), false, false, at, () -> {
             removeBarricade(spot);
             barricaded.put(idx, false);
+            mapVersion++;
             world.playSound(at, Sound.ENTITY_ZOMBIE_BREAK_WOODEN_DOOR, 6f, 0.9f);
         });
         // 很大聲，全場都聽得到
@@ -893,6 +943,7 @@ public final class Match {
         Location at = loc(h.trapdoor()).add(0, 0.5, 0);
         Interactions.Act a = acts.startAct(g, "pry:" + i, "撬開地洞", o.widenHole(), false, false, at, () -> {
             pried.add(i);
+            mapVersion++;
             block(h.trapdoor()).setBlockData(h.ladder(), false); // 換成梯子：大家都能上下
             world.playSound(at, Sound.BLOCK_WOOD_BREAK, 3f, 0.6f);
         });
@@ -910,6 +961,7 @@ public final class Match {
         Location at = loc(h.slab());
         Interactions.Act a = acts.startAct(g, "widen:" + i, "打大破洞", o.widenHole(), false, false, at, () -> {
             widened.add(i);
+            mapVersion++;
             block(h.slab()).setType(Material.AIR, false);
             world.playSound(at, Sound.BLOCK_STONE_BREAK, 3f, 0.6f);
         });
@@ -960,6 +1012,29 @@ public final class Match {
     }
 
     // ---- 蹲伏破洞 ----
+
+    /** 這格是哪個蹲伏破洞（不管有沒有打大），不是回傳 -1。 */
+    int holeAt(Pos p) {
+        return holeAt(p.x(), p.y(), p.z());
+    }
+
+    boolean isHoleWidened(int i) {
+        return widened.contains(i);
+    }
+
+    /** 這格是哪個門口的障礙物位置（不管現在有沒有擋），不是回傳 -1。 */
+    int barricadeSpotAt(Pos p) {
+        for (int i = 0; i < b.barricadeSpots.size(); i++) if (b.barricadeSpots.get(i).blocks().contains(p)) return i;
+        return -1;
+    }
+
+    boolean isBarricadeSpot(Pos p) {
+        return barricadeSpotAt(p) >= 0;
+    }
+
+    boolean barricadeIndexBarricaded(int i) {
+        return barricaded.getOrDefault(i, false);
+    }
 
     private int holeAt(int x, int y, int z) {
         for (int i = 0; i < b.crawlHoles.size(); i++) {
@@ -1084,11 +1159,15 @@ public final class Match {
      * 不給精確位置、牆不擋。夢魘熄燈時（追蹤沒被打斷）另外看到聲音來源的精確位置。
      */
     void noise(Location at) {
+        noise(at, NOISE_LOW);
+    }
+
+    void noise(Location at, int level) {
         LivingEntity g = ghostEntity();
         if (g == null || !released || !sameFloor(g.getLocation(), at)) return;
         double d = horiz(g.getLocation(), at);
         if (d > o.noiseRadius()) return;
-        if (aiGhost != null) aiGhost.hearNoise(at);
+        if (aiGhost != null) aiGhost.hearNoise(at, level);
         double target = Math.toDegrees(Math.atan2(-(at.getX() - g.getLocation().getX()), at.getZ() - g.getLocation().getZ()));
         double rel = ((target - g.getLocation().getYaw()) % 360 + 540) % 360 - 180; // -180..180，正的是右邊
         String[] arrows = {"↓", "↙", "←", "↖", "↑", "↗", "→", "↘"};
@@ -1111,6 +1190,7 @@ public final class Match {
             if (gs == null) continue;
             sv.status = Status.ESCAPED;
             acts.cancel(sv.id, null);
+            if (aiGhost != null) aiGhost.forget(sv.id);
             obj.dropCards(p, loc(gs.g.reader()));
             p.removePotionEffect(PotionEffectType.GLOWING);
             p.setGameMode(GameMode.SPECTATOR);
@@ -1141,10 +1221,13 @@ public final class Match {
         if (task != null) task.cancel();
         if (nightmare != null) nightmare.stop();
         if (aiGhost != null) {
+            aiGhost.statsInto(stats);
+            stats.put("dummyCatches", dummies.caught);
             aiGhost.remove();
             holdChunks(plugin, false);
             allowMonsters(false);
         }
+        dummies.removeAll();
         acts.cancelAll();
         obj.cleanup();
         items.cleanup();
@@ -1225,6 +1308,7 @@ public final class Match {
         if (sv != null && sv.status == Status.FREE) {
             sv.status = Status.ELIMINATED;
             acts.cancel(sv.id, null);
+            if (aiGhost != null) aiGhost.forget(sv.id);
             obj.dropCards(p, p.getLocation());
             broadcast(p.getName() + " 離開了遊戲。", NamedTextColor.GRAY);
         }
@@ -1268,6 +1352,24 @@ public final class Match {
     void survivorMessage(String text, NamedTextColor color) {
         Component c = Component.text(text, color);
         survivorPlayers().forEach(p -> p.sendMessage(c));
+    }
+
+    public boolean isAi() {
+        return aiGhost != null;
+    }
+
+    public void spawnDummies(int n) {
+        dummies.spawn(n);
+    }
+
+    /** 切換這個玩家的 AI 鬼除錯顯示，回傳切換後是否開著。 */
+    public boolean toggleAiDebug(Player p) {
+        if (aiGhost == null) return false;
+        if (!aiGhost.debugViewers.remove(p.getUniqueId())) {
+            aiGhost.debugViewers.add(p.getUniqueId());
+            return true;
+        }
+        return false;
     }
 
     /** 鬼的實體：真人鬼是 Player，AI 鬼是怪物；不在線／不存在回傳 null。 */

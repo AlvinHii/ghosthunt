@@ -34,6 +34,7 @@ public final class GhostHuntPlugin extends JavaPlugin {
         saveDefaultConfig();
         com.ghosthunt.game.Items.init(this);
         getServer().getPluginManager().registerEvents(new com.ghosthunt.game.GameListener(() -> match), this);
+        com.ghosthunt.game.Match.recoverAfterCrash(this);
         if (FogExperiment.install(this)) {
             getLogger().warning("霧的資料包已寫入或更新，要重開伺服器一次才會生效。");
         }
@@ -69,6 +70,27 @@ public final class GhostHuntPlugin extends JavaPlugin {
             case "info" -> info(sender);
             case "fog" -> fog(sender, args);
             case "export" -> exportLayout(sender);
+            case "dummy" -> {
+                // 測試用：AI 局裡生出假逃生者（村民），AI 鬼會把它們當成逃生者追
+                if (match == null || !match.isAi()) {
+                    msg(sender, "要先用 /gh start ai 開一局 AI 局。", NamedTextColor.RED);
+                    break;
+                }
+                int n = 1;
+                try {
+                    if (args.length > 1) n = Math.max(1, Math.min(5, Integer.parseInt(args[1])));
+                } catch (NumberFormatException ignored) {
+                }
+                match.spawnDummies(n);
+                msg(sender, "生出 " + n + " 個假逃生者。", NamedTextColor.GREEN);
+            }
+            case "aidebug" -> {
+                if (!(sender instanceof Player p) || match == null || !match.isAi()) {
+                    msg(sender, "要在 AI 局裡由玩家使用。", NamedTextColor.RED);
+                    break;
+                }
+                msg(sender, match.toggleAiDebug(p) ? "AI 鬼除錯顯示：開" : "AI 鬼除錯顯示：關", NamedTextColor.AQUA);
+            }
             case "selftest" -> {
                 if (inMatch(sender)) break;
                 if (building == null) {
@@ -141,14 +163,20 @@ public final class GhostHuntPlugin extends JavaPlugin {
         List<Player> players = new java.util.ArrayList<>(getServer().getOnlinePlayers());
         // /gh start ai：PvE，所有玩家都是逃生者，鬼是電腦；/gh start ai solo：沒有逃生者，只看 AI 鬼巡邏（測試用）
         if (args.length >= 2 && args[1].equalsIgnoreCase("ai")) {
-            boolean solo = args.length >= 3 && args[2].equalsIgnoreCase("solo");
+            boolean solo = false;
+            String difficulty = null;
+            for (int i = 2; i < args.length; i++) {
+                String a = args[i].toLowerCase(Locale.ROOT);
+                if (a.equals("solo")) solo = true;
+                else if (a.equals("easy") || a.equals("normal") || a.equals("hard")) difficulty = a;
+            }
             if (players.isEmpty() && !solo) {
                 msg(sender, "沒有玩家在線上。", NamedTextColor.RED);
                 return;
             }
             World world = ArenaWorld.getOrCreate(BuildingSettings.from(getConfig()).worldName());
             match = com.ghosthunt.game.Match.pve(this, building, world, com.ghosthunt.game.GameSettings.from(getConfig()),
-                    solo ? List.of() : players, () -> match = null);
+                    solo ? List.of() : players, () -> match = null, difficulty);
             match.start();
             if (!building.pve) msg(sender, "提醒：這是大樓，不是 PvE 小地圖（/gh build pve）。", NamedTextColor.YELLOW);
             return;

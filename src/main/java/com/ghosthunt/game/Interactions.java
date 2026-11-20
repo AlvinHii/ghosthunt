@@ -80,8 +80,20 @@ final class Interactions {
         a.who.put(p.getUniqueId(), p.getLocation());
         byKey.put(key, a);
         byPlayer.put(p.getUniqueId(), a);
-        if (noisy) m.noise(at);
+        if (noisy) m.noise(at, noiseLevel(key));
         return a;
+    }
+
+    /** 做這件事的聲音有多重要：刷卡、授權、開／修電源是高；其他（翻木桶……）是低。 */
+    private static int noiseLevel(String key) {
+        if (key.startsWith("gate:") || key.startsWith("authorize:") || key.equals("power")) return Match.NOISE_HIGH;
+        return Match.NOISE_LOW;
+    }
+
+    /** 這個人正在做的事做到幾成（0～1），沒在做事回傳 -1。 */
+    double progress(UUID id) {
+        Act a = byPlayer.get(id);
+        return a == null ? -1 : a.progress / Math.max(1, a.needed);
     }
 
     boolean busy(UUID id) {
@@ -133,7 +145,7 @@ final class Interactions {
             double rate = a.coop && a.who.size() >= 2 ? m.o.coopMultiplier() : 1.0;
             a.progress += rate;
             a.onTick.run();
-            if (a.noisy && m.tick % 20 == 0) m.noise(a.at);
+            if (a.noisy && m.tick % 20 == 0) m.noise(a.at, noiseLevel(a.key));
             Component bar = Component.text(a.label + " " + Match.bar((int) a.progress, a.needed)
                     + (a.who.size() >= 2 ? "（" + a.who.size() + " 人）" : ""), NamedTextColor.YELLOW);
             for (UUID id : a.who.keySet()) {

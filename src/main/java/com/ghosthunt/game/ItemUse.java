@@ -120,6 +120,7 @@ final class ItemUse {
             p.removePotionEffect(PotionEffectType.DARKNESS);
             moveLight(p);
             flashNightmare(p, g);
+            if (m.aiGhost != null && beamHits(p, g)) m.aiGhost.flashed(p); // 手電筒照 AI 鬼的臉
         }
         // 掃描器：往目標方向冒藍色光點（只有自己看得到）
         var it = scanUntil.entrySet().iterator();
@@ -168,6 +169,15 @@ final class ItemUse {
     }
 
     /** 手電筒照到夢魘：短暫打斷牠的追蹤。 */
+    /** 手電筒的光照不照得到 g（距離、角度、視線）。 */
+    private boolean beamHits(Player p, LivingEntity g) {
+        if (!p.getWorld().equals(g.getWorld())) return false;
+        Vector to = g.getEyeLocation().toVector().subtract(p.getEyeLocation().toVector());
+        if (to.length() > o.flashRange() || to.lengthSquared() < 1e-6) return false;
+        double angle = Math.toDegrees(p.getEyeLocation().getDirection().angle(to));
+        return angle <= o.flashAngle() / 2 && p.hasLineOfSight(g);
+    }
+
     private void flashNightmare(Player p, LivingEntity g) {
         if (m.nightmare == null || !m.nightmare.active || m.tick - lastFlashHit < 20) return;
         if (!p.getWorld().equals(g.getWorld())) return;

@@ -3,83 +3,148 @@ package com.ghosthunt.game;
 import com.destroystokyo.paper.entity.Pathfinder;
 import com.ghosthunt.building.Building;
 import com.ghosthunt.building.Pos;
+import com.ghosthunt.building.RoomType;
 import com.ghosthunt.game.ai.GhostBrain;
 import com.ghosthunt.game.ai.GhostBrain.Goal;
 import com.ghosthunt.game.ai.GhostBrain.Kind;
 import com.ghosthunt.game.ai.GhostBrain.Point;
+import com.ghosthunt.game.ai.GridNav;
+import com.ghosthunt.game.ai.RoomScores;
+import com.ghosthunt.game.ai.SenseDirector;
+import com.ghosthunt.game.ai.TargetPicker;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
 import org.bukkit.Color;
+import org.bukkit.FluidCollisionMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
+import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.block.Block;
 import org.bukkit.block.data.type.Door;
 import org.bukkit.entity.EntityType;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Mob;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Zombie;
 import org.bukkit.inventory.EntityEquipment;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.LeatherArmorMeta;
+import org.bukkit.persistence.PersistentDataType;
+import org.bukkit.util.Vector;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
 /**
- * AI 鬼（PvE）：一隻關掉原版 AI 的怪物，走路用 Paper 內建的尋路，每一步做什麼由 {@link GhostBrain} 決定。
- * 規則跟真人鬼一樣（速度、揮拳減速、看得到的距離、能力的時間），另外每隔一段時間「感應」到最近的逃生者大概在哪。
+ * AI 鬼（PvE）：一隻關掉原版 AI 的怪物。
+ * <ul>
+ *   <li>大腦 {@link GhostBrain} 決定目標；{@link TargetPicker} 選追誰（黏性、只用看得到的資訊）；
+ *       {@link SenseDirector} 決定什麼時候感應；{@link RoomScores} 決定巡邏去哪。</li>
+ *   <li>走路：插件自己在 {@link NavMap}（格子圖）上跑 A*，原版尋路只負責走到下一個幾格遠的路點。
+ *       鬼不會走上家具；門、障礙物、蹲伏小洞、地洞是「要花時間」的邊，找路時就決定要拆還是繞。</li>
+ *   <li>攻擊每 tick 判斷：進入攻擊距離、在前方、看得到 → 開始前搖，前搖結束時人還在範圍內就打到；
+ *       已經退出範圍只有 whiff-chance 的機率還是會揮（揮空會疲勞 1.5 秒）。</li>
+ *   <li>視野：前方 fov 度內看 sight-range 格（停電時 sight-range-dark），身邊 near-aware 格內不分方向；
+ *       對方的眼睛、胸口、腳各射一條視線，任一條沒被擋就算看到。</li>
+ *   <li>聽：插件的做事聲（有分級，低的蓋不掉高的）、跑步、走路（蹲著沒有）、開關門。</li>
+ * </ul>
  */
 final class AiGhost {
+
+    /** 用來在伺服器當機重開後找出殘留的 AI 鬼。 */
+    static NamespacedKey TAG;
 
     private final Match m;
     private final AiGhostSettings c;
     private final GhostBrain brain;
+    private final TargetPicker picker;
+    private final SenseDirector director;
+    private RoomScores rooms;
+    private final List<Building.Room> roomList = new ArrayList<>();
     private final StuckTracker stuck;
     private Mob mob;
+    private NavMap nav;
 
     // ---- 記憶 ----
+    private UUID chaseId;
+    private long chaseSeenTick = -1_000_000, lastChaseTick = -1_000_000;
     private Location lastSeen;
-    private long lastSeenTick = -1_000_000;
+    private long lastSeenTick = -1_000_000, searchStart = -1_000_000;
     private UUID lastSeenId;
+    private Vector lastDir;
+    private Location prevSeenLoc;
     private Location noise;
     private long noiseTick = -1_000_000;
+    private int noiseLevel;
     private Location sensed;
+    private UUID sensedId;
+    private int sensedRoom = -1;
     private long sensedUntil;
-    private long nextSense;
-    private long blindUntil;
-    private UUID attackTarget;
-    private long attackSince;
-    private boolean guardRolled, guard;
+    private long blindUntil, flashImmuneUntil;
+    private int flashExposure;
+    private long flashLastTick;
     private int jailedBefore;
-    private final ArrayDeque<Location> visited = new ArrayDeque<>();
+    private boolean guard;
+    private long guardUntil;
+    private final Set<Integer> knownHatches = new HashSet<>();
+    /** 這次搜尋已經做過的子目標（地洞、暗格、往逃跑方向延伸）。 */
+    private boolean searchTunnelDone, searchHideoutDone, searchExtendDone;
+    private int patrolRoom = -1;
     private Location patrolTarget;
     private long patrolUntil;
-    private final Set<Integer> checkedHoles = new HashSet<>();
-    private final Set<Location> followedTunnel = new HashSet<>();
+    private final Map<Location, Long> badTargets = new HashMap<>();
+
+    // ---- 攻擊 ----
+    private long windupStart = -1;
 
     // ---- 走路 ----
-    private Location moveTarget;
-    /** 正在爬的樓梯另一端（爬到一半時高度還算原本那層，不能重新判斷，不然會在樓梯上來回走）。 */
-    private Location stairGoal;
-    private long stairUntil, stairDoneUntil;
-    /** 這一步的速度倍率（巡邏用走的、追人用跑的）。 */
-    private double speedMul = 1.0, pathSpeed = -1;
-    private int stuckCount;
     private Goal goal;
+    private double speedMul = 1.0;
+    private GridNav.Cost cost;
+    private List<Integer> rawPath = List.of(), wayPath = List.of();
+    private int wayIdx, rawGoal = -1;
+    private long planTick, planVersion = -1;
+    private Location vanillaTarget;
+    private int stuckCount;
+    private long climbUntil = -1;
+    private int climbTo = -1;
+    private Location lastStepLoc;
+    private int lookStep = -1;
+    private float lookBase;
+    private long lookNext;
+
+    // ---- 統計、除錯 ----
+    private final Map<Kind, Integer> goalTicks = new EnumMap<>(Kind.class);
+    private int catches, misses, chases, stuckEvents, teleports, senses, catchesAfterSense;
+    private long lastSenseTick = -1_000_000, firstContact = -1;
+    final Set<UUID> debugViewers = new HashSet<>();
 
     AiGhost(Match m, AiGhostSettings c) {
         this.m = m;
         this.c = c;
         // 守監獄的機率在這裡擲（每次有人被關擲一次），大腦這邊永遠照做
         this.brain = new GhostBrain(new GhostBrain.Config(c.attackRange(), c.searchTime(), c.searchTime(), 1.0), m.rnd);
+        this.picker = new TargetPicker(0.6, 20, 6.0, 6.0);
+        this.director = new SenseDirector(c.senseQuiet(), c.senseGap(), c.pressureLimit(), c.calmTime());
         this.stuck = new StuckTracker(Math.max(20, c.stuckTime()), 1.0);
+    }
+
+    AiGhostSettings settings() {
+        return c;
+    }
+
+    NavMap navMap() {
+        return nav;
     }
 
     /** 在 at 生出 AI 鬼。 */
@@ -97,25 +162,24 @@ final class AiGhost {
         mob.setPersistent(false);
         mob.setRemoveWhenFarAway(false);
         mob.setInvulnerable(true);
-        mob.setSilent(false);
+        mob.setSilent(true); // 不要原版的呻吟（等於一直報位置）；腳步聲由插件照真人鬼的規則播
         mob.setCanPickupItems(false);
         mob.customName(Component.text("鬼", NamedTextColor.DARK_RED));
         mob.setCustomNameVisible(false);
+        if (TAG != null) mob.getPersistentDataContainer().set(TAG, PersistentDataType.BYTE, (byte) 1);
         if (mob instanceof Zombie z) {
             z.setAdult();
             z.setShouldBurnInDay(false);
             z.setCanBreakDoors(false);
         }
         var follow = mob.getAttribute(Attribute.FOLLOW_RANGE);
-        if (follow != null) follow.setBaseValue(128);
+        if (follow != null) follow.setBaseValue(48);
         var speed = mob.getAttribute(Attribute.MOVEMENT_SPEED);
-        if (speed != null) speed.setBaseValue(c.baseSpeed()); // 0.13 ≈ 玩家跑步的速度，加成和揮拳減速由 Match 處理
+        if (speed != null) speed.setBaseValue(c.baseSpeed()); // 約等於玩家跑步；加成和揮拳減速由 Match 處理
         var jump = mob.getAttribute(Attribute.JUMP_STRENGTH);
-        if (jump != null) jump.setBaseValue(0); // 不跳
-        // 原版尋路會規劃「上一格高」的路線（假設能跳），不能跳又不能跨就會卡在一格高的家具、樓梯側面前面。
-        // 讓牠直接跨上一格（不是跳）：兩格以上的東西（障礙物、推倒的櫃子、門、蹲伏小洞、籠子）照樣擋得住。
+        if (jump != null) jump.setBaseValue(0); // 跟逃生者一樣不能跳
         var step = mob.getAttribute(Attribute.STEP_HEIGHT);
-        if (step != null) step.setBaseValue(1.0);
+        if (step != null) step.setBaseValue(0.6); // 跟玩家一樣：走得上樓梯，走不上家具
         var kb = mob.getAttribute(Attribute.KNOCKBACK_RESISTANCE);
         if (kb != null) kb.setBaseValue(1.0);
         Pathfinder pf = mob.getPathfinder();
@@ -157,21 +221,76 @@ final class AiGhost {
         mob = null;
     }
 
+    // =====================================================================
+    // 外部事件
+    // =====================================================================
+
     /** 煙霧彈：一段時間看不到人，正在做的事也中斷。 */
     void blind(int ticks) {
         blindUntil = Math.max(blindUntil, m.tick + ticks);
+        windupStart = -1;
         if (mob != null) {
             m.acts.cancel(mob.getUniqueId(), null);
             mob.getPathfinder().stopPathfinding();
         }
     }
 
-    /** 逃生者做事發出的聲音（Match.noise 已經判斷過同一層、距離）：記下大概的位置。 */
-    void hearNoise(Location at) {
-        noise = jitter(at, c.noiseError());
-        noiseTick = m.tick;
+    /** 手電筒照到（每 tick 呼叫）：連續照滿 flash-time 就短暫看不到人，之後一段時間免疫。 */
+    void flashed(Player by) {
+        if (m.tick < flashImmuneUntil) return;
+        flashExposure = m.tick - flashLastTick <= 2 ? flashExposure + 1 : 1;
+        flashLastTick = m.tick;
+        if (flashExposure < c.flashTime()) return;
+        flashExposure = 0;
+        blindUntil = Math.max(blindUntil, m.tick + c.flashBlind());
+        flashImmuneUntil = m.tick + c.flashBlind() + c.flashImmune();
+        windupStart = -1;
+        mob.getWorld().playSound(mob.getLocation(), Sound.ENTITY_ENDERMAN_HURT, 1.2f, 0.5f);
+        by.sendActionBar(Component.text("照到鬼的臉了！它暫時看不到", NamedTextColor.YELLOW));
     }
 
+    /** 聽到聲音（Match.noise 已經判斷過同一層、距離）。低等級的聲音蓋不掉還記著的高等級聲音。 */
+    void hearNoise(Location at, int level) {
+        if (noise != null && m.tick - noiseTick <= c.searchTime() && level < noiseLevel) return;
+        noise = snapWalkable(jitter(at, c.noiseError()), at);
+        noiseTick = m.tick;
+        noiseLevel = level;
+        director.contact(m.tick);
+        contactStat();
+        if (rooms != null) rooms.noise(roomAt(at), 60);
+    }
+
+    /** 開關門的聲音（GameListener）：hear-door 格內聽得到。 */
+    void hearDoor(Location at) {
+        if (mob == null || !mob.getWorld().equals(at.getWorld()) || at.distance(mob.getLocation()) > c.hearDoor()) return;
+        hearNoise(at, Match.NOISE_MID);
+    }
+
+    /** 某個逃生者被抓、淘汰、逃出、離線：忘掉跟他有關的記憶（不然會在抓人的空地搜 10 秒、追不存在的人）。 */
+    void forget(UUID id) {
+        if (id.equals(chaseId)) chaseId = null;
+        if (id.equals(lastSeenId)) {
+            lastSeen = null;
+            lastSeenId = null;
+            lastSeenTick = -1_000_000;
+        }
+        if (id.equals(sensedId)) {
+            sensed = null;
+            sensedId = null;
+        }
+        windupStart = -1;
+    }
+
+    /** 抓到人：記一筆、節奏控制進入冷靜期。 */
+    void onCatch(UUID id) {
+        catches++;
+        if (m.tick - lastSenseTick <= 30 * 20) catchesAfterSense++;
+        director.captured(m.tick);
+        forget(id);
+    }
+
+    // =====================================================================
+    // 每 tick
     // =====================================================================
 
     void tick() {
@@ -180,136 +299,324 @@ final class AiGhost {
             mob.getPathfinder().stopPathfinding();
             return;
         }
-        openDoorsAhead();
+        if (nav == null) buildNav();
+        if (climbUntil >= 0) {
+            climbTick();
+            return;
+        }
+        footsteps();
         boolean busy = m.acts.busy(mob.getUniqueId());
-        // 只有「有路線、離目標還遠」時才算卡住（走到目的地站著等不算）
-        if (!busy && moveTarget != null && mob.getPathfinder().hasPath() && moveTarget.distance(mob.getLocation()) > 2) {
-            if (stuck.update(m.tick, mob.getLocation().getX(), mob.getLocation().getY(), mob.getLocation().getZ())) onStuck();
-        } else stuck.reset();
+        attackTick();
+        if (!busy) {
+            if (lookStep >= 0) lookTick();
+            else followPath();
+        }
+        if (goal != null) goalTicks.merge(goal.kind(), 1, Integer::sum);
+        if (m.tick % 10 == 0) debugDraw();
         if (m.tick % c.thinkEvery() != 0) return;
-        if (m.survivors.isEmpty() && m.tick % 40 == 0) // 單人測試（沒有逃生者）時每 2 秒記一次在做什麼
-            m.plugin.getLogger().info("[AI 鬼] " + debug() + "｜位置 " + mob.getLocation().getBlockX() + "," + mob.getLocation().getBlockY() + "," + mob.getLocation().getBlockZ() + "｜卡住 " + stuckCount);
+        if (m.survivors.isEmpty() && m.tick % 40 == 0) // 單人測試（沒有真人逃生者）時每 2 秒記一次
+            m.plugin.getLogger().info("[AI 鬼] " + debug());
+        think(busy);
+    }
 
-        Player seen = perceive();
+    private void buildNav() {
+        long t0 = System.nanoTime();
+        nav = NavMap.build(m);
+        List<RoomScores.RoomInfo> infos = new ArrayList<>();
+        for (Building.Room r : m.b.rooms) {
+            if (r.hideout() || r.type() == RoomType.GHOST_ROOM) continue;
+            roomList.add(r);
+            Location l = m.loc(r.center());
+            infos.add(new RoomScores.RoomInfo(infos.size(), l.getX(), l.getY(), l.getZ(), r.floor()));
+        }
+        rooms = new RoomScores(infos, 1.0, 300);
+        if (!mob.getLocation().getBlock().isPassable()) {
+            int id = nav.nearest(mob.getLocation(), 4);
+            if (id >= 0) mob.teleport(nav.loc(id));
+        }
+        m.plugin.getLogger().info("[AI 鬼] 尋路圖：" + nav.nav.size() + " 個格子（" + (System.nanoTime() - t0) / 1_000_000 + " ms）");
+    }
+
+    private void think(boolean busy) {
+        // ---- 看 ----
+        LivingEntity seen = perceive();
+        hearFootsteps();
+        boolean near = seen != null && seen.getLocation().distance(mob.getLocation()) <= 12;
+        director.pressure(m.tick, near, c.thinkEvery());
+        learnHatches();
         if (busy) {
-            // 正在做事（拆障礙物、關電源……）時看到人就放下去追
-            if (seen != null && seen.getLocation().distance(mob.getLocation()) < 10) m.acts.cancel(mob.getUniqueId(), null);
+            // 正在做事（拆東西、關電源、弄壞大門……）：5 格內有人才放下；做不到一半時 8 格內有人也放下
+            if (seen == null) return;
+            double d = seen.getLocation().distance(mob.getLocation());
+            double prog = m.acts.progress(mob.getUniqueId());
+            if (d <= 5 || (prog < 0.5 && d <= 8)) m.acts.cancel(mob.getUniqueId(), null);
             else return;
         }
-        sense();
+        if (director.shouldSense(m.tick)) sense();
+        if (sensed != null && m.tick > sensedUntil) sensed = null;
+        Goal prev = goal;
         goal = brain.decide(situation(seen));
-        act(goal, seen);
+        if (goal.kind() != Kind.SEARCH_LAST_SEEN || prev == null || prev.kind() != Kind.SEARCH_LAST_SEEN) {
+            if (goal.kind() != Kind.SEARCH_LAST_SEEN) {
+                searchTunnelDone = searchHideoutDone = searchExtendDone = false;
+            }
+        }
+        if (goal.kind() != Kind.GUARD_JAIL && prev != null && prev.kind() == Kind.GUARD_JAIL) watchSpot = null;
+        act(goal, seen, prev);
     }
 
-    // ---- 感知 ----
+    // =====================================================================
+    // 感知
+    // =====================================================================
 
-    /** 看得到的最近自由逃生者（同一層、距離內、視線沒被擋；被煙霧彈打到時看不到）。 */
-    private Player perceive() {
-        if (m.tick < blindUntil) return null;
+    /** 自由的逃生者（玩家）＋假逃生者。 */
+    private List<LivingEntity> targets() {
+        List<LivingEntity> out = new ArrayList<>(m.freeSurvivors());
+        out.addAll(m.dummies.alive());
+        return out;
+    }
+
+    /** 看得到 e 嗎：距離、視野角（身邊幾格不分方向）、三條視線（眼睛、胸口、腳）任一條沒被擋。 */
+    private boolean canSee(LivingEntity e) {
+        if (m.tick < blindUntil || !e.getWorld().equals(mob.getWorld())) return false;
+        Location me = mob.getEyeLocation();
+        double d = e.getLocation().distance(mob.getLocation());
         double range = m.obj.powerOn() ? c.sightRange() : c.sightRangeDark();
-        Player best = null;
-        double bd = Double.MAX_VALUE;
-        for (Player p : m.freeSurvivors()) {
-            if (!p.getWorld().equals(mob.getWorld()) || !m.sameFloor(p.getLocation(), mob.getLocation())) continue;
-            double d = p.getLocation().distance(mob.getLocation());
-            if (d > range || d >= bd || !mob.hasLineOfSight(p)) continue;
-            best = p;
-            bd = d;
+        if (d > range) return false;
+        if (d > c.nearAware() && !inFront(e.getLocation(), c.fovDegrees())) return false;
+        for (double h : new double[]{e.getEyeHeight(), 1.0, 0.2}) {
+            Location to = e.getLocation().add(0, h, 0);
+            Vector dir = to.toVector().subtract(me.toVector());
+            double len = dir.length();
+            if (len < 0.01) return true;
+            var hit = me.getWorld().rayTraceBlocks(me, dir.normalize(), len, FluidCollisionMode.NEVER, true);
+            if (hit == null || hit.getHitBlock() == null) return true;
         }
-        if (best != null) {
-            lastSeen = best.getLocation();
-            lastSeenTick = m.tick;
-            lastSeenId = best.getUniqueId();
-        }
-        return best;
+        return false;
     }
 
-    /** 感應（作弊）：每隔一段時間得到最近的自由逃生者大概在哪；那個人會聽到心跳加快。 */
+    private boolean inFront(Location to, double fov) {
+        Vector face = mob.getLocation().getDirection().setY(0);
+        Vector dir = to.toVector().subtract(mob.getLocation().toVector()).setY(0);
+        if (face.lengthSquared() < 1e-6 || dir.lengthSquared() < 1e-6) return true;
+        return Math.toDegrees(face.angle(dir)) <= fov / 2;
+    }
+
+    private LivingEntity byId(UUID id) {
+        if (id == null) return null;
+        for (LivingEntity e : targets()) if (e.getUniqueId().equals(id)) return e;
+        return null;
+    }
+
+    private LivingEntity perceive() {
+        List<TargetPicker.Candidate> cands = new ArrayList<>();
+        Map<UUID, LivingEntity> byId = new HashMap<>();
+        for (LivingEntity e : targets()) {
+            if (!canSee(e)) continue;
+            boolean isBusy = e instanceof Player p ? m.acts.busy(p.getUniqueId()) : m.dummies.busy(e);
+            boolean rescued = e instanceof Player p && m.survivors.get(p.getUniqueId()) != null
+                    && m.tick < m.survivors.get(p.getUniqueId()).protectedUntil + 100;
+            cands.add(new TargetPicker.Candidate(e.getUniqueId(), e.getLocation().distance(mob.getLocation()), isBusy, rescued));
+            byId.put(e.getUniqueId(), e);
+        }
+        UUID pick = picker.pick(chaseId, chaseSeenTick, m.tick, cands);
+        if (pick != null && !pick.equals(chaseId)) windupStart = -1;
+        chaseId = pick;
+        LivingEntity seen = pick == null ? null : byId.get(pick);
+        if (seen != null) {
+            chaseSeenTick = m.tick;
+            Location now = seen.getLocation();
+            if (prevSeenLoc != null && prevSeenLoc.getWorld().equals(now.getWorld()) && prevSeenLoc.distance(now) > 0.2)
+                lastDir = now.toVector().subtract(prevSeenLoc.toVector()).setY(0).normalize();
+            prevSeenLoc = now;
+            if (lastSeenTick < m.tick - c.searchTime() || lastSeen == null) searchStart = m.tick;
+            lastSeen = now;
+            lastSeenTick = m.tick;
+            lastSeenId = seen.getUniqueId();
+            director.contact(m.tick);
+            contactStat();
+            if (m.tick - lastChaseTick > 100) {
+                chases++;
+                // 發現人：短促的低吼，讓逃生者知道「被看到了」
+                mob.getWorld().playSound(mob.getLocation(), Sound.ENTITY_WARDEN_AGITATED, 1.2f, 1.4f);
+            }
+            lastChaseTick = m.tick;
+        } else if (chaseId != null) {
+            // 剛看不到（1 秒內）：繼續用對方的真實位置，等同真人鬼看到他往哪邊轉
+            LivingEntity e = byId(chaseId);
+            if (e != null && m.tick - chaseSeenTick <= 15) {
+                lastSeen = e.getLocation();
+                lastSeenTick = m.tick;
+            }
+        }
+        return seen;
+    }
+
+    /** 聽腳步：跑步 hear-sprint 格、走路 hear-walk 格（蹲著沒有聲音），開關門另外算。 */
+    private void hearFootsteps() {
+        for (LivingEntity e : targets()) {
+            if (!e.getWorld().equals(mob.getWorld())) continue;
+            double d = e.getLocation().distance(mob.getLocation());
+            boolean moving, sprint;
+            if (e instanceof Player p) {
+                Match.Survivor sv = m.survivors.get(p.getUniqueId());
+                moving = sv != null && m.tick - sv.stillSince < 10;
+                sprint = p.isSprinting();
+                if (p.isSneaking()) continue;
+            } else {
+                moving = e instanceof Mob mb && mb.getPathfinder().hasPath();
+                sprint = m.dummies.running(e);
+            }
+            if (!moving) continue;
+            if (d <= (sprint ? c.hearSprint() : c.hearWalk())) hearNoise(e.getLocation(), Match.NOISE_LOW);
+        }
+    }
+
+    /** 感應（作弊）：多久沒接觸才觸發，給「最近那個人在哪一間房間」；那個人會聽到心跳加快。 */
     private void sense() {
-        if (nextSense == 0) nextSense = m.tick + c.senseInterval();
-        if (sensed != null && (m.tick > sensedUntil || sensed.getWorld().equals(mob.getWorld()) && sensed.distance(mob.getLocation()) < 3)) sensed = null;
-        if (m.tick < nextSense) return;
-        nextSense = m.tick + c.senseInterval();
-        Player best = null;
+        LivingEntity best = null;
         double bd = Double.MAX_VALUE;
-        for (Player p : m.freeSurvivors()) {
-            double d = p.getLocation().distance(mob.getLocation()) + (m.sameFloor(p.getLocation(), mob.getLocation()) ? 0 : 30);
+        for (LivingEntity e : targets()) {
+            if (!e.getWorld().equals(mob.getWorld())) continue;
+            double d = e.getLocation().distance(mob.getLocation()) + (m.sameFloor(e.getLocation(), mob.getLocation()) ? 0 : 12);
             if (d < bd) {
                 bd = d;
-                best = p;
+                best = e;
             }
         }
         if (best == null) return;
-        sensed = walkableNear(jitter(best.getLocation(), c.senseError()));
+        director.sensed(m.tick);
+        senses++;
+        lastSenseTick = m.tick;
+        sensedRoom = roomAt(best.getLocation());
+        sensed = sensedRoom >= 0 ? snapWalkable(m.loc(roomList.get(sensedRoom).center()), null) : snapWalkable(best.getLocation(), null);
+        sensedId = best.getUniqueId();
         sensedUntil = m.tick + 30 * 20;
-        best.playSound(best.getLocation(), Sound.ENTITY_WARDEN_HEARTBEAT, 1f, 1.6f);
-        Player target = best;
-        Bukkit.getScheduler().runTaskLater(m.plugin, () -> target.playSound(target.getLocation(), Sound.ENTITY_WARDEN_HEARTBEAT, 1f, 1.8f), 6L);
-        best.sendActionBar(Component.text("你覺得有東西盯上你了……", NamedTextColor.DARK_RED));
+        if (best instanceof Player target) {
+            target.playSound(target.getLocation(), Sound.ENTITY_WARDEN_HEARTBEAT, 1f, 1.6f);
+            Bukkit.getScheduler().runTaskLater(m.plugin, () -> target.playSound(target.getLocation(), Sound.ENTITY_WARDEN_HEARTBEAT, 1f, 1.8f), 6L);
+            target.sendActionBar(Component.text("你覺得有東西盯上你了……", NamedTextColor.DARK_RED));
+        }
     }
 
-    private GhostBrain.Situation situation(Player seen) {
+    /** 地圖知識跟真人鬼一樣：只知道自己看過的地洞出入口。 */
+    private void learnHatches() {
+        if (m.tick % 20 != 0) return;
+        for (int i = 0; i < m.b.hatches.size(); i++) {
+            if (knownHatches.contains(i)) continue;
+            Location t = m.loc(m.b.hatches.get(i).trapdoor()).add(0, 1.1, 0);
+            if (!t.getWorld().equals(mob.getWorld()) || t.distance(mob.getLocation()) > 16) continue;
+            Location me = mob.getEyeLocation();
+            Vector dir = t.toVector().subtract(me.toVector());
+            var hit = me.getWorld().rayTraceBlocks(me, dir.clone().normalize(), dir.length(), FluidCollisionMode.NEVER, true);
+            if (hit == null || hit.getHitBlock() == null) knownHatches.add(i);
+        }
+    }
+
+    private GhostBrain.Situation situation(LivingEntity seen) {
         GhostBrain.Seen s = seen == null ? null
                 : new GhostBrain.Seen(seen.getUniqueId(), pt(seen.getLocation()), seen.getLocation().distance(mob.getLocation()));
         List<Point> gates = new ArrayList<>();
-        for (Objectives.GateState gs : m.obj.runningUnsabotagedGates()) gates.add(pt(m.loc(gs.g.reader())));
+        for (Objectives.GateState gs : m.obj.runningUnsabotagedGates()) {
+            // 趕得上才去：走過去的時間＋弄壞 4 秒 ＜ 剩下的倒數
+            double secs = travelSeconds(m.loc(gs.g.reader())) + m.o.ghostSabotage() / 20.0;
+            if (secs < gs.remaining / 20.0) gates.add(pt(m.loc(gs.g.reader())));
+        }
         int jailed = 0;
         for (Match.Survivor sv : m.survivors.values()) if (sv.status == Match.Status.JAILED) jailed++;
         if (jailed > jailedBefore) {
-            guardRolled = true;
             guard = m.rnd.nextDouble() < c.guardJailChance();
+            guardUntil = m.tick + c.guardCap();
         }
-        if (jailed == 0) guard = false;
+        if (jailed == 0 || m.tick > guardUntil) guard = false;
         jailedBefore = jailed;
         Location jail = m.obj.jailNearestTo(mob.getLocation());
+        // 電源剛開不要馬上衝去關（像被遙控）：開了 power-cut-delay 秒以後才算
+        boolean powerOn = m.obj.powerOn() && m.tick - m.obj.powerOnTick() >= c.powerCutDelay();
         return new GhostBrain.Situation(m.tick, m.tick < blindUntil, s, pt(lastSeen), lastSeenTick, pt(noise), noiseTick, pt(sensed),
-                m.obj.cardRevealOpen(), m.obj.cardMoveAvailable(), m.obj.powerOn(), m.obj.cutPowerUsed(), gates,
+                m.obj.cardRevealOpen(), m.obj.cardMoveAvailable(), powerOn, m.obj.cutPowerUsed(), gates,
                 guard && jailed > 0, pt(jail), pt(mob.getLocation()));
     }
 
-    // ---- 行動 ----
+    // =====================================================================
+    // 攻擊（每 tick）
+    // =====================================================================
 
-    private void act(Goal g, Player seen) {
-        Location here = mob.getLocation();
+    private void attackTick() {
+        LivingEntity t = chaseId == null ? null : byId(chaseId);
+        if (t == null || m.tick < blindUntil || !t.getWorld().equals(mob.getWorld())) {
+            windupStart = -1;
+            return;
+        }
+        double d = t.getLocation().distance(mob.getLocation());
+        boolean inReach = d <= c.attackRange() && inFront(t.getLocation(), c.fovDegrees()) && mob.hasLineOfSight(t);
+        if (windupStart < 0) {
+            if (inReach && m.tick >= m.fatigueUntil) {
+                windupStart = m.tick;
+                mob.lookAt(t);
+                // 前搖的預警：逃生者聽得到，才有辦法靠反應騙它揮空
+                mob.getWorld().playSound(mob.getLocation(), Sound.ENTITY_PLAYER_ATTACK_SWEEP, 0.8f, 0.5f);
+            }
+            return;
+        }
+        mob.lookAt(t);
+        if (m.tick - windupStart < c.reaction()) return;
+        windupStart = -1;
+        if (inReach) {
+            mob.swingMainHand();
+            if (t instanceof Player p) m.ghostHit(p);
+            else {
+                m.ghostSwing();
+                catches++;
+                director.captured(m.tick);
+                m.dummies.caught(t, mob);
+                forget(t.getUniqueId());
+            }
+        } else if (m.rnd.nextDouble() < c.whiffChance()) {
+            mob.swingMainHand();
+            m.ghostSwing();
+            misses++;
+        }
+    }
+
+    // =====================================================================
+    // 行動
+    // =====================================================================
+
+    private void act(Goal g, LivingEntity seen, Goal prev) {
         speedMul = switch (g.kind()) {
             case ATTACK, CHASE -> c.chaseSpeed();
             case SEARCH_LAST_SEEN, INVESTIGATE_NOISE, GO_SENSED, SABOTAGE_GATE -> c.searchSpeed();
             default -> c.patrolSpeed();
         };
+        Mode mode = switch (g.kind()) {
+            case ATTACK, CHASE -> Mode.CHASE;
+            case SEARCH_LAST_SEEN, INVESTIGATE_NOISE, GO_SENSED -> Mode.SEARCH;
+            default -> Mode.CALM;
+        };
+        Location here = mob.getLocation();
+        if (g.kind() != Kind.SEARCH_LAST_SEEN && g.kind() != Kind.INVESTIGATE_NOISE && g.kind() != Kind.GO_SENSED && g.kind() != Kind.PATROL)
+            lookStep = -1;
         switch (g.kind()) {
-            case ATTACK -> {
-                moveTo(seen.getLocation());
-                if (!g.victim().equals(attackTarget)) {
-                    attackTarget = g.victim();
-                    attackSince = m.tick;
-                }
-                if (m.tick - attackSince >= c.reaction() && m.tick >= m.fatigueUntil) {
-                    mob.swingMainHand();
-                    if (seen.getLocation().distance(here) <= c.attackRange() && mob.hasLineOfSight(seen)) m.ghostHit(seen);
-                    else m.ghostSwing();
-                    attackSince = m.tick + c.reaction();
-                }
+            case ATTACK, CHASE -> {
+                lookStep = -1;
+                navigate(seen.getLocation(), mode);
             }
-            case CHASE -> {
-                attackTarget = null;
-                moveTo(seen.getLocation());
-            }
-            case SEARCH_LAST_SEEN -> {
-                attackTarget = null;
-                if (lastSeen != null && lastSeen.distance(here) < 2.5) {
-                    if (!followTunnel() && !checkHideout()) wander(lastSeen, 6);
-                } else moveTo(lastSeen);
-            }
+            case SEARCH_LAST_SEEN -> search(here);
             case INVESTIGATE_NOISE -> {
                 if (noise.distance(here) < 2.5) {
                     noise = null;
-                    wander(here, 6);
-                } else moveTo(noise);
+                    if (!hideoutCheck(here, 4, c.checkHideoutNoiseChance())) startLook();
+                } else navigate(noise, mode);
             }
-            case GO_SENSED -> moveTo(sensed);
+            case GO_SENSED -> {
+                if (sensed.distance(here) < 2.5) {
+                    sensed = null;
+                    if (!hideoutCheck(here, 8, c.checkHideoutNoiseChance())) startLook();
+                } else navigate(sensed, mode);
+            }
             case MOVE_CARD -> {
-                mob.getPathfinder().stopPathfinding();
-                moveTarget = null;
+                stopMoving();
                 m.obj.ghostMoveCard(mob);
             }
             case SABOTAGE_GATE -> {
@@ -317,237 +624,526 @@ final class AiGhost {
                 if (reader.distance(here) <= 2.5) {
                     for (Objectives.GateState gs : m.obj.runningUnsabotagedGates()) {
                         if (m.loc(gs.g.reader()).distance(reader) < 0.5) {
-                            mob.getPathfinder().stopPathfinding();
+                            stopMoving();
                             m.obj.ghostSabotage(mob, gs);
                         }
                     }
-                } else moveTo(reader);
+                } else navigate(reader, mode);
             }
             case CUT_POWER -> {
                 Location lever = m.obj.leverLocation();
                 if (lever == null) return;
                 Location stand = lever.clone().add(0, -1, 0); // 拉桿裝在牆上（眼睛高度），站在它下面那格
                 if (stand.distance(here) <= 2.5) {
-                    mob.getPathfinder().stopPathfinding();
+                    stopMoving();
                     m.obj.ghostCutPower(mob);
-                } else moveTo(stand);
+                } else navigate(stand, mode);
             }
-            case GUARD_JAIL -> {
-                Location jail = toLoc(g.target());
-                if (jail.distance(here) > 8) moveTo(jail);
-                else wander(jail, 7);
-            }
+            case GUARD_JAIL -> guardJail(toLoc(g.target()));
             case PATROL -> patrol();
         }
     }
 
-    /** 追丟時，最後看到的位置在地洞出入口旁邊：有機率走去那條通道的另一端。 */
-    private boolean followTunnel() {
-        if (lastSeen == null || followedTunnel.contains(lastSeen)) return false;
-        followedTunnel.add(lastSeen);
-        List<Building.Hatch> hs = m.b.hatches;
-        for (int i = 0; i < hs.size(); i++) {
-            Location t = m.loc(hs.get(i).trapdoor()).add(0, 1, 0);
-            if (t.distance(lastSeen) > 2 || m.rnd.nextDouble() >= c.followTunnelChance()) continue;
-            int other = i ^ 1; // 生成時兩個出入口一組：0-1、2-3……
-            if (other >= hs.size()) return false;
-            Location end = m.loc(hs.get(other).trapdoor()).add(0, 1, 0);
-            lastSeen = end;
-            lastSeenTick = m.tick;
-            moveTo(end);
-            return true;
-        }
-        return false;
+    enum Mode { CHASE, SEARCH, CALM }
+
+    // ---- 搜尋 ----
+
+    /** 搜尋的子目標開始時延長搜尋時間（最多 search-cap），不然走到一半會被切回巡邏。 */
+    private void extendSearch() {
+        if (m.tick - searchStart < c.searchCap()) lastSeenTick = m.tick;
     }
 
-    /** 追丟時，附近有暗格入口：有機率去打大入口查看。 */
-    private boolean checkHideout() {
-        for (Building.Room r : m.b.rooms) {
-            if (!r.hideout() || m.loc(r.center()).distance(lastSeen) > 8) continue;
-            for (int i = 0; i < m.b.crawlHoles.size(); i++) {
-                Building.CrawlHole h = m.b.crawlHoles.get(i);
-                if (m.holeIndexAt(h.lower()) < 0 || checkedHoles.contains(i)) continue;
-                if (m.loc(h.lower()).distance(m.loc(r.center())) > 3) continue;
-                checkedHoles.add(i);
-                if (m.rnd.nextDouble() >= c.checkHideoutChance()) continue;
-                Location hole = m.loc(h.lower());
-                if (hole.distance(mob.getLocation()) <= 2.5) {
-                    mob.getPathfinder().stopPathfinding();
-                    m.ghostWidenHole(i);
-                } else {
-                    moveTo(hole);
-                    checkedHoles.remove(i); // 還沒走到，下次再查
-                }
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /** 巡邏：挑一間最近沒去過的房間（偶爾換樓層）。 */
-    private void patrol() {
-        Location here = mob.getLocation();
-        // 還沒到、也還沒超過 30 秒：繼續走（moveTo 只在需要時重新找路）
-        if (patrolTarget != null && patrolTarget.distance(here) > 3 && m.tick < patrolUntil) {
-            moveTo(patrolTarget);
+    private void search(Location here) {
+        if (workPendingHole()) return;
+        if (lastSeen.distance(here) >= 2.5) {
+            navigate(lastSeen, Mode.SEARCH);
             return;
         }
-        if (patrolTarget != null) {
-            visited.addLast(patrolTarget);
-            while (visited.size() > 4) visited.removeFirst();
+        if (lookStep >= 0) return;
+        // ① 最後看到的位置在地洞出入口旁邊：有機率下去追（照實際的路，可能走通道、也可能從地面繞）
+        if (!searchTunnelDone) {
+            searchTunnelDone = true;
+            for (int i = 0; i < m.b.hatches.size(); i++) {
+                Location t = m.loc(m.b.hatches.get(i).trapdoor()).add(0, 1, 0);
+                if (t.distance(lastSeen) > 2.5) continue;
+                if (m.rnd.nextDouble() >= c.followTunnelChance()) break;
+                int other = i ^ 1; // 生成時兩個出入口一組：0-1、2-3……
+                if (other >= m.b.hatches.size()) break;
+                knownHatches.add(i);
+                knownHatches.add(other); // 跟著鑽下去，自然會知道通到哪
+                lastSeen = m.loc(m.b.hatches.get(other).trapdoor()).add(0, 1, 0);
+                extendSearch();
+                navigate(lastSeen, Mode.SEARCH);
+                return;
+            }
         }
-        List<Location> same = new ArrayList<>(), other = new ArrayList<>();
-        for (Building.Room r : m.b.rooms) {
-            if (r.hideout() || r.type() == com.ghosthunt.building.RoomType.GHOST_ROOM) continue;
-            Location l = walkableNear(m.loc(r.center())); // 房間中心那格可能擺了家具，找旁邊站得到的格子
-            boolean seenRecently = false;
-            for (Location v : visited) if (v.distance(l) < 3) seenRecently = true;
-            if (seenRecently || l.distance(here) < 4) continue;
-            (m.sameFloor(l, here) ? same : other).add(l);
+        // ② 附近有暗格：這次搜尋只擲一次骰子，中了就查最近的一個
+        if (!searchHideoutDone) {
+            searchHideoutDone = true;
+            if (hideoutCheck(lastSeen, 8, c.checkHideoutChance())) {
+                extendSearch();
+                return;
+            }
         }
-        List<Location> pool = !other.isEmpty() && (same.isEmpty() || m.rnd.nextDouble() < 0.25) ? other : same;
-        if (pool.isEmpty()) return;
-        pool.sort(java.util.Comparator.comparingDouble(l -> l.distance(here)));
-        patrolTarget = pool.get(m.rnd.nextInt(Math.min(3, pool.size())));
-        patrolUntil = m.tick + 30 * 20;
-        moveTarget = null;
-        moveTo(patrolTarget);
+        // ③ 照對方最後的移動方向多走 6～8 格
+        if (!searchExtendDone && lastDir != null) {
+            searchExtendDone = true;
+            Location ahead = snapWalkable(lastSeen.clone().add(lastDir.clone().multiply(7)), lastSeen);
+            if (ahead != null && ahead.distance(here) > 3) {
+                lastSeen = ahead;
+                extendSearch();
+                navigate(ahead, Mode.SEARCH);
+                return;
+            }
+        }
+        startLook();
     }
 
-    /** 在 center 附近 radius 格內隨便找個走得到的地方。 */
-    private void wander(Location center, double radius) {
-        if (moveTarget != null && moveTarget.distance(mob.getLocation()) > 2) return;
-        moveTo(walkableNear(jitter(center, radius)));
+    /** 在 at 附近 radius 格內找暗格入口，擲一次 chance，中了就去打大最近的那個。 */
+    private boolean hideoutCheck(Location at, double radius, double chance) {
+        int bestHole = -1;
+        double bd = Double.MAX_VALUE;
+        for (Building.Room r : m.b.rooms) {
+            if (!r.hideout() || m.loc(r.center()).distance(at) > radius) continue;
+            for (int i = 0; i < m.b.crawlHoles.size(); i++) {
+                Building.CrawlHole h = m.b.crawlHoles.get(i);
+                if (m.holeIndexAt(h.lower()) < 0) continue;
+                if (m.loc(h.lower()).distance(m.loc(r.center())) > 3) continue;
+                double d = m.loc(h.lower()).distance(mob.getLocation());
+                if (d < bd) {
+                    bd = d;
+                    bestHole = i;
+                }
+            }
+        }
+        if (bestHole < 0 || m.rnd.nextDouble() >= chance) return false;
+        pendingHole = bestHole;
+        return true;
+    }
+
+    private int pendingHole = -1;
+
+    /** 去打大選好的暗格入口（search／noise 之後幾次思考都會走到這裡）。 */
+    private boolean workPendingHole() {
+        if (pendingHole < 0) return false;
+        if (m.holeIndexAt(m.b.crawlHoles.get(pendingHole).lower()) < 0) {
+            pendingHole = -1;
+            return false;
+        }
+        Location hole = m.loc(m.b.crawlHoles.get(pendingHole).lower());
+        if (hole.distance(mob.getLocation()) <= 2.5) {
+            stopMoving();
+            if (m.ghostWidenHole(pendingHole)) pendingHole = -1;
+        } else navigate(hole, Mode.SEARCH);
+        return true;
+    }
+
+    // ---- 轉頭張望 ----
+
+    private void startLook() {
+        if (lookStep >= 0) return;
+        stopMoving();
+        lookStep = 0;
+        lookBase = mob.getLocation().getYaw();
+        lookNext = m.tick;
+    }
+
+    private void lookTick() {
+        if (m.tick < lookNext) {
+            mob.setRotation(currentLookYaw(), 0);
+            return;
+        }
+        lookStep++;
+        if (lookStep > 3) {
+            lookStep = -1;
+            return;
+        }
+        lookNext = m.tick + 12 + m.rnd.nextInt(8);
+        mob.setRotation(currentLookYaw(), 0);
+    }
+
+    private float currentLookYaw() {
+        float[] offs = {0, -70, 70, 180};
+        return lookBase + offs[Math.min(lookStep, offs.length - 1)];
+    }
+
+    // ---- 守監獄 ----
+
+    private Location watchSpot;
+    private long watchUntil;
+    private int watchPhase;
+
+    /** 守望點：籠子「守太久救援會變快」範圍外、看得到籠子的格子，站著面向監獄；兩個點以後走開一陣子再回來。 */
+    private void guardJail(Location jail) {
+        if (watchSpot == null || m.tick > watchUntil) {
+            watchPhase++;
+            if (watchPhase % 3 == 0) {
+                // 走開：去一個離監獄遠一點的地方 15～20 秒
+                watchSpot = snapWalkable(jitter(jail, m.s.campRadius() + 12), jail);
+                watchUntil = m.tick + 300 + m.rnd.nextInt(100);
+            } else {
+                watchSpot = pickWatchSpot(jail);
+                watchUntil = m.tick + 300;
+            }
+        }
+        if (watchSpot == null) {
+            navigate(jail, Mode.CALM);
+            return;
+        }
+        if (watchSpot.distance(mob.getLocation()) > 1.5) navigate(watchSpot, Mode.CALM);
+        else {
+            stopMoving();
+            Vector v = jail.toVector().subtract(mob.getLocation().toVector());
+            mob.setRotation((float) Math.toDegrees(Math.atan2(-v.getX(), v.getZ())), 0);
+        }
+    }
+
+    private Location pickWatchSpot(Location jail) {
+        if (nav == null) return null;
+        double min = m.s.campRadius() + 1, max = m.s.campRadius() + 6;
+        List<Location> cands = new ArrayList<>();
+        for (int i = 0; i < nav.nav.size(); i++) {
+            if (!nav.isMain(i)) continue;
+            Location l = nav.loc(i);
+            if (!m.sameFloor(l, jail)) continue;
+            double d = l.distance(jail);
+            if (d < min || d > max) continue;
+            Location eye = l.clone().add(0, 1.6, 0), cage = jail.clone().add(0, 3.3, 0);
+            Vector dir = cage.toVector().subtract(eye.toVector());
+            var hit = eye.getWorld().rayTraceBlocks(eye, dir.clone().normalize(), dir.length(), FluidCollisionMode.NEVER, true);
+            if (hit == null || hit.getHitBlock() == null) cands.add(l);
+        }
+        return cands.isEmpty() ? null : cands.get(m.rnd.nextInt(cands.size()));
+    }
+
+    // ---- 巡邏 ----
+
+    private void patrol() {
+        if (workPendingHole()) return;
+        Location here = mob.getLocation();
+        if (patrolTarget != null && patrolTarget.distance(here) > 2.5 && m.tick < patrolUntil) {
+            navigate(patrolTarget, Mode.CALM);
+            return;
+        }
+        if (patrolTarget != null && patrolTarget.distance(here) <= 2.5) {
+            if (patrolRoom >= 0) rooms.visited(patrolRoom, m.tick);
+            patrolTarget = null;
+            startLook();
+            return;
+        }
+        if (lookStep >= 0) return;
+        int cur = roomAt(here);
+        boolean calm = director.calm(m.tick);
+        Location contact = lastSeen;
+        boolean powerOn = m.obj.powerOn();
+        boolean anyAuthorized = !m.obj.authorized.isEmpty();
+        int pick = rooms.choose(m.rnd, m.tick, cur, r -> {
+            Building.Room room = roomList.get(r.id());
+            double w = 1;
+            if (!powerOn && room.type() == RoomType.ELECTRICAL) w *= 3;
+            if (powerOn && !anyAuthorized && room.type() == RoomType.SECURITY) w *= 3;
+            if (anyAuthorized && nearGate(m.loc(room.center()))) w *= 3;
+            // 冷靜期：偏向離最後接觸的地方遠一點
+            if (calm && contact != null && contact.getWorld().equals(here.getWorld()))
+                w *= Math.min(3, 0.3 + m.loc(room.center()).distance(contact) / 20.0);
+            Location l = m.loc(room.center());
+            for (Map.Entry<Location, Long> b : badTargets.entrySet())
+                if (b.getValue() > m.tick && b.getKey().getWorld().equals(l.getWorld()) && b.getKey().distance(l) < 4) w = 0;
+            return w;
+        }, r -> m.loc(roomList.get(r.id()).center()).distance(here) / 4.0);
+        if (pick < 0) return;
+        patrolRoom = pick;
+        patrolTarget = snapWalkable(m.loc(roomList.get(pick).center()), null);
+        patrolUntil = m.tick + 30 * 20;
+        if (patrolTarget != null) navigate(patrolTarget, Mode.CALM);
+    }
+
+    private boolean nearGate(Location l) {
+        for (Building.Gate g : m.b.gates) if (m.loc(g.reader()).getWorld().equals(l.getWorld()) && m.loc(g.reader()).distance(l) < 14) return true;
+        return false;
+    }
+
+    /** at 所在的房間（同一層最近的房間中心），找不到回傳 -1。 */
+    private int roomAt(Location at) {
+        int best = -1;
+        double bd = Double.MAX_VALUE;
+        for (int i = 0; i < roomList.size(); i++) {
+            Building.Room r = roomList.get(i);
+            Location l = m.loc(r.center());
+            if (!l.getWorld().equals(at.getWorld()) || !m.sameFloor(l, at)) continue;
+            double d = l.distance(at) / Math.sqrt(Math.max(9, r.area()));
+            if (d < bd) {
+                bd = d;
+                best = i;
+            }
+        }
+        return best;
+    }
+
+    // =====================================================================
+    // 走路：自己的 A* ＋ 原版尋路走短路
+    // =====================================================================
+
+    private void stopMoving() {
+        mob.getPathfinder().stopPathfinding();
+        rawPath = List.of();
+        wayPath = List.of();
+        rawGoal = -1;
+        vanillaTarget = null;
+    }
+
+    /** 這一段的成本：卡住的門 2.5 秒、障礙物 3.5 秒、蹲伏小洞 4 秒（只在追人、搜尋時用）、地洞（只在追人、搜尋時、而且知道兩端）。 */
+    private GridNav.Cost costFor(Mode mode) {
+        double bps = 5.3 * speedMul; // 每秒幾格
+        return e -> switch (e.kind()) {
+            case WALK, STAIR -> 0;
+            case DOOR -> m.isDoorJammed(nav.doors.get(e.ref())) ? m.o.breakJam() / 20.0 * bps / 2 : 0.15;
+            case BARRICADE -> m.barricadeIndexBarricaded(e.ref()) ? m.s.breakBarricade() / 20.0 * bps / 2 : 0;
+            case HOLE -> m.isHoleWidened(e.ref()) ? 0
+                    : mode == Mode.CALM ? Double.POSITIVE_INFINITY : m.o.widenHole() / 20.0 * bps / 2;
+            case HATCH -> {
+                if (mode == Mode.CALM) yield Double.POSITIVE_INFINITY;
+                int other = e.ref() ^ 1;
+                if (!knownHatches.contains(e.ref()) || !knownHatches.contains(other)) yield Double.POSITIVE_INFINITY;
+                yield (m.isHatchPried(e.ref()) ? 0 : m.o.widenHole() / 20.0 * bps) + 1.5 * bps;
+            }
+        };
+    }
+
+    /** 估計走到 to 要幾秒（用 A* 的路線長度；找不到就用直線距離）。 */
+    private double travelSeconds(Location to) {
+        if (nav == null) return to.distance(mob.getLocation()) / 5.3;
+        int a = nav.nearest(mob.getLocation(), 2.5), b = nav.nearestMain(to, 3);
+        List<Integer> p = nav.nav.path(a, b, costFor(Mode.SEARCH));
+        if (p.isEmpty()) return to.distance(mob.getLocation()) / 5.3 * 1.5;
+        return p.size() / (5.3 * c.searchSpeed());
+    }
+
+    /** 走到 goal：需要時重新找路（目標移動、地圖變了、追人時每 2 秒）。 */
+    private void navigate(Location goal, Mode mode) {
+        if (goal == null) return;
+        int g = nav == null ? -1 : nav.nearestMain(goal, 3);
+        if (g < 0 && nav != null) g = nav.nearest(goal, 3); // 例如跟著鑽地洞：目標在通道另一端的出入口
+        if (g < 0) {
+            vanillaMove(goal);
+            return;
+        }
+        boolean replan = rawGoal < 0 || wayPath.isEmpty() || planVersion != m.mapVersion
+                || (g != rawGoal && nav.loc(g).distance(nav.loc(rawGoal)) > 2)
+                || (mode == Mode.CHASE && m.tick - planTick >= 40);
+        if (!replan) return;
+        int start = nav.nearest(mob.getLocation(), 2.5);
+        cost = costFor(mode);
+        List<Integer> p = nav.nav.path(start, g, cost);
+        planTick = m.tick;
+        planVersion = m.mapVersion;
+        if (p.isEmpty()) {
+            // 自己的圖找不到：交給原版尋路試試
+            rawPath = List.of();
+            wayPath = List.of();
+            rawGoal = g;
+            vanillaMove(goal);
+            return;
+        }
+        rawPath = p;
+        wayPath = nav.nav.simplify(p, nav::clear);
+        wayIdx = Math.min(1, wayPath.size() - 1);
+        rawGoal = g;
+        vanillaTarget = null;
+    }
+
+    private void vanillaMove(Location goal) {
+        if (vanillaTarget == null || vanillaTarget.distance(goal) > 1.5 || !mob.getPathfinder().hasPath()) {
+            vanillaTarget = goal.clone();
+            mob.getPathfinder().moveTo(goal, speedMul);
+        }
     }
 
     /**
-     * 走到 to。不同樓層時先走到樓梯：往上走到最近那座樓梯的底部，往下走到樓梯頂端，再繼續（原版尋路一次找太遠會放棄）。
+     * 每 tick：照路點走；前面是要花時間的邊就停下來處理；開路線上的門；卡住處理。
+     * 移動是照格子路線直接推著走（每 tick 設定速度）：路點都是確認過站得住的格子，路點之間的直線也留了身體寬度，
+     * 所以不會撞牆、不會走上家具；上樓梯靠跨步高度（0.6，跟玩家一樣）。原版尋路只在自己的圖找不到路時用。
      */
-    private void moveTo(Location to) {
-        if (to == null) return;
-        Location step = waypoint(to);
-        if (moveTarget == null || moveTarget.distance(step) > 1.5 || !mob.getPathfinder().hasPath() || pathSpeed != speedMul) {
-            if (moveTarget != null && moveTarget.distance(step) <= 1.5 && step.distance(mob.getLocation()) <= 1.5) return; // 已經到了
-            moveTarget = step.clone();
-            var path = mob.getPathfinder().findPath(step);
-            Location end = path == null ? null : path.getFinalPoint();
-            boolean noProgress = end == null || end.distance(mob.getLocation()) < 1.5 && step.distance(mob.getLocation()) > 2.5;
-            if (noProgress) {
-                // 路只到原地：先看身邊是不是被擋住（障礙物、卡住的門……），不是的話換目標
-                moveTarget = null;
-                if (!breakBlockerNearby() && goal != null && goal.kind() == Kind.PATROL) patrolTarget = null;
-                return;
-            }
-            mob.getPathfinder().moveTo(path, speedMul);
-            pathSpeed = speedMul;
-        }
-    }
-
-    private int floorOf(Location l) {
-        var L = m.b.layout;
-        return Math.max(0, Math.min(L.floors - 1, (int) Math.floor((l.getY() - L.floorY(0) - 1) / L.floorHeight)));
-    }
-
-    private Location waypoint(Location to) {
-        if (stairGoal != null) {
-            if (stairGoal.distance(mob.getLocation()) <= 1.5) {
-                // 爬到另一端了：站在最上面那階時腳底還差半格才算上一層，先直接走向目標 3 秒，不要又判斷成要下樓
-                stairGoal = null;
-                stairDoneUntil = m.tick + 60;
-            } else if (m.tick > stairUntil) stairGoal = null;
-            else return stairGoal;
-        }
-        if (m.tick < stairDoneUntil) return to;
-        int from = floorOf(mob.getLocation()), dest = floorOf(to);
-        if (from == dest) return to;
-        Location here = mob.getLocation();
-        Location best = null;
-        double bd = Double.MAX_VALUE;
-        for (Pos[] link : m.b.stairLinks) { // {下層平台, 上層抵達點}
-            Pos p = dest > from ? link[0] : link[1];
-            Location l = m.loc(p);
-            if (floorOf(l) != from) continue;
-            double d = l.distance(here);
-            if (d < bd) {
-                bd = d;
-                best = l;
-            }
-        }
-        if (best == null) return to;
-        if (bd > 1.5) return best;
-        // 已經在樓梯口：目標改成樓梯另一端
-        for (Pos[] link : m.b.stairLinks) {
-            Pos near = dest > from ? link[0] : link[1], far = dest > from ? link[1] : link[0];
-            if (m.loc(near).distance(best) < 0.5) {
-                stairGoal = m.loc(far); // 一路爬到另一端才重新判斷
-                stairUntil = m.tick + 15 * 20;
-                return stairGoal;
-            }
-        }
-        return to;
-    }
-
-    /** 路線上前面 1.5 格內關著的雙開門：幫它開門（卡住的門不開，要撞）。 */
-    private void openDoorsAhead() {
-        Location l = mob.getLocation();
-        for (int dx = -1; dx <= 1; dx++) {
-            for (int dz = -1; dz <= 1; dz++) {
-                Block bl = l.getWorld().getBlockAt(l.getBlockX() + dx, l.getBlockY(), l.getBlockZ() + dz);
-                if (!(bl.getBlockData() instanceof Door d) || d.isOpen()) continue;
-                Pos lower = new Pos(bl.getX(), bl.getY(), bl.getZ());
-                if (d.getHalf() == org.bukkit.block.data.Bisected.Half.TOP) lower = lower.add(0, -1, 0);
-                if (m.isDoorJammed(lower)) continue;
-                for (int dy = 0; dy <= 1; dy++) {
-                    Block part = l.getWorld().getBlockAt(lower.x(), lower.y() + dy, lower.z());
-                    if (part.getBlockData() instanceof Door pd) {
-                        pd.setOpen(true);
-                        part.setBlockData(pd, false);
-                    }
-                }
-                l.getWorld().playSound(bl.getLocation(), Sound.BLOCK_WOODEN_DOOR_OPEN, 1f, 0.9f);
-            }
-        }
-    }
-
-    /** 卡住了：先看是不是被擋住（障礙物、卡住的門、蹲伏小洞、地洞），是的話拆；不是就重新找路，一直卡就換目標，最後把它傳回走得到的地方。 */
-    private void onStuck() {
-        if (breakBlockerNearby()) {
-            stuckCount = 0;
+    private void followPath() {
+        if (wayPath.isEmpty() || nav == null) {
+            stuck.reset();
             return;
         }
-        stuckCount++;
-        Location target = moveTarget;
-        if (stuckCount >= 6) {
-            Location back = walkableNear(mob.getLocation());
-            if (back != null) mob.teleport(back);
-            stuckCount = 0;
-            moveTarget = null;
-            m.plugin.getLogger().info("[AI 鬼] 卡住太久，傳回走得到的地方 " + back);
-        } else if (stuckCount >= 3) {
-            moveTarget = null;
-            patrolTarget = null;
-            moveTo(walkableNear(jitter(mob.getLocation(), 8)));
-        } else if (target != null) {
-            moveTarget = null;
-            moveTo(target);
+        if (wayIdx >= wayPath.size()) {
+            stopMoving();
+            return;
+        }
+        int target = wayPath.get(wayIdx);
+        int from = wayPath.get(Math.max(0, wayIdx - 1));
+        Location tl = nav.loc(target);
+        Location here = mob.getLocation();
+        GridNav.Edge e = nav.nav.edge(from, target);
+        // 要花時間的邊：走到旁邊停下來處理
+        if (e != null && e.kind() != GridNav.Kind.WALK && e.kind() != GridNav.Kind.STAIR) {
+            Location fl = nav.loc(from);
+            if (handleSpecial(e, from, target, fl, here)) return;
+        }
+        openDoorsOnPath();
+        double dx = tl.getX() - here.getX(), dz = tl.getZ() - here.getZ(), dh = Math.hypot(dx, dz);
+        if (dh < 0.45 && Math.abs(tl.getY() - here.getY()) < 1.3) {
+            wayIdx++;
+            stuck.reset();
+            return;
+        }
+        steer(dx, dz, dh);
+        if (stuck.update(m.tick, here.getX(), here.getY(), here.getZ())) onStuck();
+    }
+
+    /** 往 (dx, dz) 方向推一步（速度跟著速度屬性走，所以疲勞、加成都有效）。 */
+    private void steer(double dx, double dz, double dh) {
+        if (dh < 1e-4) return;
+        var attr = mob.getAttribute(Attribute.MOVEMENT_SPEED);
+        double perTick = (attr == null ? 0.45 : attr.getValue()) * speedMul * 0.57; // 0.4635 ≈ 每 tick 0.265 格（實測每秒 5.3 格）
+        double step = Math.min(perTick, dh);
+        mob.setVelocity(new Vector(dx / dh * step, mob.getVelocity().getY(), dz / dh * step));
+        mob.setRotation((float) Math.toDegrees(Math.atan2(-dx, dz)), 0);
+    }
+
+    /** 細路線上離鬼最近那格的下一格。 */
+    private int nextRawNode() {
+        int best = -1;
+        double bd = Double.MAX_VALUE;
+        for (int i = 0; i < rawPath.size(); i++) {
+            double d = nav.loc(rawPath.get(i)).distance(mob.getLocation());
+            if (d < bd) {
+                bd = d;
+                best = i;
+            }
+        }
+        return best >= 0 && best + 1 < rawPath.size() ? rawPath.get(best + 1) : -1;
+    }
+
+    /** 處理要花時間的邊。回傳 true 表示這個 tick 不要再走（正在處理或等待）。 */
+    private boolean handleSpecial(GridNav.Edge e, int from, int target, Location fl, Location here) {
+        switch (e.kind()) {
+            case BARRICADE -> {
+                if (!m.barricadeIndexBarricaded(e.ref())) return false;
+                if (fl.distance(here) > 1.8) return false; // 還沒走到前面
+                stopMovingKeepPath();
+                m.ghostBreakBarricade(e.ref());
+                return true;
+            }
+            case DOOR -> {
+                Pos door = nav.doors.get(e.ref());
+                if (!m.isDoorJammed(door)) return false;
+                if (fl.distance(here) > 1.8) return false;
+                stopMovingKeepPath();
+                m.ghostBreakJam(door);
+                return true;
+            }
+            case HOLE -> {
+                if (m.isHoleWidened(e.ref())) return false;
+                if (fl.distance(here) > 1.8) return false;
+                stopMovingKeepPath();
+                m.ghostWidenHole(e.ref());
+                return true;
+            }
+            case HATCH -> {
+                // 地洞：還沒撬開就先撬（4 秒，很大聲）；撬開後花大約爬梯子的時間（1.5 秒），配梯子聲，傳到梯子另一端
+                if (fl.distance(here) > 1.8) return false;
+                stopMovingKeepPath();
+                if (!m.isHatchPried(e.ref())) {
+                    m.ghostPryHatch(e.ref());
+                    return true;
+                }
+                climbTo = target;
+                climbUntil = m.tick + 30;
+                return true;
+            }
+            default -> {
+                return false;
+            }
         }
     }
 
-    /** 身邊 2 格內有擋路的東西就拆／撞／打大。回傳 true 表示開始做了。 */
-    private boolean breakBlockerNearby() {
-        Location l = mob.getLocation();
-        for (int dx = -2; dx <= 2; dx++)
-            for (int dz = -2; dz <= 2; dz++)
-                for (int dy = 0; dy <= 1; dy++) {
-                    Pos p = new Pos(l.getBlockX() + dx, l.getBlockY() + dy, l.getBlockZ() + dz);
-                    int bi = m.barricadeAt(p);
-                    if (bi >= 0 && m.ghostBreakBarricade(bi)) return true;
-                    Pos door = m.jammedDoorAt(p);
-                    if (door != null && m.ghostBreakJam(door)) return true;
-                    int hole = m.holeIndexAt(p);
-                    if (hole >= 0 && lastSeen != null && m.tick - lastSeenTick < c.searchTime() && m.ghostWidenHole(hole)) return true;
-                }
-        return false;
+    private void stopMovingKeepPath() {
+        mob.getPathfinder().stopPathfinding();
+        stuck.reset();
+    }
+
+    private void climbTick() {
+        if (m.tick % 6 == 0) mob.getWorld().playSound(mob.getLocation(), Sound.BLOCK_LADDER_STEP, 1f, 0.8f);
+        if (m.tick < climbUntil) return;
+        climbUntil = -1;
+        if (climbTo >= 0) mob.teleport(nav.loc(climbTo));
+        climbTo = -1;
+        wayIdx++;
+    }
+
+    /** 只開路線上接下來兩格會經過的門（不是腳邊所有的門），2 格內才開。 */
+    private void openDoorsOnPath() {
+        int start = -1;
+        double bd = Double.MAX_VALUE;
+        for (int i = 0; i < rawPath.size(); i++) {
+            double d = nav.loc(rawPath.get(i)).distance(mob.getLocation());
+            if (d < bd) {
+                bd = d;
+                start = i;
+            }
+        }
+        if (start < 0) return;
+        for (int i = start; i <= Math.min(rawPath.size() - 1, start + 2); i++) {
+            int id = rawPath.get(i);
+            Block bl = m.world.getBlockAt(nav.nav.x(id), nav.nav.y(id), nav.nav.z(id));
+            if (!(bl.getBlockData() instanceof Door d) || d.isOpen()) continue;
+            if (nav.loc(id).distance(mob.getLocation()) > 2.2) continue;
+            Pos lower = new Pos(bl.getX(), bl.getY(), bl.getZ());
+            if (m.isDoorJammed(lower)) continue;
+            m.setDoorOpenPublic(lower, true);
+            m.world.playSound(bl.getLocation(), Sound.BLOCK_WOODEN_DOOR_OPEN, 1f, 0.9f);
+        }
+    }
+
+    /**
+     * 卡住了（stuck-time 秒內幾乎沒移動）：第 1 次重新找路，第 2 次改走下一個細的格子，
+     * 第 3 次把鬼放到路線上附近的格子（只傳到路線上，絕不穿牆），並把目標列入 30 秒黑名單。
+     */
+    private void onStuck() {
+        stuckEvents++;
+        stuckCount++;
+        if (stuckCount == 1) {
+            rawGoal = -1; // 下次 navigate 重新找路
+            wayPath = List.of();
+        } else if (stuckCount == 2) {
+            // 改走細的格子路線（不拉直），從離鬼最近那格開始
+            int next = nextRawNode();
+            int i = next < 0 ? -1 : rawPath.indexOf(next);
+            if (i >= 0) {
+                wayPath = rawPath.subList(i, rawPath.size());
+                wayIdx = 0;
+            }
+        } else {
+            int next = nextRawNode();
+            if (next >= 0 && nav.loc(next).distance(mob.getLocation()) < 3) {
+                mob.teleport(nav.loc(next));
+                teleports++;
+                m.plugin.getLogger().info("[AI 鬼] 卡住，移到路線上的下一格 " + nav.loc(next).toVector());
+            }
+            if (patrolTarget != null) badTargets.put(patrolTarget, m.tick + 600L);
+            patrolTarget = null;
+            stuckCount = 0;
+            rawGoal = -1;
+            wayPath = List.of();
+        }
+    }
+
+    // ---- 腳步聲 ----
+
+    private void footsteps() {
+        if (m.tick % 7 != 0) return;
+        Location here = mob.getLocation();
+        if (lastStepLoc != null && lastStepLoc.getWorld().equals(here.getWorld()) && lastStepLoc.distance(here) > 0.6) {
+            Block below = here.clone().add(0, -0.2, 0).getBlock();
+            Sound step = below.getBlockData().getSoundGroup().getStepSound();
+            boolean chasing = goal != null && (goal.kind() == Kind.CHASE || goal.kind() == Kind.ATTACK);
+            mob.getWorld().playSound(here, step, chasing ? 1.0f : 0.55f, chasing ? 0.9f : 0.75f);
+        }
+        lastStepLoc = here;
     }
 
     // ---- 工具 ----
@@ -557,24 +1153,16 @@ final class AiGhost {
         return at.clone().add((m.rnd.nextDouble() * 2 - 1) * r, 0, (m.rnd.nextDouble() * 2 - 1) * r);
     }
 
-    /** 離 at 最近的「走得到的格子」（同一層）。 */
-    private Location walkableNear(Location at) {
-        if (at == null) return null;
-        Building b = m.b;
-        int f = Math.max(0, Math.min(b.layout.floors - 1, (int) Math.floor((at.getY() - b.layout.floorY(0) - 1) / b.layout.floorHeight)));
-        Set<Pos> tiles = b.walkTiles.get(f);
-        if (tiles == null || tiles.isEmpty()) return at;
-        Pos best = null;
-        double bd = Double.MAX_VALUE;
-        for (Pos p : tiles) {
-            double dx = p.x() + 0.5 - at.getX(), dz = p.z() + 0.5 - at.getZ();
-            double d = dx * dx + dz * dz;
-            if (d < bd) {
-                bd = d;
-                best = p;
+    /** 對齊到鬼走得到的格子（尋路圖的節點，同一層）；暗格裡面不是節點，所以不會對到暗格裡。 */
+    private Location snapWalkable(Location at, Location fallback) {
+        if (at == null) return fallback;
+        if (nav != null) {
+            for (double r : new double[]{2, 4, 7}) {
+                int id = nav.nearestMain(at, r);
+                if (id >= 0) return nav.loc(id);
             }
         }
-        return best == null ? at : m.loc(best);
+        return fallback != null ? fallback : at;
     }
 
     private static Point pt(Location l) {
@@ -585,7 +1173,56 @@ final class AiGhost {
         return new Location(mob.getWorld(), p.x(), p.y(), p.z());
     }
 
+    private void contactStat() {
+        if (firstContact < 0) firstContact = m.tick;
+    }
+
+    // ---- 除錯、統計 ----
+
     String debug() {
-        return goal == null ? "（還沒想）" : goal.kind() + (moveTarget == null ? "" : " → " + moveTarget.getBlockX() + "," + moveTarget.getBlockY() + "," + moveTarget.getBlockZ());
+        Location here = mob.getLocation();
+        return (goal == null ? "（還沒想）" : goal.kind().name())
+                + "｜位置 " + here.getBlockX() + "," + here.getBlockY() + "," + here.getBlockZ()
+                + "｜路點 " + (wayPath.isEmpty() ? "-" : wayIdx + "/" + wayPath.size())
+                + "｜卡住 " + stuckCount + "｜速度 " + speedMul
+                + (chaseId != null ? "｜追 " + chaseId.toString().substring(0, 4) : "")
+                + "｜壓力 " + Math.round(director.pressure());
+    }
+
+    private void debugDraw() {
+        if (debugViewers.isEmpty() || nav == null) return;
+        for (UUID id : debugViewers) {
+            Player p = Bukkit.getPlayer(id);
+            if (p == null) continue;
+            p.sendActionBar(Component.text("[AI 鬼] " + debug(), NamedTextColor.LIGHT_PURPLE));
+            for (int i = Math.max(0, wayIdx - 1); i < wayPath.size(); i++)
+                p.spawnParticle(Particle.END_ROD, nav.loc(wayPath.get(i)).add(0, 0.3, 0), 1, 0, 0, 0, 0);
+            dot(p, lastSeen, Color.RED);
+            dot(p, noise, Color.YELLOW);
+            dot(p, sensed, Color.PURPLE);
+            dot(p, watchSpot, Color.AQUA);
+            dot(p, patrolTarget, Color.LIME);
+        }
+    }
+
+    private static void dot(Player p, Location l, Color col) {
+        if (l == null || !l.getWorld().equals(p.getWorld())) return;
+        p.spawnParticle(Particle.DUST, l.clone().add(0, 1.2, 0), 6, 0.15, 0.3, 0.15, 0, new Particle.DustOptions(col, 1.4f));
+    }
+
+    /** 每局記錄（寫進 stats.log）。 */
+    void statsInto(Map<String, Object> stats) {
+        stats.put("aiDifficulty", c.difficulty());
+        stats.put("aiCatches", catches);
+        stats.put("aiMisses", misses);
+        stats.put("aiChases", chases);
+        stats.put("aiStuck", stuckEvents);
+        stats.put("aiTeleports", teleports);
+        stats.put("aiSenses", senses);
+        stats.put("aiCatchesWithin30sOfSense", catchesAfterSense);
+        stats.put("aiFirstContactSec", firstContact < 0 ? -1 : firstContact / 20);
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<Kind, Integer> e : goalTicks.entrySet()) sb.append(sb.isEmpty() ? "" : ",").append(e.getKey()).append(':').append(e.getValue() / 20);
+        stats.put("aiGoalSeconds", sb.toString());
     }
 }

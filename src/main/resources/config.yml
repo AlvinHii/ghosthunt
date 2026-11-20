@@ -65,25 +65,55 @@ movement:
   allow-jump: false            # 逃生者和鬼都不能跳
   allow-sprint: true
 
-ai-ghost:                      # PvE 的 AI 鬼（/gh start ai）
+ai-ghost:                      # PvE 的 AI 鬼（/gh start ai [easy|normal|hard]）
+  difficulty: normal           # 預設難度（presets 底下的值會蓋掉下面的同名設定）
   mob: HUSK                    # 用哪種怪物當身體（要跟玩家差不多高：過得了門、鑽不過蹲伏小洞）
-  base-speed: 0.45             # 基本速度（怪物的速度數值；0.45 約等於玩家跑步每秒 5.6 格，實測校正）；依人數的加成、揮拳減速跟真人鬼一樣
-  sight-range: 24              # 看得到人的距離（同一層、視線沒被擋）
-  sight-range-dark: 14         # 停電時看得到的距離
-  think-every: 5               # 每幾 tick 想一次下一步（tick）
-  reaction: 0.3                # 進入攻擊距離後多久才揮拳
-  attack-range: 2.5
-  search-time: 10              # 追丟後找多久；聽到的聲音也記這麼久
-  noise-error: 3               # 聽到聲音的位置誤差（格）
-  sense-interval: 60           # 每隔多久「感應」一次最近的逃生者大概在哪（那個人會聽到心跳加快）
-  sense-error: 8               # 感應的位置誤差（格）
-  guard-jail-chance: 0.5       # 有人被關時去守監獄的機率
-  check-hideout-chance: 0.4    # 追丟時去查附近暗格的機率
-  follow-tunnel-chance: 0.5    # 看到人鑽進地洞時，走去通道另一端的機率
-  stuck-time: 3                # 幾秒幾乎沒移動算卡住
-  chase-speed: 1.0             # 看到人追的時候的速度倍率（1.0 = base-speed，約等於跑步）
-  search-speed: 0.9            # 去聽到聲音、感應到的位置、追丟後找人、去弄壞大門
+  base-speed: 0.45             # 基本速度（怪物的速度數值；約等於玩家跑步每秒 5.6 格）；依人數的加成、揮拳減速跟真人鬼一樣
+  chase-speed: 1.0             # 看到人追的時候的速度倍率
+  search-speed: 0.9            # 去聽到聲音、感應到的房間、追丟後找人、去弄壞大門
   patrol-speed: 0.75           # 巡邏、守監獄、去關電源（約等於走路）
+  sight-range: 24              # 看得到人的距離（視線沒被擋；對方的眼睛、胸口、腳任一點看得到就算）
+  sight-range-dark: 14         # 停電時看得到的距離
+  fov: 120                     # 視野角度（度）：只看得到前方
+  near-aware: 3                # 這麼近的話不分方向都察覺得到
+  think-every: 5               # 每幾 tick 想一次下一步（攻擊是每 tick 判斷）
+  reaction: 0.3                # 揮拳前搖：進入攻擊距離後多久揮出去（有預警音效）
+  attack-range: 2.5            # 攻擊距離（腳到腳；故意比真人鬼短一點，平衡 AI 的感應）
+  whiff-chance: 0.3            # 前搖結束時人已經退出範圍，還是揮出去（揮空）的機率
+  search-time: 10              # 追丟後找多久；聽到的聲音也記這麼久
+  search-cap: 25               # 搜尋的子目標（去地洞另一端、查暗格、往逃跑方向找）最多把搜尋延長到幾秒
+  noise-error: 3               # 聽到聲音的位置誤差（格）
+  hear-sprint: 8               # 聽得到多遠的跑步聲
+  hear-walk: 4                 # 聽得到多遠的走路聲（蹲著走沒有聲音）
+  hear-door: 12                # 聽得到多遠的開關門聲
+  sense-quiet: 45              # 多久沒看到、沒聽到任何人才「感應」一次最近的人在哪一間房（被盯上的人聽到心跳加快）
+  sense-gap: 45                # 兩次感應至少隔多久
+  pressure-limit: 60           # 壓力值：近距離看得到人時每秒 +1，到這個值（連續緊追太久）進入冷靜期
+  calm-time: 30                # 冷靜期（也包括剛抓到人之後）：不感應、巡邏偏向遠的地方
+  guard-jail-chance: 0.5       # 有人被關時去守監獄的機率
+  guard-cap: 45                # 守監獄最久幾秒
+  check-hideout-chance: 0.4    # 追丟時去查附近暗格的機率（這次搜尋只擲一次）
+  check-hideout-noise-chance: 0.2  # 到了聲音、感應的位置後去查附近暗格的機率
+  follow-tunnel-chance: 0.5    # 看到人鑽進地洞時跟下去（撬開、爬梯子、走通道，或從地面繞過去）的機率
+  stuck-time: 2                # 幾秒幾乎沒移動算卡住
+  power-cut-delay: 20          # 電源打開幾秒後才會去關（不要一開電就衝去關）
+  flash-time: 1.0              # 手電筒要連續照臉多久才有效
+  flash-blind: 1.5             # 照到之後幾秒看不到人
+  flash-immune: 12             # 之後幾秒不會再被照到
+  presets:                     # 難度：只調感知和決策，不調跑速
+    easy:
+      reaction: 0.5
+      sight-range: 18
+      sense-quiet: 75
+      whiff-chance: 0.6
+      check-hideout-chance: 0.25
+    normal: {}
+    hard:
+      reaction: 0.2
+      sight-range: 28
+      sense-quiet: 30
+      whiff-chance: 0.1
+      check-hideout-chance: 0.6
 
 survivor:
   dash-duration: 1.5           # 緊急衝刺（F 鍵）持續時間

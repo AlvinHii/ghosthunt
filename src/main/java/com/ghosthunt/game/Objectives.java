@@ -280,8 +280,11 @@ final class Objectives {
                 () -> setPower(true, everOn ? "電源修好了！" : "總電源開啟了！讀卡機有電了"));
     }
 
+    private long powerOnTick;
+
     private void setPower(boolean on, String message) {
         powerOn = on;
+        if (on) powerOnTick = m.tick;
         if (lever != null && m.block(lever).getBlockData() instanceof Switch sw) {
             sw.setPowered(on);
             m.block(lever).setBlockData(sw, false);
@@ -789,6 +792,11 @@ final class Objectives {
             m.survivorMessage(p.getName() + " 把門禁卡 #" + card + " 授權了，可以去大門刷了。", NamedTextColor.AQUA);
             m.stat("firstAuthorizeAt", m.tick / 20, false);
         });
+    }
+
+    /** 電源最後一次打開的 tick（AI 鬼不會一開電就衝去關）。 */
+    long powerOnTick() {
+        return powerOnTick;
     }
 
     void cleanup() {

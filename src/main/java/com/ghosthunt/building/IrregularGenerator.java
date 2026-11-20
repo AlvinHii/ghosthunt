@@ -1079,8 +1079,10 @@ final class IrregularGenerator {
                             put(p, r.jailX + dx, r.jailZ + dz, stack(Material.IRON_BARS, Material.IRON_BARS, Material.IRON_BARS));
             }
             case GHOST_ROOM -> {
+                int[] mid = r.center(); // 鬼從房間中心出生，柱子不能擺在那裡
                 for (int[] t : r.tiles)
-                    if (!ring(p, r, t[0], t[1]) && rnd.nextInt(40) == 0 && free(p, r, t[0], t[1]))
+                    if (!ring(p, r, t[0], t[1]) && rnd.nextInt(40) == 0 && free(p, r, t[0], t[1])
+                            && Math.abs(t[0] - mid[0]) + Math.abs(t[1] - mid[1]) > 1)
                         put(p, t[0], t[1], stack(pillar(), pillar(), pillar()));
             }
             case ARCHIVE -> rows(p, r, bb, () -> stack(Material.BOOKSHELF,
