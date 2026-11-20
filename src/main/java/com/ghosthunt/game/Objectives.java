@@ -267,18 +267,7 @@ final class Objectives {
     void onLever(Player p) {
         Location at = m.loc(lever);
         if (m.isGhost(p)) {
-            if (!powerOn) {
-                p.sendActionBar(Component.text("電源本來就沒開", NamedTextColor.GRAY));
-            } else if (ghostCutUsed) {
-                p.sendActionBar(Component.text("這局已經關過一次電源了", NamedTextColor.GRAY));
-            } else if (m.tick < graceUntil) {
-                p.sendActionBar(Component.text("電源剛修好，" + ((graceUntil - m.tick) / 20 + 1) + " 秒內關不掉", NamedTextColor.GRAY));
-            } else {
-                m.acts.start(p, "ghost-cut", "關電源", o.ghostCutPower(), false, false, at, () -> {
-                    ghostCutUsed = true;
-                    setPower(false, "鬼把電源關掉了！");
-                });
-            }
+            ghostCutPower(p);
             return;
         }
         if (!m.isFreeSurvivor(p)) return;
@@ -320,28 +309,123 @@ final class Objectives {
         nextReveal = m.tick + o.revealInterval();
     }
 
-    void onGhostMoveCard(Player g) {
+    // ---- 鬼的能力（真人點擊和 AI 都呼叫這些） ----
+
+    /** 關電源（一局一次，要站在拉桿旁邊）。回傳 true 表示開始了。 */
+    boolean ghostCutPower(LivingEntity g) {
+        if (lever == null) return false;
+        Location at = m.loc(lever);
+        if (!powerOn) {
+            m.ghostMessage(Component.text("電源本來就沒開", NamedTextColor.GRAY));
+            return false;
+        }
+        if (ghostCutUsed) {
+            m.ghostMessage(Component.text("這局已經關過一次電源了", NamedTextColor.GRAY));
+            return false;
+        }
+        if (m.tick < graceUntil) {
+            m.ghostMessage(Component.text("電源剛修好，" + ((graceUntil - m.tick) / 20 + 1) + " 秒內關不掉", NamedTextColor.GRAY));
+            return false;
+        }
+        if (!g.getWorld().equals(at.getWorld()) || g.getLocation().distance(at.clone().add(0.5, 0, 0.5)) > 4.5) return false;
+        return m.acts.start(g, "ghost-cut", "關電源", o.ghostCutPower(), false, false, at, () -> {
+            ghostCutUsed = true;
+            setPower(false, "鬼把電源關掉了！");
+        });
+    }
+
+    /** 弄壞倒數中的大門（每扇一次，要站在讀卡機旁邊）。 */
+    boolean ghostSabotage(LivingEntity g, GateState gs) {
+        String where = (gs.g.floor() + 1) + "F 大門";
+        Location at = m.loc(gs.g.reader());
+        if (!gs.running()) {
+            m.ghostMessage(Component.text(where + "沒有在倒數", NamedTextColor.GRAY));
+            return false;
+        }
+        if (gs.sabotaged) {
+            m.ghostMessage(Component.text("這扇門已經弄壞過一次了", NamedTextColor.GRAY));
+            return false;
+        }
+        if (!g.getWorld().equals(at.getWorld()) || g.getLocation().distance(at.clone().add(0.5, 0, 0.5)) > 4.5) return false;
+        Interactions.Act a = m.acts.startAct(g, "sabotage:" + gs.index, "弄壞大門", o.ghostSabotage(), false, false, at, () -> {
+            gs.sabotaged = true;
+            stopCountdown(gs);
+            m.broadcast(where + "故障了！倒數歸零，逃生者站 " + o.restartGate() / 20 + " 秒就能重新啟動（不用卡）。", NamedTextColor.RED);
+            m.world.playSound(at, Sound.BLOCK_ANVIL_LAND, 3f, 0.5f);
+        });
+        if (a != null) m.survivorMessage("鬼正在弄壞" + where + "！丟煙霧彈可以打斷。", NamedTextColor.RED);
+        return a != null;
+    }
+
+    /** 電源開關的位置（還沒放好是 null）。 */
+    Location leverLocation() {
+        return lever == null ? null : m.loc(lever);
+    }
+
+    boolean powerOn() {
+        return powerOn;
+    }
+
+    boolean cutPowerUsed() {
+        return ghostCutUsed;
+    }
+
+    /** 正在倒數、還沒被弄壞過的大門。 */
+    List<GateState> runningUnsabotagedGates() {
+        List<GateState> out = new ArrayList<>();
+        for (GateState gs : gates) if (gs.running() && !gs.sabotaged) out.add(gs);
+        return out;
+    }
+
+    /** 門禁卡位置正在亮起。 */
+    boolean cardRevealOpen() {
+        return m.tick <= revealUntil;
+    }
+
+    /** 這次亮起還能搬卡嗎（還沒搬過、有可以搬的卡）。 */
+    boolean cardMoveAvailable() {
+        LivingEntity g = m.ghostEntity();
+        return g != null && cardRevealOpen() && !movedThisReveal && cardToMove(g) != null;
+    }
+
+    /** 離 l 最近的監獄籠子中心（沒有監獄回傳 null）。 */
+    Location jailNearestTo(Location l) {
+        Location best = null;
+        double bd = Double.MAX_VALUE;
+        for (Pos c : b.jailCages.values()) {
+            Location cl = m.loc(c);
+            double d = Math.abs(cl.getY() - l.getY()) * 10 + cl.distance(l);
+            if (d < bd) {
+                bd = d;
+                best = cl;
+            }
+        }
+        return best;
+    }
+
+    /** 搬卡（門禁卡亮起時，一次亮起搬一張）。 */
+    boolean ghostMoveCard(LivingEntity g) {
         if (m.tick > revealUntil) {
-            g.sendActionBar(Component.text("要等門禁卡位置亮起才能搬（還要 " + Math.max(0, (nextReveal - m.tick) / 20) + " 秒）",
+            m.ghostMessage(Component.text("要等門禁卡位置亮起才能搬（還要 " + Math.max(0, (nextReveal - m.tick) / 20) + " 秒）",
                     NamedTextColor.GRAY));
-            return;
+            return false;
         }
         if (movedThisReveal) {
-            g.sendActionBar(Component.text("這次亮起已經搬過一張了", NamedTextColor.GRAY));
-            return;
+            m.ghostMessage(Component.text("這次亮起已經搬過一張了", NamedTextColor.GRAY));
+            return false;
         }
         if (cardToMove(g) == null) {
-            g.sendActionBar(Component.text("沒有可以搬的卡（卡在逃生者身上，或已經搬過了）", NamedTextColor.GRAY));
-            return;
+            m.ghostMessage(Component.text("沒有可以搬的卡（卡在逃生者身上，或已經搬過了）", NamedTextColor.GRAY));
+            return false;
         }
         // 只要在亮起期間開始就算數，進度可以超過亮起的時間
-        m.acts.start(g, "move-card", "搬卡", o.moveChannel(), false, false, g.getLocation(), () -> {
+        return m.acts.start(g, "move-card", "搬卡", o.moveChannel(), false, false, g.getLocation(), () -> {
             Pos from = cardToMove(g);
             if (from == null) return;
             String card = content.get(from);
             Pos to = farthestFromSurvivors(from);
             if (to == null) {
-                g.sendActionBar(Component.text("找不到可以放的箱子，卡留在原地", NamedTextColor.GRAY));
+                m.ghostMessage(Component.text("找不到可以放的箱子，卡留在原地", NamedTextColor.GRAY));
                 return;
             }
             int n = Integer.parseInt(card.substring(Items.KEYCARD.length()));
@@ -352,7 +436,7 @@ final class Objectives {
             moves.merge(n, 1, Integer::sum);
             movedThisReveal = true;
             m.world.playSound(m.loc(from), Sound.BLOCK_CHAIN_PLACE, 3f, 0.6f); // 原本的箱子會發出聲音
-            g.sendActionBar(Component.text("門禁卡 #" + n + " 搬到 " + (floorOf(to) + 1) + "F，鎖起來了", NamedTextColor.DARK_AQUA));
+            m.ghostMessage(Component.text("門禁卡 #" + n + " 搬到 " + (floorOf(to) + 1) + "F，鎖起來了", NamedTextColor.DARK_AQUA));
         });
     }
 
@@ -443,19 +527,7 @@ final class Objectives {
             return;
         }
         if (m.isGhost(p)) {
-            if (!gs.running()) {
-                p.sendActionBar(Component.text(where + "沒有在倒數", NamedTextColor.GRAY));
-            } else if (gs.sabotaged) {
-                p.sendActionBar(Component.text("這扇門已經弄壞過一次了", NamedTextColor.GRAY));
-            } else {
-                Interactions.Act a = m.acts.startAct(p, "sabotage:" + gs.index, "弄壞大門", o.ghostSabotage(), false, false, at, () -> {
-                    gs.sabotaged = true;
-                    stopCountdown(gs);
-                    m.broadcast(where + "故障了！倒數歸零，逃生者站 " + o.restartGate() / 20 + " 秒就能重新啟動（不用卡）。", NamedTextColor.RED);
-                    m.world.playSound(at, Sound.BLOCK_ANVIL_LAND, 3f, 0.5f);
-                });
-                if (a != null) m.survivorMessage("鬼正在弄壞" + where + "！丟煙霧彈可以打斷。", NamedTextColor.RED);
-            }
+            ghostSabotage(p, gs);
             return;
         }
         if (!m.isFreeSurvivor(p)) return;

@@ -371,22 +371,22 @@ public final class Match {
     // ---- 抓人 ----
 
     /** 鬼用手打到逃生者。回傳 true 表示有處理（事件要取消）。 */
-    public void onGhostHit(Player victim) {
+    public void ghostHit(Player victim) {
         Survivor sv = survivors.get(victim.getUniqueId());
         if (sv == null || sv.status != Status.FREE || !released) return;
         LivingEntity g = ghostEntity();
         if (g == null) return;
         if (tick < sv.protectedUntil) {
             ghostMessage(Component.text(victim.getName() + " 剛被救出來，暫時抓不到", NamedTextColor.GRAY));
-            onGhostSwing();
+            ghostSwing();
             return;
         }
         if (tick < fatigueUntil) return; // 疲勞中抓不到人
         if (tick < ghostCaptureReady) {
-            onGhostSwing();
+            ghostSwing();
             return;
         }
-        onGhostSwing();
+        ghostSwing();
         ghostCaptureReady = tick + s.captureCooldown();
         sv.captures++;
         sv.boostUntil = 0;
@@ -427,7 +427,7 @@ public final class Match {
     }
 
     /** 鬼揮一次手（打到或揮空都算）：接下來一段時間大幅減速（預設只剩 10%）。疲勞中再揮不會延長。 */
-    public void onGhostSwing() {
+    public void ghostSwing() {
         if (!released || tick < fatigueUntil) return;
         fatigueUntil = tick + s.attackFatigue();
     }
@@ -668,16 +668,7 @@ public final class Match {
         String key = "door:" + Math.min(door.hashCode(), other == null ? Integer.MAX_VALUE : other.hashCode());
         if (jammed.contains(door)) {
             if (isGhost(p)) {
-                if (!released) return true;
-                Interactions.Act a = acts.startAct(p, key, "撞開卡住的門", o.breakJam(), false, false, at, () -> {
-                    setJam(door, other, false);
-                    setDoorOpen(door, true);
-                    if (other != null) setDoorOpen(other, true);
-                    world.playSound(at, Sound.ENTITY_ZOMBIE_BREAK_WOODEN_DOOR, 6f, 0.8f);
-                });
-                if (a != null) a.onTick = () -> {
-                    if (tick % 10 == 0) world.playSound(at, Sound.ENTITY_ZOMBIE_ATTACK_WOODEN_DOOR, 6f, 0.9f);
-                };
+                ghostBreakJam(door);
                 return true;
             }
             if (isFreeSurvivor(p) && p.isSneaking()) {
@@ -738,8 +729,18 @@ public final class Match {
         if (!g.getUniqueId().equals(ghost) || clicked == null || acts.busy(ghost)) return false;
         int idx = spotAt(clicked);
         if (idx < 0 || !barricaded.getOrDefault(idx, false)) return false;
+        ghostBreakBarricade(idx);
+        return true;
+    }
+
+    // ---- 鬼的能力（真人點擊和 AI 都呼叫這些；規則、時間、聲音都一樣） ----
+
+    /** 拆掉門口的障礙物（或推倒的櫃子）。回傳 true 表示開始拆了。 */
+    public boolean ghostBreakBarricade(int idx) {
+        LivingEntity g = ghostEntity();
+        if (g == null || idx < 0 || idx >= b.barricadeSpots.size() || !barricaded.getOrDefault(idx, false) || acts.busy(ghost)) return false;
         Building.BarricadeSpot spot = b.barricadeSpots.get(idx);
-        Location at = clicked.getLocation().add(0.5, 0.5, 0.5);
+        Location at = loc(spot.blocks().get(0)).add(0.5, 0.5, 0.5);
         Interactions.Act a = acts.startAct(g, "break:" + idx, "拆障礙物", s.breakBarricade(), false, false, at, () -> {
             removeBarricade(spot);
             barricaded.put(idx, false);
@@ -749,7 +750,100 @@ public final class Match {
         if (a != null) a.onTick = () -> {
             if (tick % 10 == 0) world.playSound(at, Sound.ENTITY_ZOMBIE_ATTACK_WOODEN_DOOR, 6f, 0.8f);
         };
-        return true;
+        return a != null;
+    }
+
+    /** 撞開卡住的門（doorLower 是其中一扇的下半部）。 */
+    public boolean ghostBreakJam(Pos doorLower) {
+        LivingEntity g = ghostEntity();
+        if (g == null || !released || doorLower == null || !jammed.contains(doorLower)) return false;
+        Pos other = doorPair.get(doorLower);
+        Location at = loc(doorLower).add(0.5, 1, 0.5);
+        String key = "door:" + Math.min(doorLower.hashCode(), other == null ? Integer.MAX_VALUE : other.hashCode());
+        Interactions.Act a = acts.startAct(g, key, "撞開卡住的門", o.breakJam(), false, false, at, () -> {
+            setJam(doorLower, other, false);
+            setDoorOpen(doorLower, true);
+            if (other != null) setDoorOpen(other, true);
+            world.playSound(at, Sound.ENTITY_ZOMBIE_BREAK_WOODEN_DOOR, 6f, 0.8f);
+        });
+        if (a != null) a.onTick = () -> {
+            if (tick % 10 == 0) world.playSound(at, Sound.ENTITY_ZOMBIE_ATTACK_WOODEN_DOOR, 6f, 0.9f);
+        };
+        return a != null;
+    }
+
+    /** 撬開地下通道的出入口。 */
+    public boolean ghostPryHatch(int i) {
+        LivingEntity g = ghostEntity();
+        if (g == null || !released || i < 0 || i >= b.hatches.size() || pried.contains(i)) return false;
+        Building.Hatch h = b.hatches.get(i);
+        Location at = loc(h.trapdoor()).add(0.5, 0.5, 0.5);
+        Interactions.Act a = acts.startAct(g, "pry:" + i, "撬開地洞", o.widenHole(), false, false, at, () -> {
+            pried.add(i);
+            block(h.trapdoor()).setBlockData(h.ladder(), false); // 換成梯子：大家都能上下
+            world.playSound(at, Sound.BLOCK_WOOD_BREAK, 3f, 0.6f);
+        });
+        if (a != null) a.onTick = () -> {
+            if (tick % 10 == 0) world.playSound(at, Sound.BLOCK_WOOD_HIT, 2f, 0.6f);
+        };
+        return a != null;
+    }
+
+    /** 把蹲伏破洞（或暗格入口）打大。 */
+    public boolean ghostWidenHole(int i) {
+        LivingEntity g = ghostEntity();
+        if (g == null || !released || i < 0 || i >= b.crawlHoles.size() || widened.contains(i)) return false;
+        Building.CrawlHole h = b.crawlHoles.get(i);
+        Location at = loc(h.slab());
+        Interactions.Act a = acts.startAct(g, "widen:" + i, "打大破洞", o.widenHole(), false, false, at, () -> {
+            widened.add(i);
+            block(h.slab()).setType(Material.AIR, false);
+            world.playSound(at, Sound.BLOCK_STONE_BREAK, 3f, 0.6f);
+        });
+        if (a != null) a.onTick = () -> {
+            if (tick % 10 == 0) world.playSound(at, Sound.BLOCK_STONE_HIT, 2f, 0.6f);
+        };
+        return a != null;
+    }
+
+    /** 這格是擋住的門口（障礙物、推倒的櫃子）就回傳編號，否則 -1。 */
+    public int barricadeAt(Pos p) {
+        for (int i = 0; i < b.barricadeSpots.size(); i++) {
+            if (!barricaded.getOrDefault(i, false)) continue;
+            if (b.barricadeSpots.get(i).blocks().contains(p)) return i;
+        }
+        return -1;
+    }
+
+    /** 這格是卡住的門就回傳那扇門的下半部，否則 null。 */
+    public Pos jammedDoorAt(Pos p) {
+        if (jammed.contains(p)) return p;
+        if (jammed.contains(p.add(0, -1, 0))) return p.add(0, -1, 0);
+        return null;
+    }
+
+    /** 這格（活板門那格或下面的洞）是還沒撬開的地洞出入口就回傳編號，否則 -1。 */
+    public int hatchIndexAt(Pos p) {
+        for (int i = 0; i < b.hatches.size(); i++) {
+            Pos t = b.hatches.get(i).trapdoor();
+            if (p.x() == t.x() && p.z() == t.z() && p.y() <= t.y() + 1 && p.y() >= t.y() - 4 && !pried.contains(i)) return i;
+        }
+        return -1;
+    }
+
+    /** 這格是還沒打大的蹲伏破洞就回傳編號，否則 -1。 */
+    public int holeIndexAt(Pos p) {
+        int i = holeAt(p.x(), p.y(), p.z());
+        return i >= 0 && !widened.contains(i) ? i : -1;
+    }
+
+    boolean isDoorJammed(Pos lower) {
+        return jammed.contains(lower);
+    }
+
+    /** 已經被撬開的地洞出入口。 */
+    boolean isHatchPried(int i) {
+        return pried.contains(i);
     }
 
     // ---- 蹲伏破洞 ----
@@ -808,17 +902,7 @@ public final class Match {
         int i = hatchAt(clicked);
         if (i < 0) return null;
         if (isGhost(p)) {
-            if (pried.contains(i) || !released) return true;
-            Building.Hatch h = b.hatches.get(i);
-            Location at = loc(h.trapdoor()).add(0.5, 0.5, 0.5);
-            Interactions.Act a = acts.startAct(p, "pry:" + i, "撬開地洞", o.widenHole(), false, false, at, () -> {
-                pried.add(i);
-                block(h.trapdoor()).setBlockData(h.ladder(), false); // 換成梯子：大家都能上下
-                world.playSound(at, Sound.BLOCK_WOOD_BREAK, 3f, 0.6f);
-            });
-            if (a != null) a.onTick = () -> {
-                if (tick % 10 == 0) world.playSound(at, Sound.BLOCK_WOOD_HIT, 2f, 0.6f);
-            };
+            ghostPryHatch(i);
             return true;
         }
         return !isFreeSurvivor(p);
@@ -847,16 +931,7 @@ public final class Match {
         if (!isGhost(g) || clicked == null || !released) return false;
         int i = holeAt(clicked.getX(), clicked.getY(), clicked.getZ());
         if (i < 0 || widened.contains(i)) return false;
-        Building.CrawlHole h = b.crawlHoles.get(i);
-        Location at = loc(h.slab());
-        Interactions.Act a = acts.startAct(g, "widen:" + i, "打大破洞", o.widenHole(), false, false, at, () -> {
-            widened.add(i);
-            block(h.slab()).setType(Material.AIR, false);
-            world.playSound(at, Sound.BLOCK_STONE_BREAK, 3f, 0.6f);
-        });
-        if (a != null) a.onTick = () -> {
-            if (tick % 10 == 0) world.playSound(at, Sound.BLOCK_STONE_HIT, 2f, 0.6f);
-        };
+        ghostWidenHole(i);
         return true;
     }
 

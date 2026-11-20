@@ -37,7 +37,7 @@ public final class GameListener implements Listener {
         if (m == null || !(e.getEntity() instanceof Player victim) || !m.isParticipant(victim)) return;
         e.setCancelled(true);
         if (e.getDamager() instanceof Player attacker && m.isGhost(attacker) && m.isFreeSurvivor(victim)) {
-            m.onGhostHit(victim);
+            m.ghostHit(victim);
         }
     }
 
@@ -113,7 +113,7 @@ public final class GameListener implements Listener {
         if (!m.isParticipant(p)) return;
         Action a = e.getAction();
         if (m.isGhost(p) && (a == Action.LEFT_CLICK_AIR || a == Action.LEFT_CLICK_BLOCK)) {
-            m.onGhostSwing(); // 揮空也會疲勞
+            m.ghostSwing(); // 揮空也會疲勞
             return;
         }
         if (a != Action.RIGHT_CLICK_AIR && a != Action.RIGHT_CLICK_BLOCK) return;
@@ -169,7 +169,7 @@ public final class GameListener implements Listener {
             }
             if (Items.MOVE_CARD.equals(item)) {
                 e.setCancelled(true);
-                m.obj.onGhostMoveCard(p);
+                m.obj.ghostMoveCard(p);
                 return;
             }
             if (a == Action.RIGHT_CLICK_BLOCK && (m.tryWidenHole(p, clicked) || m.tryBreakBarricade(p, clicked))) e.setCancelled(true);
