@@ -72,6 +72,8 @@ public final class Building {
     public Pos placedLever;
 
     public final long seed;
+    /** PvE 小地圖。 */
+    public boolean pve;
     public final Layout layout;
     public final RoomType[][][] types; // [floor][cx][cz]
 

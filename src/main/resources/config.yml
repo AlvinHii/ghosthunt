@@ -25,6 +25,7 @@ map:
   hideouts-per-floor: 3        # 不規則大樓：每層幾個牆中暗格（只能蹲著鑽進去躲）
   crawl-tunnels-per-floor: 4   # 不規則大樓：每層幾條房間之間的鑽洞通道
   topple-cabinet-chance: 0.45  # 不規則大樓：空門口旁邊放「可以推倒的櫃子」的機率（逃生者右鍵推倒，把門口擋住，鬼要拆）
+  barrel-area: 140             # 不規則大樓：木桶密度，每幾格地板一個
   tunnels: 4                  # 不規則大樓：1F 底下的地下通道條數（地上活板門＋梯子下去，連到遠處另一個房間；鬼要先撬開出入口）
   floor-height: 5              # 層高：樓板 1 格＋牆 4 格（樓梯 5 階，房間格至少要 8 格寬）
   floors: 3
@@ -34,6 +35,19 @@ map:
   corridor-width: 3
   stairwells-per-floor: 2      # 放在對角兩端
   max-dead-ends-per-floor: 2   # 生成後檢查：每層最多幾條死路
+
+pve:                           # PvE 小地圖（/gh build pve）：2～3 個逃生者對抗 AI 鬼
+  shape:                       # 外型（同 map.shape；一格 map.cell-size）
+    - ".####."
+    - "######"
+    - "#####."
+    - "######"
+    - ".###.."
+  floors: 2
+  hideouts-per-floor: 2
+  crawl-tunnels-per-floor: 2
+  tunnels: 2
+  barrel-area: 90              # 木桶密度：每幾格地板一個（大樓是 map.barrel-area: 140）
 
 ghost:
   release-delay: 30            # 鬼開局被關在鬼房的時間

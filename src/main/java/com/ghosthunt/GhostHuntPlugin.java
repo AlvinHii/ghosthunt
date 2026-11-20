@@ -174,14 +174,17 @@ public final class GhostHuntPlugin extends JavaPlugin {
             msg(sender, "正在蓋，請稍等。", NamedTextColor.RED);
             return;
         }
+        // /gh build [種子] 或 /gh build pve [種子]（PvE 小地圖）
+        boolean pve = args.length > 1 && args[1].equalsIgnoreCase("pve");
+        int seedArg = pve ? 2 : 1;
         long seed;
         try {
-            seed = args.length > 1 ? Long.parseLong(args[1]) : ThreadLocalRandom.current().nextLong(1_000_000);
+            seed = args.length > seedArg ? Long.parseLong(args[seedArg]) : ThreadLocalRandom.current().nextLong(1_000_000);
         } catch (NumberFormatException e) {
             msg(sender, "種子要是數字。", NamedTextColor.RED);
             return;
         }
-        BuildingSettings s = BuildingSettings.from(getConfig());
+        BuildingSettings s = BuildingSettings.from(getConfig(), pve);
         World world = ArenaWorld.getOrCreate(s.worldName());
         if (world == null) {
             msg(sender, "建立遊戲世界失敗。", NamedTextColor.RED);

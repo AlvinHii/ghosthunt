@@ -233,6 +233,7 @@ final class IrregularGenerator {
         int sx = stairCells[0][0] * U + 7, sz = stairCells[0][1] * U + 6;
         L = Layout.irregular(size, s.floors(), s.floorHeight(), s.originX(), s.originY(), s.originZ(), sx, sz);
         b = new Building(seed, L);
+        b.pve = s.pve();
 
         // 整棟的分配：鬼房在哪層、電力室（1～2 間，不同層）、保全室（2 間，不同層）
         int floors = L.floors;
@@ -1147,7 +1148,7 @@ final class IrregularGenerator {
         }
         // 木桶：一般房間依面積放（大約每 140 格一個，小房間一半機率有一個），整棟跟舊版差不多（約 70 個）
         if (normalType(r.type)) {
-            int n = (int) Math.round(r.area() / 140.0);
+            int n = (int) Math.round(r.area() / (double) s.barrelArea());
             if (n == 0 && rnd.nextBoolean()) n = 1;
             List<int[]> cand = new ArrayList<>();
             for (int[] t : r.tiles) {
@@ -1402,7 +1403,10 @@ final class IrregularGenerator {
 
     private void compose(BlockMap map, List<Plan> plans) {
         int floors = L.floors, fh = L.floorHeight;
-        map.fill(L.rel(-4, L.floorY(0), -4), L.rel(size + 3, L.topY() + 1, size + 3), Material.AIR);
+        // 清空範圍取大樓和小地圖比較大的那個（從大樓換成小地圖時，舊大樓不會留下來；地下通道那 4 層也清）
+        int clear = Math.max(size, s.clearSize());
+        int clearTop = L.floorY(0) + Math.max(floors, s.clearFloors()) * fh + 1;
+        map.fill(L.rel(-4, L.floorY(0) - 4, -4), L.rel(clear + 3, clearTop, clear + 3), Material.AIR);
         // 第一輪：每層的樓板、牆（樓梯會在上一層樓板挖洞，所以要等所有樓板都放好）
         for (Plan p : plans) {
             int f = p.f, fy = L.floorY(f);
