@@ -15,6 +15,7 @@ import com.ghosthunt.game.ai.HideoutOdds;
 import com.ghosthunt.game.ai.WorldTraces;
 import com.ghosthunt.game.ai.ParticleTracker;
 import com.ghosthunt.game.ai.PathFollow;
+import com.ghosthunt.game.ai.SearchRules;
 import com.ghosthunt.game.ai.RoomScores;
 import com.ghosthunt.game.ai.SenseDirector;
 import com.ghosthunt.game.ai.TargetPicker;
@@ -335,8 +336,6 @@ final class AiGhost {
     private final Timing tickTime = new Timing(), pathTime = new Timing(), fieldTime = new Timing();
     /** 鬼到每一格要幾秒（只有在有粒子追蹤器時才每次 think 重算）。 */
     private DistanceField ghostField;
-    /** 最近一次推著走的方向（單位向量），判斷新路線是不是往回走。 */
-    private double lastDirX, lastDirZ;
     /** 可見性表（背景建好之前是 null）。 */
     private volatile com.ghosthunt.game.ai.VisibilityTable vis;
 
@@ -413,6 +412,7 @@ final class AiGhost {
     /** 逃生者在尋路圖上的成本：小洞正常走、放了障礙物的門口過不去、卡住的門自己拆得開。 */
     private GridNav.Cost escaperCost() {
         return EscaperCost.of(i -> m.isDoorJammed(nav.doors.get(i)), i -> m.barricadeIndexBarricaded(i),
+                i -> knownHatches.contains(i) && knownHatches.contains(i ^ 1), // 鬼只知道自己看過兩端的地洞
                 m.o.jamDoor() / 20.0 * c.escaperSpeed(), 2 * c.escaperSpeed());
     }
 
@@ -427,7 +427,12 @@ final class AiGhost {
         double d = l.distance(mob.getLocation());
         if (d > (m.obj.powerOn() ? c.sightRange() : c.sightRangeDark())) return false;
         if (d > c.nearAware() && !inFront(l, c.fovDegrees())) return false;
-        return vis.visible(ghostNode, cell, this::doorClosed);
+        // 跟「看到人」一樣：失明（煙霧彈、手電筒、球車）時不能用視線；鬼或那一格在溫泉蒸氣裡也不行
+        boolean smokeMe = m.gimmicks != null && m.gimmicks.inSmoke(mob.getLocation());
+        boolean smokeCell = m.gimmicks != null && m.gimmicks.inSmoke(l);
+        if (!SearchRules.sightUsable(m.tick, blindUntil, smokeMe, smokeCell, d)) return false;
+        // 門關著、門口放了障礙物或推倒的櫃子：擋住
+        return vis.visible(ghostNode, cell, this::doorClosed, i -> m.barricadeIndexBarricaded(i));
     }
 
     /** 逃生者下一個遊戲目標的距離場：沒電 → 電源；有電 → 終端機和大門讀卡機（多起點）。同樣的目標、地圖沒變就不重算。 */
@@ -455,7 +460,12 @@ final class AiGhost {
         trackers.entrySet().removeIf(e -> e.getValue().expired(m.tick));
         if (sensedTracker != null && sensedTracker.expired(m.tick)) sensedTracker = null;
         if ((trackers.isEmpty() && sensedTracker == null) || nav == null) return;
-        if (lastSeenId != null && trackers.containsKey(lastSeenId)) lastSeenTick = m.tick; // 推理還有線索：繼續搜
+        // 推理還有線索：繼續搜（把「最後看到」推到現在）；但有更新的聲音、而且不在粒子附近（或是刷卡、迎賓鈴）時讓聲音贏
+        ParticleTracker cur = lastSeenId == null ? null : trackers.get(lastSeenId);
+        if (cur != null) {
+            double share = noise == null ? 1 : cur.shareNear(noise.getX(), noise.getY(), noise.getZ(), 2 * c.particleSigma());
+            if (SearchRules.keepSearchFresh(noise == null ? Long.MIN_VALUE : noiseTick, noiseLevel, trueSeenTick, share)) lastSeenTick = m.tick;
+        }
         if (thinkCount % Math.max(1, 10 / c.thinkEvery()) != 0) return;
         int gnode = nav.nearest(mob.getLocation(), 2.5);
         ghostField = timedField(costFor(Mode.SEARCH), 5.3 * c.searchSpeed(), gnode);
@@ -665,15 +675,17 @@ final class AiGhost {
             if (e != null && m.tick - chaseSeenTick <= 15) {
                 lastSeen = e.getLocation();
                 lastSeenTick = m.tick;
-            } else if (nav != null && lastSeen != null && !chaseId.equals(lostHandledId)) {
-                // 追丟了（超過 1 秒看不到）：在最後看到的格子撒粒子
-                ParticleTracker t = newTracker();
-                t.seed(nav.nearest(lastSeen, 2.5), m.tick);
-                if (t.alive() > 0) trackers.put(chaseId, t);
-                lostHandledId = chaseId;
-                losses++;
-                lostAtTick = m.tick;
             }
+        }
+        if (seen == null && lastSeenId != null && nav != null && lastSeen != null
+                && SearchRules.lostTarget(m.tick, trueSeenTick, lastSeenId.equals(lostHandledId))) {
+            // 追丟了（超過 1 秒沒真的看到）：在最後看到的格子撒粒子
+            ParticleTracker t = newTracker();
+            t.seed(nav.nearest(lastSeen, 2.5), m.tick);
+            if (t.alive() > 0) trackers.put(lastSeenId, t);
+            lostHandledId = lastSeenId;
+            losses++;
+            lostAtTick = m.tick;
         }
         return seen;
     }
@@ -912,7 +924,7 @@ final class AiGhost {
                 ParticleTracker trk = lastSeenId == null ? null : trackers.get(lastSeenId);
                 double share = trk == null ? 0 : trk.shareWithin(cellsNear(otherTop, 3));
                 double p = HideoutOdds.chance(c.followTunnelChance(), trueSeenLoc == null ? 99 : t.distance(trueSeenLoc),
-                        (m.tick - trueSeenTick) / 20.0, lastQuietBreakTick < trueSeenTick, share, 0);
+                        (m.tick - trueSeenTick) / 20.0, SearchRules.quietSince(lastQuietBreakTick, trueSeenTick), share, 0);
                 if (m.rnd.nextDouble() >= p) break;
                 knownHatches.add(i);
                 knownHatches.add(other); // 跟著鑽下去，自然會知道通到哪
@@ -974,7 +986,7 @@ final class AiGhost {
                 if (ent.distance(pocket) > 3) continue;
                 double share = 0;
                 for (ParticleTracker tr : trackers.values()) share = Math.max(share, tr.shareWithin(cellsNear(pocket, 1)));
-                double p = HideoutOdds.chance(base, ent.distance(ref), (m.tick - refTick) / 20.0, lastQuietBreakTick < refTick, share, 0);
+                double p = HideoutOdds.chance(base, ent.distance(ref), (m.tick - refTick) / 20.0, SearchRules.quietSince(lastQuietBreakTick, refTick), share, 0);
                 if (p > bestP) {
                     bestP = p;
                     bestHole = i;
@@ -1200,7 +1212,11 @@ final class AiGhost {
     }
 
     /** 走到 goal：需要時重新找路（目標移動、地圖變了、追人時每 2 秒）。 */
+    /** 最近一次 navigate 的模式（追人時不做抵達減速）。 */
+    private Mode navMode = Mode.CALM;
+
     private void navigate(Location goal, Mode mode) {
+        navMode = mode;
         if (goal == null) return;
         int g = nav == null ? -1 : nav.nearestMain(goal, 3);
         if (g < 0 && nav != null) g = nav.nearest(goal, 3); // 例如跟著鑽地洞：目標在通道另一端的出入口
@@ -1233,11 +1249,6 @@ final class AiGhost {
         wayPath = nav.nav.simplify(p, nav::clear);
         wayIdx = Math.min(1, wayPath.size() - 1);
         rawGoal = g;
-        // 新路線往回走（目標換到背後）：卡住偵測重新起算，不然「先往前、再折回來」在 2 秒內淨位移很小，會被誤判成卡住
-        Location firstWp = nav.loc(wayPath.get(wayIdx));
-        double ndx = firstWp.getX() - mob.getLocation().getX(), ndz = firstWp.getZ() - mob.getLocation().getZ();
-        double nl = Math.hypot(ndx, ndz);
-        if (nl > 0.3 && (lastDirX != 0 || lastDirZ != 0) && (ndx * lastDirX + ndz * lastDirZ) / nl < -0.3) stuck.reset();
         if (vanillaTarget != null || mob.getPathfinder().hasPath()) mob.getPathfinder().stopPathfinding(); // 原版尋路還在走會跟推著走打架
         vanillaTarget = null;
     }
@@ -1304,7 +1315,7 @@ final class AiGhost {
             dz = tdz;
             dh = Math.hypot(dx, dz);
         }
-        steer(dx, dz, dh, PathFollow.arrivalScale(Math.hypot(tdx, tdz), last));
+        steer(dx, dz, dh, PathFollow.arrivalScale(Math.hypot(tdx, tdz), last, navMode == Mode.CHASE));
         // 剛揮完拳（疲勞減速 90%）、抓完人時本來就幾乎不動，不算卡住
         if (m.tick < m.fatigueUntil + 5) stuck.reset();
         else if (stuck.update(m.tick, here.getX(), here.getY(), here.getZ(), lastStep)) onStuck();
@@ -1410,8 +1421,6 @@ final class AiGhost {
         double perTick = (attr == null ? 0.45 : attr.getValue()) * speedMul * 0.57; // 0.4635 ≈ 每 tick 0.265 格（實測每秒 5.3 格）
         double step = Math.min(perTick * scale, dh);
         lastStep = step;
-        lastDirX = dx / dh;
-        lastDirZ = dz / dh;
         mob.setVelocity(new Vector(dx / dh * step, mob.getVelocity().getY(), dz / dh * step));
         mob.setRotation((float) Math.toDegrees(Math.atan2(-dx, dz)), 0);
         if (STUCK_DEBUG) {

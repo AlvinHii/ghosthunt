@@ -34,11 +34,16 @@ public final class VisibilityTable {
 
         /** 這格是門的話回傳門的編號，否則 -1。 */
         int doorAt(int x, int y, int z);
+
+        /** 這格是障礙物位置（門口，放了障礙物或推倒的櫃子會擋住）的話回傳它的編號，否則 -1。 */
+        default int barricadeAt(int x, int y, int z) {
+            return -1;
+        }
     }
 
     private final int[] xs, ys, zs;
     private final BitSet[] bits;
-    private final Map<Long, int[]> doorsOnPair = new HashMap<>();
+    private final Map<Long, int[]> doorsOnPair = new HashMap<>(), barricadesOnPair = new HashMap<>();
     private final double range;
 
     private VisibilityTable(int n, double range) {
@@ -61,7 +66,7 @@ public final class VisibilityTable {
             byY.computeIfAbsent(t.ys[i], k -> new ArrayList<>()).add(i);
         }
         int r = (int) Math.ceil(maxRange);
-        Set<Integer> doors = new LinkedHashSet<>();
+        Set<Integer> doors = new LinkedHashSet<>(), barricades = new LinkedHashSet<>();
         for (List<Integer> layer : byY.values()) {
             // 同一層的格子：用 x 排序，只比較 x 差 ≤ r 的
             layer.sort((p, q) -> Integer.compare(t.xs[p], t.xs[q]));
@@ -74,10 +79,12 @@ public final class VisibilityTable {
                     int dx = t.xs[b] - t.xs[a], dz = t.zs[b] - t.zs[a];
                     if (dx * dx + dz * dz > maxRange * maxRange) continue;
                     doors.clear();
-                    if (!t.cast(g, a, b, doors)) continue;
+                    barricades.clear();
+                    if (!t.cast(g, a, b, doors, barricades)) continue;
                     t.bits[a].set(b);
                     t.bits[b].set(a);
                     if (!doors.isEmpty()) t.doorsOnPair.put(t.pairKey(a, b), doors.stream().mapToInt(Integer::intValue).toArray());
+                    if (!barricades.isEmpty()) t.barricadesOnPair.put(t.pairKey(a, b), barricades.stream().mapToInt(Integer::intValue).toArray());
                 }
             }
         }
@@ -85,7 +92,7 @@ public final class VisibilityTable {
     }
 
     /** supercover 射線：沒被擋住回傳 true，路上的門加進 doors。起點、終點那兩格不算。 */
-    private boolean cast(Grid g, int a, int b, Set<Integer> doors) {
+    private boolean cast(Grid g, int a, int b, Set<Integer> doors, Set<Integer> barricades) {
         int y = ys[a];
         int x0 = xs[a], z0 = zs[a], x1 = xs[b], z1 = zs[b];
         int dx = Math.abs(x1 - x0), dz = Math.abs(z1 - z0);
@@ -99,6 +106,8 @@ public final class VisibilityTable {
                 if (g.opaque(x, y, z)) return false;
                 int d = g.doorAt(x, y, z);
                 if (d >= 0) doors.add(d);
+                int bi = g.barricadeAt(x, y, z);
+                if (bi >= 0) barricades.add(bi);
             }
             if (err > 0) {
                 x += sx;
@@ -131,6 +140,14 @@ public final class VisibilityTable {
         if (a < 0 || b < 0 || a >= xs.length || b >= xs.length || ys[a] != ys[b]) return false;
         double dx = xs[a] - xs[b], dz = zs[a] - zs[b];
         return dx * dx + dz * dz <= range * range;
+    }
+
+    /** 看得到：表裡有、路上的門都沒關、路上的障礙物位置都沒放東西。 */
+    public boolean visible(int a, int b, IntPredicate doorClosed, IntPredicate barricaded) {
+        if (!visible(a, b, doorClosed)) return false;
+        int[] bs = a == b ? null : barricadesOnPair.get(pairKey(a, b));
+        if (bs != null) for (int x : bs) if (barricaded.test(x)) return false;
+        return true;
     }
 
     /** 看得到：表裡有、而且路上的門都沒關。不在表裡（不同層、太遠）一律 false。 */

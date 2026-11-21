@@ -1,7 +1,8 @@
 package com.ghosthunt.game;
 
 /**
- * 判斷 AI 鬼有沒有卡住：每 windowTicks 比一次位置，期間移動不到 minMove 格就算卡住。
+ * 判斷 AI 鬼有沒有卡住：每 windowTicks 看一次，這段時間「實際走過的路」（每 tick 位移加總）不到 minMove 格就算卡住。
+ * 用走過的路、不用淨位移：先往前再折回（目標換到背後）一直在走，不是卡住；頂著東西前後抖才是。
  * 純邏輯，不碰伺服器。
  */
 final class StuckTracker {
@@ -9,7 +10,7 @@ final class StuckTracker {
     private final int windowTicks;
     private final double minMove;
     private long anchorTick = Long.MIN_VALUE, lastTick = Long.MIN_VALUE;
-    private double ax, ay, az, commanded;
+    private double px, py, pz, commanded, walked;
 
     StuckTracker(int windowTicks, double minMove) {
         this.windowTicks = windowTicks;
@@ -35,9 +36,13 @@ final class StuckTracker {
         }
         lastTick = tick;
         commanded += commandedStep;
+        double dx = x - px, dy = y - py, dz = z - pz;
+        walked += Math.sqrt(dx * dx + dy * dy + dz * dz);
+        px = x;
+        py = y;
+        pz = z;
         if (tick - anchorTick < windowTicks) return false;
-        double dx = x - ax, dy = y - ay, dz = z - az;
-        boolean stuck = Math.sqrt(dx * dx + dy * dy + dz * dz) < minMove && commanded >= minMove * 2;
+        boolean stuck = walked < minMove && commanded >= minMove * 2;
         anchor(tick, x, y, z);
         return stuck;
     }
@@ -48,9 +53,10 @@ final class StuckTracker {
 
     private void anchor(long tick, double x, double y, double z) {
         anchorTick = tick;
-        ax = x;
-        ay = y;
-        az = z;
+        px = x;
+        py = y;
+        pz = z;
         commanded = 0;
+        walked = 0;
     }
 }

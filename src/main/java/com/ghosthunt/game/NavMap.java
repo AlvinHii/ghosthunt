@@ -220,6 +220,13 @@ final class NavMap {
         }
         java.util.Map<Pos, Integer> doorIdx = new java.util.HashMap<>();
         for (int i = 0; i < doors.size(); i++) doorIdx.put(doors.get(i), i);
+        // 障礙物位置（門口）：放了障礙物或推倒的櫃子會擋視線，查的時候才知道有沒有放
+        java.util.Map<Pos, Integer> spotIdx = new java.util.HashMap<>();
+        for (int i = 0; i < nav.size(); i++) {
+            Pos p = new Pos(nav.x(i), nav.y(i), nav.z(i));
+            int spot = m.barricadeSpotAt(p);
+            if (spot >= 0) spotIdx.put(p, spot);
+        }
         int n = nav.size();
         int[] xs = new int[n], ys = new int[n], zs = new int[n];
         for (int i = 0; i < n; i++) {
@@ -243,6 +250,11 @@ final class NavMap {
             public int doorAt(int x, int y, int z) {
                 Integer d = doorIdx.get(new Pos(x, y, z));
                 return d == null ? -1 : d;
+            }
+
+            public int barricadeAt(int x, int y, int z) {
+                Integer b = spotIdx.get(new Pos(x, y, z));
+                return b == null ? -1 : b;
             }
         };
     }

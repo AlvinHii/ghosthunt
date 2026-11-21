@@ -63,6 +63,16 @@ class VisibilityTableTest {
     }
 
     @Test
+    void barricade_blocksOnlyWhenPlaced() {
+        String[] rows = {"..X.."};
+        GridNav g = TestGrids.grid(rows);
+        VisibilityTable t = VisibilityTable.build(TestGrids.visGrid(g, rows), 30);
+        int a = TestGrids.id(g, 0, 0), b = TestGrids.id(g, 4, 0);
+        assertTrue(t.visible(a, b, OPEN, i -> false));
+        assertFalse(t.visible(a, b, OPEN, i -> i == 0)); // 門口放了障礙物（或推倒的櫃子）
+    }
+
+    @Test
     void beyondRange_notKnown() {
         String row = ".".repeat(40);
         GridNav g = TestGrids.grid(row);

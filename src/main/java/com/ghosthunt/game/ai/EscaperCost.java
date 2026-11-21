@@ -14,15 +14,16 @@ public final class EscaperCost {
     /**
      * @param doorJammed  DOOR 邊的 ref（NavMap.doors 的編號）是不是卡住了
      * @param barricaded  BARRICADE 邊的 ref（障礙物位置的編號）是不是放了障礙物
+     * @param hatchKnown  HATCH 邊的 ref（地洞出入口編號）鬼知不知道（兩端都看過）；不知道的地洞推理時不走（不然等於洩漏地圖知識）
      * @param unjamBlocks 拆掉卡門要花的時間換成格數（進、出兩條邊各算一半）
      * @param hatchBlocks 開活板門＋爬梯子換成格數
      */
-    public static GridNav.Cost of(IntPredicate doorJammed, IntPredicate barricaded, double unjamBlocks, double hatchBlocks) {
+    public static GridNav.Cost of(IntPredicate doorJammed, IntPredicate barricaded, IntPredicate hatchKnown, double unjamBlocks, double hatchBlocks) {
         return e -> switch (e.kind()) {
             case WALK, STAIR, HOLE -> 0;
             case DOOR -> doorJammed.test(e.ref()) ? unjamBlocks / 2 : 0;
             case BARRICADE -> barricaded.test(e.ref()) ? Double.POSITIVE_INFINITY : 0;
-            case HATCH -> hatchBlocks;
+            case HATCH -> hatchKnown.test(e.ref()) ? hatchBlocks : Double.POSITIVE_INFINITY;
         };
     }
 }

@@ -16,6 +16,27 @@ class StuckTrackerTest {
     }
 
     @Test
+    void oscillation_isNotStuck() {
+        // 2 秒內先往前 3 格、再折回 3 格（目標換到背後）：淨位移很小，但一直在走，不是卡住
+        StuckTracker t = new StuckTracker(40, 1.0);
+        boolean stuck = false;
+        for (long tick = 0; tick <= 40; tick++) {
+            double x = tick <= 20 ? 0.15 * tick : 3 - 0.15 * (tick - 20);
+            stuck |= t.update(tick, x, 65, 0, 0.15);
+        }
+        assertFalse(stuck);
+    }
+
+    @Test
+    void jitterInPlace_isStuck() {
+        // 頂著東西前後抖：每 tick 位移很小，走過的路加起來也不到 1 格
+        StuckTracker t = new StuckTracker(40, 1.0);
+        boolean stuck = false;
+        for (long tick = 0; tick <= 40; tick++) stuck |= t.update(tick, (tick % 2) * 0.02, 65, 0, 0.25);
+        assertTrue(stuck);
+    }
+
+    @Test
     void moving_isNotStuck() {
         StuckTracker t = new StuckTracker(60, 1.0);
         boolean stuck = false;

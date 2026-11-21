@@ -58,6 +58,7 @@ final class TestGrids {
             public int z(int id) { return g.z(id); }
             public boolean opaque(int x, int y, int z) { return ch(x, z) == '#'; }
             public int doorAt(int x, int y, int z) { return ch(x, z) == 'D' ? 0 : -1; }
+            public int barricadeAt(int x, int y, int z) { return ch(x, z) == 'X' ? 0 : -1; }
 
             private char ch(int x, int z) {
                 return z < 0 || z >= rows.length || x < 0 || x >= rows[z].length() ? ' ' : rows[z].charAt(x);

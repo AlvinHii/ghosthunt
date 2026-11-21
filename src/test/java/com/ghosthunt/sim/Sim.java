@@ -69,7 +69,7 @@ public final class Sim {
     private final Random rnd;
     private final GridNav.Cost ghostCost = e -> e.kind() == Kind.HOLE || e.kind() == Kind.HATCH ? Double.POSITIVE_INFINITY
             : e.kind() == Kind.DOOR ? 0.15 : 0;
-    private final GridNav.Cost escCost = EscaperCost.of(i -> false, i -> false, 6, 8);
+    private final GridNav.Cost escCost = EscaperCost.of(i -> false, i -> false, i -> true, 6, 8);
     private final List<Integer> mainNodes = new ArrayList<>();
     private double t;
 

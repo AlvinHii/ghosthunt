@@ -17,6 +17,11 @@ public final class PathFollow {
         return turnDegrees > 30 ? 1.75 : 1.0;
     }
 
+    /** 同上；chasing（追人、攻擊）時一律 1：最後一個路點就是對方剛才的位置，減速等於在追擊最後一段變慢。 */
+    public static double arrivalScale(double distToEnd, boolean lastWaypoint, boolean chasing) {
+        return chasing ? 1.0 : arrivalScale(distToEnd, lastWaypoint);
+    }
+
     /** 最後一個路點、離終點 2 格內：步長乘上這個倍率（最少 0.35），不衝過頭。 */
     public static double arrivalScale(double distToEnd, boolean lastWaypoint) {
         if (!lastWaypoint || distToEnd >= 2) return 1.0;

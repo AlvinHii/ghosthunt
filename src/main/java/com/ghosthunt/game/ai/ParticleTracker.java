@@ -103,9 +103,13 @@ public final class ParticleTracker {
         if (r < cfg.fleeWeight() && ghost != null) {
             int best = -1;
             double bv = ghost.seconds(cur);
-            for (int v : ok) if (ghost.seconds(v) > bv) {
-                bv = ghost.seconds(v);
-                best = v;
+            for (int v : ok) {
+                double sv = ghost.seconds(v);
+                // 鬼走不到的格子（無窮大）不算「最遠」：不然粒子會整群鑽進鬼過不去的小洞、通道後面
+                if (!Double.isInfinite(sv) && sv > bv) {
+                    bv = sv;
+                    best = v;
+                }
             }
             return best;
         }
@@ -240,6 +244,18 @@ public final class ParticleTracker {
         Set<Integer> set = nodes instanceof Set<Integer> s ? s : new HashSet<>(nodes);
         int k = 0;
         for (int v : node) if (set.contains(v)) k++;
+        return k / (double) node.length;
+    }
+
+    /** 同一層、水平 r 格內的粒子比例（0～1）。 */
+    public double shareNear(double x, double y, double z, double r) {
+        if (node.length == 0) return 0;
+        int k = 0;
+        for (int v : node) {
+            if (Math.abs(nav.y(v) - y) > 1.5) continue;
+            double dx = nav.x(v) + 0.5 - x, dz = nav.z(v) + 0.5 - z;
+            if (dx * dx + dz * dz <= r * r) k++;
+        }
         return k / (double) node.length;
     }
 

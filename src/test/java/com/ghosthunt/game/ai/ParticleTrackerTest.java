@@ -93,6 +93,26 @@ class ParticleTrackerTest {
     }
 
     @Test
+    void flee_doesNotTreatUnreachableAsFarthest() {
+        // 鬼過不了小洞：洞那邊鬼的距離是無窮大，不能當成「最遠」整群鑽過去
+        GridNav g = TestGrids.grid("....H....");
+        GridNav.Cost ghostCost = e -> e.kind() == GridNav.Kind.HOLE ? Double.POSITIVE_INFINITY : 0;
+        ParticleTracker t = new ParticleTracker(g, FREE, new ParticleTracker.Config(200, 5.6, 1.0, 0, 3, 10, 800), new Random(8));
+        t.seed(TestGrids.id(g, 3, 0), 0);
+        t.step(0.5, DistanceField.compute(g, ghostCost, 5.3, TestGrids.id(g, 0, 0)), null);
+        for (int p : t.positions()) assertTrue(g.x(p) < 4, "粒子在 x=" + g.x(p));
+    }
+
+    @Test
+    void shareNear_countsWithinRadius() {
+        GridNav g = TestGrids.grid("..........");
+        ParticleTracker t = tracker(g, FREE, 7);
+        t.seed(TestGrids.id(g, 2, 0), 0);
+        assertEquals(1.0, t.shareNear(2.5, TestGrids.Y, 0.5, 1), 1e-9);
+        assertEquals(0.0, t.shareNear(8.5, TestGrids.Y, 0.5, 2), 1e-9);
+    }
+
+    @Test
     void bestTarget_onlyReturnsReachable() {
         GridNav g = TestGrids.grid(".....");
         ParticleTracker t = tracker(g, FREE, 5);

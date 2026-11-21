@@ -29,6 +29,12 @@ class PathFollowTest {
     }
 
     @Test
+    void chasing_noSlow() {
+        assertEquals(1.0, PathFollow.arrivalScale(0.5, true, true), 1e-9);
+        assertEquals(0.5, PathFollow.arrivalScale(1.0, true, false), 1e-9);
+    }
+
+    @Test
     void notLast_noSlow() {
         assertEquals(1.0, PathFollow.arrivalScale(0.5, false), 1e-9);
     }
