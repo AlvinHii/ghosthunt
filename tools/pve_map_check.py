@@ -436,7 +436,8 @@ def main():
 
     # ---- 視野：看得穿的格子連成的直線 ----
     def see(c):
-        return c in FLOORS or c in ARROWS or c in 'OG=+' or c == ' ' and False or (is_furn(c) and fh.get(c, 3) <= 1)
+        # C（可推倒的櫃子）2 格高，擋視線
+        return (c in FLOORS and c != 'C') or c in ARROWS or c in 'OG=+' or (is_furn(c) and fh.get(c, 3) <= 1)
 
     fh = {}
     for k, v in furn.items():
@@ -533,13 +534,13 @@ def main():
         cs = Counter(m.at(*a) for a in comp)
         if cs.get('.', 0) < cs.get(',', 0) + cs.get(';', 0):
             E(f'{n[0] + 1}F 保全室候選 Q ({n[1]},{n[2]}) 要在室內')
-        if not any(m.at(n[0], n[1] + dx, n[2] + dz) in '#%' for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1))):
-            E(f'{n[0] + 1}F 保全室候選 Q ({n[1]},{n[2]}) 要靠牆')
+        if not any(m.at(n[0], n[1] + dx, n[2] + dz) in '#%' or is_furn(m.at(n[0], n[1] + dx, n[2] + dz)) for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1))):
+            Wn(f'{n[0] + 1}F 保全室候選 Q ({n[1]},{n[2]}) 旁邊沒有牆或家具（終端機會立在空地中間）')
     for f in range(m.F):
         for z in range(m.H):
             for x in range(m.W):
-                if m.at(f, x, z) == 'E' and not any(m.at(f, x + dx, z + dz) in '#%' for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1))):
-                    E(f'{f + 1}F 電源候選 E ({x},{z}) 要靠牆')
+                if m.at(f, x, z) == 'E' and not any(m.at(f, x + dx, z + dz) in '#%+' or is_furn(m.at(f, x + dx, z + dz)) for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1))):
+                    Wn(f'{f + 1}F 電源候選 E ({x},{z}) 旁邊沒有牆或家具（會在旁邊的空地補一個鐵方塊配電箱）')
                 if m.at(f, x, z) == 'C':
                     near = any(m.at(f, x + dx, z + dz) == 'O' for dx in range(-2, 3) for dz in range(-2, 3))
                     if not near:

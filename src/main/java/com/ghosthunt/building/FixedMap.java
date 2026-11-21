@@ -34,6 +34,8 @@ public final class FixedMap {
 
     public final String id;
     public final String name, type, description;
+    /** 地圖自己設的木桶數量（meta 的 barrels:；沒寫是 -1，照 pve.barrel-area 的密度算）。 */
+    public final int barrels;
     /** [層][z] 一行字串，已經用空白補齊成 W 寬。 */
     public final List<List<String>> floors = new ArrayList<>();
     public final Map<Character, Furniture> furniture = new HashMap<>();
@@ -51,6 +53,12 @@ public final class FixedMap {
         this.name = meta.getOrDefault("name", id);
         this.type = meta.getOrDefault("type", "indoor");
         this.description = meta.getOrDefault("description", "");
+        int bc = -1;
+        try {
+            bc = Integer.parseInt(meta.getOrDefault("barrels", "-1").trim());
+        } catch (NumberFormatException ignored) {
+        }
+        this.barrels = bc;
         int w = 0, h = 0;
         for (List<String> f : raw) {
             h = Math.max(h, f.size());

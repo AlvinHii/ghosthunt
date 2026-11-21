@@ -15,7 +15,7 @@ Paper 26.3 的非對稱小遊戲插件：1 鬼 vs 3–5 逃生者，在隨機生
 ## 程式結構（`src/main/java/com/ghosthunt/`）
 
 - `GhostHuntPlugin`：指令、蓋樓流程、告示牌、匯出。`ArenaWorld`：空世界 `ghosthunt_arena`。`FogExperiment`：用資料包 biome 做霧（含只對逃生者送的個人霧，反射呼叫 NMS 封包）。
-- `building/`：大樓生成。PvE 預設用固定地圖：`FixedMap`（讀 `pve-maps/*.txt` 文字平面圖）→ `FixedMapGenerator`（照圖蓋，每局隨機挑大門、保全室、木桶；格式見 `docs/PvE地圖格式.md`，檢查工具 `tools/pve_map_check.py`，給別的 AI 畫圖的 prompt 在 `docs/PvE地圖生成prompt.md`，別的 AI 畫的圖先用專案 skill `ghosthunt-map-check`（`.claude/skills/`）檢查原圖，再用 `tools/convert_ai_maps.py` 轉）。附的地圖：`office_park`、`hydro_plant`、`seaside_resort`（`GhostHuntPlugin.BUNDLED_MAPS`）。大樓（PvP）預設是 `IrregularGenerator`（`map.generator: irregular`）：config 的 `map.shape` 固定凹凸外型（3 層一樣），房間每局隨機拼、短走廊、門連成樹再多開幾扇繞圈、鑽洞通道、牆中暗格、1F 底下的地下通道、可推倒的櫃子、保全室終端機、家具依房間大小用規則擺，產生的 `Building` 欄位跟舊版一樣。舊的九宮格（`map.generator: grid`）：`BuildingGenerator`（房間分配、牆、走廊、大門）→ `RoomBuilder`（門、破洞、燈、家具）→ `Validator`（BFS 檢查走得到、樓梯淨空、死路）→ `BlockPlacer`（分批放方塊）。`Layout` 是座標幾何（3×3 房間＋井字走廊，房間 20、走廊 3、樓高 5 → 68×68）。
+- `building/`：大樓生成。PvE 預設用固定地圖：`FixedMap`（讀 `pve-maps/*.txt` 文字平面圖）→ `FixedMapGenerator`（照圖蓋，每局隨機挑大門、保全室、木桶；格式見 `docs/PvE地圖格式.md`，檢查工具 `tools/pve_map_check.py`，給別的 AI 畫圖的 prompt 在 `docs/PvE地圖生成prompt.md`，別的 AI 畫的圖先用專案 skill `ghosthunt-map-check`（`.claude/skills/`）檢查原圖，再用 `tools/convert_ai_maps.py` 轉）。附的地圖：`office_park`、`hydro_plant`、`seaside_resort`、`mall`（91×91）、`mall_m`（76×76，PvE 預設）（`GhostHuntPlugin.BUNDLED_MAPS`）。模組化藍圖（巨集圖＋16×16 模組，見 `docs/PvE大地圖_模組化prompt.md`）用 `tools/assemble_macro_map.py` 拼成地圖；購物中心的原始藍圖在 `docs/pve-maps/blueprints/`。大樓（PvP）預設是 `IrregularGenerator`（`map.generator: irregular`）：config 的 `map.shape` 固定凹凸外型（3 層一樣），房間每局隨機拼、短走廊、門連成樹再多開幾扇繞圈、鑽洞通道、牆中暗格、1F 底下的地下通道、可推倒的櫃子、保全室終端機、家具依房間大小用規則擺，產生的 `Building` 欄位跟舊版一樣。舊的九宮格（`map.generator: grid`）：`BuildingGenerator`（房間分配、牆、走廊、大門）→ `RoomBuilder`（門、破洞、燈、家具）→ `Validator`（BFS 檢查走得到、樓梯淨空、死路）→ `BlockPlacer`（分批放方塊）。`Layout` 是座標幾何（3×3 房間＋井字走廊，房間 20、走廊 3、樓高 5 → 68×68）。
 - `game/`：對局。鬼是 `LivingEntity`（真人是 Player、AI 是怪物），鬼的能力（`ghostCutPower`、`ghostMoveCard`、`ghostSabotage`、`ghostBreakBarricade`、`ghostBreakJam`、`ghostPryHatch`、`ghostWidenHole`、`ghostSwing`／`ghostHit`）真人點擊和 AI 共用。`AiGhost`（PvE 的 AI 鬼：感知、每 tick 攻擊、照自己的尋路圖推著走、搜尋、巡邏、守望、除錯、統計）＋`NavMap`（從方塊建尋路圖）＋`TestDummies`（假逃生者）＋`game/ai/`（純邏輯、JUnit 測：`GhostBrain` 優先順序、`TargetPicker`、`GridNav` A*、`RoomScores`、`SenseDirector`；第三版加了 `DistanceField`、`EscaperCost`、`VisibilityTable`、`ParticleTracker`、`WorldTraces`、`HideoutOdds`、`PathFollow`）＋`StuckTracker`。完整說明見 `docs/AI鬼邏輯.md`，第三版計畫見 `docs/AI鬼第三版改進建議.md`。最小模擬器：`./gradlew sim --args="--map hydro_plant --runs 100 --search v3"`（`src/test/java/com/ghosthunt/sim`，比較第二版／第三版的搜尋）。`Match`（主迴圈、抓人、監獄、救人、障礙物、破洞）、`Objectives`（木桶內容、電源、門禁卡、大門）、`Interactions`（站著不動的進度條互動）、`Items`/`ItemUse`（道具）、`Nightmare`（夢魘鬼熄燈）、`Hud`、`GameListener`（事件）、`GameSettings`/`ObjectiveSettings`（讀 config）。
 - 地圖音效：`resourcepack/`（`./gradlew build` 打包成 `ghosthunt-pack.zip` 放進 jar）→ `ResourcePackHost`（插件自己開小網頁伺服器送資源包，`config.yml` 的 `resource-pack`）→ `game/MapAudio`＋`AudioConfig`（固定地圖的 `[sounds]`：全場環境音、依區域換環境音、地下通道、隨機事件音、電源開關聲；音檔是立體聲，所以直接在玩家身上播）。目前只有 `hydro_plant` 有音效（使用者提供的水力發電廠音效包）。
 - 數值全部在 `src/main/resources/config.yml`；測試伺服器用的是 `test-server/plugins/GhostHunt/config.yml`（舊檔不會自動補新欄位，刪掉重開才會重生）。
@@ -46,6 +46,8 @@ Paper 26.3 的非對稱小遊戲插件：1 鬼 vs 3–5 逃生者，在隨機生
 - 1F 底下有地下通道（地上活板門＋梯子，連到遠處另一個房間）；逃生者自由進出，鬼要先撬開出入口。每間房間地板顏色不同（認路用）。
 
 ## 目前狀態
+
+- **目前專心開發 PvE**（2026-11-22 使用者決定）；主力地圖是購物中心 `mall_m`（PvE 預設）和 `mall`。
 
 - 整局流程只用 `selftest` 和模擬驗證過，真人互動（翻箱、刷卡、抓人、救人、道具）還在第一次實測。
 - 待決定：容器要不要加倍（見 `docs/平衡模擬.md` 第二輪）—— 等實測的 `stats.log` 再說。

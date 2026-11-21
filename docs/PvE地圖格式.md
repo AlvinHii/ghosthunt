@@ -20,6 +20,7 @@ PvE 地圖可以是「固定格局」：照一份文字平面圖蓋，**每局�
 name: 夜間辦公園區              ← 顯示用名稱
 type: mixed                    ← indoor / outdoor / mixed（只是標記）
 description: 一句話說明
+barrels: 30                    ← 可以不寫：這張圖放幾個木桶（大地圖照 pve.barrel-area 的密度會太多）
 
 [1F]
 %%%%%%%%%%%%

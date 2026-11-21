@@ -159,7 +159,7 @@
 
 ## 我收到之後會做的
 
-1. 寫 `tools/assemble_macro_map.py`：照巨集圖把模組拼起來，比對連接表和兩邊畫的接口（不一樣就照連接表），輸出成一般的 .md 地圖。
+1. `tools/assemble_macro_map.py`（已經寫好）：照巨集圖把模組拼起來，比對兩邊畫的接口（不一樣時用開口那邊、列出來），輸出 pve-maps 格式和一份給 `ghosthunt-map-check` 檢查的完整原圖；`EDITS` 可以在拼之前改模組裡的格子（例如切長直線）。
 2. 用 `ghosthunt-map-check` 檢查拼好的原圖，再用 `tools/convert_ai_maps.py` 轉檔、`tools/pve_map_check.py` 完整檢查，有問題直接修。
 3. 加「每張地圖自己設木桶數量」。
 4. 在測試伺服器上量重蓋時間、尋路圖大小，跑 300 種隨機和 AI 對局。

@@ -964,12 +964,32 @@ final class FixedMapGenerator {
             }
             if (wallChar(c) && wall == null) wall = d;
         }
+        // 沒有牆：旁邊 2 格以上高的家具也可以裝拉桿；都沒有就在旁邊的空地補一個配電箱
+        if (wall == null) for (int[] d : DIRS) {
+            char c = at(f, x + d[0], z + d[1]);
+            FixedMap.Furniture fu = furn(c) ? fm.furniture.get(c) : null;
+            if (fu != null && fu.stack().size() >= 2) {
+                wall = d;
+                break;
+            }
+        }
+        boolean box = false;
+        if (wall == null) for (int[] d : DIRS) {
+            char c = at(f, x + d[0], z + d[1]);
+            if (floorLike(c) && !Character.isDigit(c) && "SKJEQCG".indexOf(c) < 0) {
+                wall = d;
+                box = true;
+                break;
+            }
+        }
         if (wall == null) {
-            warnings.add((f + 1) + "F 電源候選 E（" + x + "," + z + "）旁邊沒有牆，跳過");
+            warnings.add((f + 1) + "F 電源候選 E（" + x + "," + z + "）旁邊沒有牆、家具或空地，跳過");
             return;
         }
-        if (at(f, x + wall[0], z + wall[1]) != '#') {
+        char wc = at(f, x + wall[0], z + wall[1]);
+        if (box || (wc != '#' && !furn(wc))) {
             for (int dy = 0; dy <= 1; dy++) map.set(at(f, x + wall[0], dy, z + wall[1]), Material.IRON_BLOCK); // 配電箱
+            occupied.add(key(f, x + wall[0], z + wall[1]));
         }
         b.powerCandidates.add(at(f, x, 0, z));
     }
@@ -1302,14 +1322,16 @@ final class FixedMapGenerator {
         }
         int area = 0;
         for (Region r : regions) if (!r.ghost) area += r.tiles.size();
-        int target = Math.max(s.minContainers(), (int) Math.round(area / (double) s.barrelArea()));
+        // 地圖自己設了木桶數量（大地圖照密度會太多）：照數量換算成密度，各區照面積分
+        double perBarrel = fm.barrels > 0 ? Math.max(1.0, area / (double) fm.barrels) : s.barrelArea();
+        int target = fm.barrels > 0 ? fm.barrels : Math.max(s.minContainers(), (int) Math.round(area / perBarrel));
         List<Region> order = new ArrayList<>();
         for (Region r : regions) if (cands.containsKey(r.id)) order.add(r);
         // 每區依面積分配
         Map<Integer, Integer> quota = new HashMap<>();
         int placed = 0;
         for (Region r : order) {
-            double want = r.tiles.size() / (double) s.barrelArea();
+            double want = r.tiles.size() / perBarrel;
             int n = (int) want;
             if (rnd.nextDouble() < want - n) n++;
             if (n == 0 && r.tiles.size() >= 30 && rnd.nextInt(3) > 0) n = 1;

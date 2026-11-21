@@ -26,7 +26,7 @@ import java.util.concurrent.ThreadLocalRandom;
 public final class GhostHuntPlugin extends JavaPlugin {
 
     /** 插件裡附的 PvE 固定地圖（第一次啟動時複製到 plugins/GhostHunt/pve-maps/）。 */
-    private static final List<String> BUNDLED_MAPS = List.of("office_park", "hydro_plant", "seaside_resort");
+    private static final List<String> BUNDLED_MAPS = List.of("office_park", "hydro_plant", "seaside_resort", "mall", "mall_m");
 
     private Building building;
     private boolean busy;

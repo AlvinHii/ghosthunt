@@ -1303,6 +1303,8 @@ final class AiGhost {
             Location nl = next < 0 || ahead <= 1.0 ? null : nav.loc(next);
             aim = lineAim(nav.loc(from), tl, here, ahead, nl);
             if (aim[2] == 1 && !chordClear(here, aim)) aim = lineAim(nav.loc(from), tl, here, 1.0, null);
+            // 偏離中線、直走過去會擦到東西（桌角、木桶）：先拉回中線（瞄準自己在路線上的投影），再往前
+            if (aim[2] == 0 && !chordClear(here, aim)) aim = lineAim(nav.loc(from), tl, here, 0.0, null);
             else if (aim[2] == 1 && Math.hypot(tdx, tdz) < 1.0) {
                 // 正在切轉角、而且已經到轉角 1 格內：直接換下一段（不然會走過頭再折回轉角那一點）
                 wayIdx++;
@@ -1401,9 +1403,11 @@ final class AiGhost {
 
     /** 從現在位置到瞄準點的直線（含身體寬度）都是普通可走格子。 */
     private boolean chordClear(Location here, double[] aim) {
-        int a = nav.nearest(here, 1.0);
-        int b = nav.nearest(new Location(here.getWorld(), aim[0], here.getY(), aim[1]), 1.0);
-        return a >= 0 && b >= 0 && nav.nav.y(a) == nav.nav.y(b) && nav.clear(a, b);
+        int y = here.getBlockY();
+        return PathFollow.segmentClear(here.getX(), here.getZ(), aim[0], aim[1], 0.35, (x, z) -> {
+            int id = nav.nav.id(x, y, z);
+            return id >= 0 && !nav.special.contains(id);
+        });
     }
 
     /** 往 (dx, dz) 方向推一步（速度跟著速度屬性走，所以疲勞、加成都有效）。 */
