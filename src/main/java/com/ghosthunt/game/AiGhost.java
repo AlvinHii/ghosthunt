@@ -8,6 +8,7 @@ import com.ghosthunt.game.ai.GhostBrain;
 import com.ghosthunt.game.ai.GhostBrain.Goal;
 import com.ghosthunt.game.ai.GhostBrain.Kind;
 import com.ghosthunt.game.ai.GhostBrain.Point;
+import com.ghosthunt.game.ai.DistanceField;
 import com.ghosthunt.game.ai.GridNav;
 import com.ghosthunt.game.ai.RoomScores;
 import com.ghosthunt.game.ai.SenseDirector;
@@ -295,6 +296,51 @@ final class AiGhost {
     // =====================================================================
 
     void tick() {
+        long t0 = System.nanoTime();
+        tickInner();
+        tickTime.add(System.nanoTime() - t0);
+    }
+
+    // ---- 計時（stats.log：AI 在主執行緒花多少時間）----
+
+    /** 一種計時：次數、總和、最大值（奈秒）。 */
+    private static final class Timing {
+        long count, total, max;
+
+        void add(long ns) {
+            count++;
+            total += ns;
+            max = Math.max(max, ns);
+        }
+
+        double avgMs() {
+            return count == 0 ? 0 : Math.round(total / (double) count / 10_000.0) / 100.0;
+        }
+
+        double maxMs() {
+            return Math.round(max / 10_000.0) / 100.0;
+        }
+    }
+
+    private final Timing tickTime = new Timing(), pathTime = new Timing(), fieldTime = new Timing();
+    /** 鬼到每一格要幾秒（只有在有粒子追蹤器時才每次 think 重算）。 */
+    private DistanceField ghostField;
+
+    private List<Integer> timedPath(int a, int b, GridNav.Cost cost) {
+        long t0 = System.nanoTime();
+        List<Integer> p = nav.nav.path(a, b, cost);
+        pathTime.add(System.nanoTime() - t0);
+        return p;
+    }
+
+    private DistanceField timedField(GridNav.Cost cost, double blocksPerSecond, int... sources) {
+        long t0 = System.nanoTime();
+        DistanceField f = DistanceField.compute(nav.nav, cost, blocksPerSecond, sources);
+        fieldTime.add(System.nanoTime() - t0);
+        return f;
+    }
+
+    private void tickInner() {
         if (mob == null || !mob.isValid()) return;
         if (!m.released) {
             mob.getPathfinder().stopPathfinding();
@@ -917,7 +963,7 @@ final class AiGhost {
     private double travelSeconds(Location to) {
         if (nav == null) return to.distance(mob.getLocation()) / 5.3;
         int a = nav.nearest(mob.getLocation(), 2.5), b = nav.nearestMain(to, 3);
-        List<Integer> p = nav.nav.path(a, b, costFor(Mode.SEARCH));
+        List<Integer> p = timedPath(a, b, costFor(Mode.SEARCH));
         if (p.isEmpty()) return to.distance(mob.getLocation()) / 5.3 * 1.5;
         return p.size() / (5.3 * c.searchSpeed());
     }
@@ -941,7 +987,7 @@ final class AiGhost {
         if (!replan) return;
         int start = nav.nearest(mob.getLocation(), 2.5);
         cost = costFor(mode);
-        List<Integer> p = nav.nav.path(start, g, cost);
+        List<Integer> p = timedPath(start, g, cost);
         planTick = m.tick;
         planVersion = m.mapVersion;
         if (p.isEmpty()) {
@@ -1355,5 +1401,10 @@ final class AiGhost {
         StringBuilder sb = new StringBuilder();
         for (Map.Entry<Kind, Integer> e : goalTicks.entrySet()) sb.append(sb.isEmpty() ? "" : ",").append(e.getKey()).append(':').append(e.getValue() / 20);
         stats.put("aiGoalSeconds", sb.toString());
+        stats.put("aiTickMsAvg", tickTime.avgMs());
+        stats.put("aiTickMsMax", tickTime.maxMs());
+        stats.put("aiPathMsAvg", pathTime.avgMs());
+        stats.put("aiPathMsMax", pathTime.maxMs());
+        stats.put("aiFieldMsAvg", fieldTime.avgMs());
     }
 }
