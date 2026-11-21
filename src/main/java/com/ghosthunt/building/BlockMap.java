@@ -58,18 +58,21 @@ public final class BlockMap {
     }
 
     /**
-     * 因為放方塊時關掉物理更新，鐵欄杆不會自己接起來，
+     * 因為放方塊時關掉物理更新，鐵欄杆、柵欄不會自己接起來，
      * 只剩中間細細一根，人可能擠得過去。這裡手動把它們跟旁邊的欄杆或實心方塊接起來。
      */
     public void connectPanes() {
         for (Map.Entry<Pos, BlockData> e : blocks.entrySet()) {
-            if (e.getValue().getMaterial() != Material.IRON_BARS) continue;
-            MultipleFacing mf = (MultipleFacing) Bukkit.createBlockData(Material.IRON_BARS);
+            Material self = e.getValue().getMaterial();
+            boolean bars = self == Material.IRON_BARS, fence = org.bukkit.Tag.FENCES.isTagged(self);
+            if (!bars && !fence) continue;
+            MultipleFacing mf = (MultipleFacing) Bukkit.createBlockData(self);
             Pos p = e.getKey();
             for (BlockFace f : SIDES) {
                 Pos q = p.add(f.getModX(), 0, f.getModZ());
                 Material m = type(q);
-                if (m == Material.IRON_BARS || (m.isSolid() && m.isOccluding())) {
+                boolean same = bars ? m == Material.IRON_BARS : org.bukkit.Tag.FENCES.isTagged(m);
+                if (same || (m.isSolid() && m.isOccluding())) {
                     mf.setFace(f, true);
                 }
             }

@@ -74,6 +74,8 @@ public final class Building {
     public final long seed;
     /** PvE 小地圖。 */
     public boolean pve;
+    /** 固定地圖的名字（plugins/GhostHunt/pve-maps/名字.txt）；隨機產生的大樓是 null。 */
+    public String mapName;
     public final Layout layout;
     public final RoomType[][][] types; // [floor][cx][cz]
 

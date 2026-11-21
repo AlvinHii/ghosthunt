@@ -116,6 +116,7 @@ final class AiGhost {
     private long planTick, planVersion = -1;
     private Location vanillaTarget;
     private int stuckCount;
+    private long lastStuckTick = -100000;
     private long climbUntil = -1;
     private int climbTo = -1;
     private Location lastStepLoc;
@@ -949,6 +950,7 @@ final class AiGhost {
         wayPath = nav.nav.simplify(p, nav::clear);
         wayIdx = Math.min(1, wayPath.size() - 1);
         rawGoal = g;
+        if (vanillaTarget != null || mob.getPathfinder().hasPath()) mob.getPathfinder().stopPathfinding(); // 原版尋路還在走會跟推著走打架
         vanillaTarget = null;
     }
 
@@ -984,25 +986,106 @@ final class AiGhost {
             if (handleSpecial(e, from, target, fl, here)) return;
         }
         openDoorsOnPath();
-        double dx = tl.getX() - here.getX(), dz = tl.getZ() - here.getZ(), dh = Math.hypot(dx, dz);
-        if (dh < 0.45 && Math.abs(tl.getY() - here.getY()) < 1.3) {
+        double[] aim = doorAim(target, tl, here);
+        double tdx = tl.getX() - here.getX(), tdz = tl.getZ() - here.getZ();
+        if ((aim == null || aim[2] == 0) && Math.hypot(tdx, tdz) < 0.45 && Math.abs(tl.getY() - here.getY()) < 1.3) {
             wayIdx++;
             stuck.reset();
             return;
         }
+        if (aim == null) aim = lineAim(nav.loc(from), tl, here);
+        double dx = aim[0] - here.getX(), dz = aim[1] - here.getZ(), dh = Math.hypot(dx, dz);
+        if (dh < 0.2) {
+            dx = tdx;
+            dz = tdz;
+            dh = Math.hypot(dx, dz);
+        }
         steer(dx, dz, dh);
-        if (stuck.update(m.tick, here.getX(), here.getY(), here.getZ())) onStuck();
+        // 剛揮完拳（疲勞減速 90%）、抓完人時本來就幾乎不動，不算卡住
+        if (m.tick < m.fatigueUntil + 5) stuck.reset();
+        else if (stuck.update(m.tick, here.getX(), here.getY(), here.getZ(), lastStep)) onStuck();
+    }
+
+    /**
+     * 過門要對準：門框只有 1 格寬，開著的門板還佔掉一側 3/16 格，鬼的身體 0.6 格寬，
+     * 斜斜走過去會卡在門板或門框上。所以目標是門（或鬼正站在門裡）時，橫向對準門的「空的那一段」的中間；
+     * 離門還遠、橫向又沒對準時，先走到門前一格對準。
+     * 回傳 {x, z, 0=對準門 / 1=門前對準點 / 2=正在門裡往外走}；跟門沒關係回傳 null。
+     */
+    private double[] doorAim(int target, Location tl, Location here) {
+        Block door = null;
+        int tx = nav.nav.x(target), tz = nav.nav.z(target), ty = nav.nav.y(target);
+        Block tb = m.world.getBlockAt(tx, ty, tz);
+        Block hb = here.getBlock();
+        boolean targetIsDoor = tb.getBlockData() instanceof Door;
+        if (targetIsDoor) door = tb;
+        else if (hb.getBlockData() instanceof Door) door = hb;
+        if (door == null) return null;
+        Door d = (Door) door.getBlockData();
+        boolean alongX = d.getFacing().getModX() != 0; // 穿過門的方向
+        double lo = 0, hi = 1;
+        for (var box : door.getCollisionShape().getBoundingBoxes()) {
+            double a = alongX ? box.getMinZ() : box.getMinX(), b = alongX ? box.getMaxZ() : box.getMaxX();
+            if (b - a > 0.5) continue; // 不是側邊的門板（關著的門板會被開掉）
+            if (a < 0.05) lo = Math.max(lo, b);
+            else if (b > 0.95) hi = Math.min(hi, a);
+        }
+        double lat = (alongX ? door.getZ() : door.getX()) + (lo + hi) / 2;
+        double hereLat = alongX ? here.getZ() : here.getX();
+        if (!targetIsDoor) {
+            // 正在門裡、往門後的路點走：先照穿過門的方向走出門框，橫向保持在空的那段中間
+            double pass = alongX ? tl.getX() : tl.getZ();
+            return alongX ? new double[]{pass, lat, 2} : new double[]{lat, pass, 2};
+        }
+        double doorPass = (alongX ? door.getX() : door.getZ()) + 0.5;
+        double herePass = alongX ? here.getX() : here.getZ();
+        double side = Math.signum(herePass - doorPass);
+        if (side != 0 && Math.abs(hereLat - lat) > 0.12 && Math.abs(herePass - doorPass) > 0.7) {
+            double prePass = doorPass + side * 1.0;
+            int pre = alongX ? nav.nav.id((int) Math.floor(prePass), ty, door.getZ()) : nav.nav.id(door.getX(), ty, (int) Math.floor(prePass));
+            if (pre >= 0) return alongX ? new double[]{prePass, lat, 1} : new double[]{lat, prePass, 1};
+        }
+        return alongX ? new double[]{doorPass, lat, 0} : new double[]{lat, doorPass, 0};
+    }
+
+    /**
+     * 沿著路線走：路點之間的直線是確認過留了身體寬度的，但鬼到達路點時不一定剛好在格子中間（0.45 格內就算到），
+     * 從偏掉的位置直接斜衝向下一個路點，身體會擦到桌角、木桶。所以瞄準「路線上、鬼的投影往前 1 格」的點，偏了會被拉回線上。
+     */
+    private double[] lineAim(Location a, Location b, Location here) {
+        double ax = a.getX(), az = a.getZ(), bx = b.getX(), bz = b.getZ();
+        double len = Math.hypot(bx - ax, bz - az);
+        if (len < 0.01) return new double[]{bx, bz, 0};
+        double ux = (bx - ax) / len, uz = (bz - az) / len;
+        double t = (here.getX() - ax) * ux + (here.getZ() - az) * uz;
+        double off = Math.abs((here.getX() - ax) * uz - (here.getZ() - az) * ux);
+        if (off > 1.2 || t > len) return new double[]{bx, bz, 0}; // 離線太遠（被推開了）：直接往路點走
+        double ahead = Math.min(len, Math.max(0, t) + 1.0);
+        return new double[]{ax + ux * ahead, az + uz * ahead, 0};
     }
 
     /** 往 (dx, dz) 方向推一步（速度跟著速度屬性走，所以疲勞、加成都有效）。 */
     private void steer(double dx, double dz, double dh) {
-        if (dh < 1e-4) return;
+        if (dh < 1e-4) {
+            lastStep = 0;
+            return;
+        }
         var attr = mob.getAttribute(Attribute.MOVEMENT_SPEED);
         double perTick = (attr == null ? 0.45 : attr.getValue()) * speedMul * 0.57; // 0.4635 ≈ 每 tick 0.265 格（實測每秒 5.3 格）
         double step = Math.min(perTick, dh);
+        lastStep = step;
         mob.setVelocity(new Vector(dx / dh * step, mob.getVelocity().getY(), dz / dh * step));
         mob.setRotation((float) Math.toDegrees(Math.atan2(-dx, dz)), 0);
+        if (STUCK_DEBUG) {
+            Location h = mob.getLocation();
+            trace[traceIdx++ % trace.length] = String.format("%d:%.2f,%.2f>%.2f,%.2f", m.tick % 1000, h.getX(), h.getZ(), dx / dh * step, dz / dh * step);
+        }
     }
+
+    private final String[] trace = new String[40];
+    /** 這個 tick 叫鬼走多遠（卡住偵測用：減速時叫它走的距離本來就短）。 */
+    private double lastStep;
+    private int traceIdx;
 
     /** 細路線上離鬼最近那格的下一格。 */
     private int nextRawNode() {
@@ -1105,7 +1188,10 @@ final class AiGhost {
      */
     private void onStuck() {
         stuckEvents++;
+        if (m.tick - lastStuckTick > 200) stuckCount = 0; // 10 秒內沒再卡住就重新算
+        lastStuckTick = m.tick;
         stuckCount++;
+        if (STUCK_DEBUG) stuckDump();
         if (stuckCount == 1) {
             rawGoal = -1; // 下次 navigate 重新找路
             wayPath = List.of();
@@ -1130,6 +1216,45 @@ final class AiGhost {
             rawGoal = -1;
             wayPath = List.of();
         }
+    }
+
+    static boolean STUCK_DEBUG = Boolean.getBoolean("ghosthunt.stuckdebug");
+
+    private void stuckDump() {
+        Location h = mob.getLocation();
+        StringBuilder sb = new StringBuilder("[AI 鬼 STUCK] #" + stuckCount + " goal=" + (goal == null ? "-" : goal.kind())
+                + String.format(" at=%.2f,%.2f,%.2f", h.getX(), h.getY(), h.getZ())
+                + " vel=" + String.format("%.2f,%.2f,%.2f", mob.getVelocity().getX(), mob.getVelocity().getY(), mob.getVelocity().getZ())
+                + " onGround=" + mob.isOnGround() + " vanillaPath=" + mob.getPathfinder().hasPath()
+                + " wayIdx=" + wayIdx + "/" + wayPath.size());
+        if (nav != null && !wayPath.isEmpty() && wayIdx < wayPath.size()) {
+            int t = wayPath.get(wayIdx), f = wayPath.get(Math.max(0, wayIdx - 1));
+            GridNav.Edge e = nav.nav.edge(f, t);
+            sb.append(" from=").append(nav.nav.x(f)).append(',').append(nav.nav.y(f)).append(',').append(nav.nav.z(f))
+                    .append(" to=").append(nav.nav.x(t)).append(',').append(nav.nav.y(t)).append(',').append(nav.nav.z(t))
+                    .append(" edge=").append(e == null ? "none" : e.kind());
+        }
+        for (org.bukkit.entity.Entity en : mob.getNearbyEntities(1.5, 1.5, 1.5))
+            sb.append(" near=").append(en.getType()).append(String.format("@%.2f,%.2f", en.getLocation().getX(), en.getLocation().getZ()));
+        sb.append("\n  trace:");
+        for (int i = 0; i < trace.length; i += 2) {
+            String t = trace[(traceIdx + i) % trace.length];
+            if (t != null) sb.append(' ').append(t);
+        }
+        int bx = h.getBlockX(), by = h.getBlockY(), bz = h.getBlockZ();
+        sb.append("\n  blocks y=").append(by).append(" (x-2..x+2 rows z-2..z+2):");
+        for (int z = bz - 2; z <= bz + 2; z++) {
+            sb.append("\n   ");
+            for (int x = bx - 2; x <= bx + 2; x++) {
+                Block b0 = m.world.getBlockAt(x, by, z), b1 = m.world.getBlockAt(x, by + 1, z);
+                String s = (b0.isPassable() ? "." : b0.getType().name().substring(0, Math.min(6, b0.getType().name().length())))
+                        + "/" + (b1.isPassable() ? "." : b1.getType().name().substring(0, Math.min(6, b1.getType().name().length())));
+                if (b0.getBlockData() instanceof Door d) s = "DOOR" + (d.isOpen() ? "o" : "c") + d.getFacing().name().charAt(0) + d.getHinge().name().charAt(0);
+                boolean node = nav != null && nav.nav.id(x, by, z) >= 0;
+                sb.append(String.format("%-15s", (node ? "*" : " ") + s));
+            }
+        }
+        m.plugin.getLogger().info(sb.toString());
     }
 
     // ---- 腳步聲 ----

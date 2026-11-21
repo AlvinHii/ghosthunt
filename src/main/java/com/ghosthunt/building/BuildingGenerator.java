@@ -19,6 +19,11 @@ public final class BuildingGenerator {
 
     private static final int MAX_ATTEMPTS = 20;
 
+    /** PvE 固定地圖：照平面圖蓋，每次（種子不同）隨機挑大門、保全室、木桶。 */
+    public static Result generateFixed(BuildingSettings s, FixedMap map, long seed) {
+        return FixedMapGenerator.generate(s, map, seed);
+    }
+
     public static Result generate(BuildingSettings s, long seed) {
         if (s.irregular()) return IrregularGenerator.generate(s, seed);
         List<String> problems = checkSettings(s);

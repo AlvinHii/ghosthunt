@@ -25,6 +25,9 @@ import java.util.concurrent.ThreadLocalRandom;
 
 public final class GhostHuntPlugin extends JavaPlugin {
 
+    /** 插件裡附的 PvE 固定地圖（第一次啟動時複製到 plugins/GhostHunt/pve-maps/）。 */
+    private static final List<String> BUNDLED_MAPS = List.of("office_park");
+
     private Building building;
     private boolean busy;
     private com.ghosthunt.game.Match match;
@@ -32,6 +35,9 @@ public final class GhostHuntPlugin extends JavaPlugin {
     @Override
     public void onEnable() {
         saveDefaultConfig();
+        for (String m : BUNDLED_MAPS) {
+            if (!new java.io.File(getDataFolder(), "pve-maps/" + m + ".txt").exists()) saveResource("pve-maps/" + m + ".txt", false);
+        }
         com.ghosthunt.game.Items.init(this);
         getServer().getPluginManager().registerEvents(new com.ghosthunt.game.GameListener(() -> match), this);
         com.ghosthunt.game.Match.recoverAfterCrash(this);
@@ -62,6 +68,8 @@ public final class GhostHuntPlugin extends JavaPlugin {
             case "build" -> { if (!inMatch(sender)) build(sender, args); }
             case "clear" -> { if (!inMatch(sender)) clear(sender); }
             case "start" -> start(sender, args);
+            case "maps" -> listMaps(sender);
+            case "maptest" -> mapTest(sender, args);
             case "stop" -> {
                 if (match == null) msg(sender, "目前沒有在進行的遊戲。", NamedTextColor.GRAY);
                 else match.end("管理員結束了遊戲");
@@ -148,6 +156,10 @@ public final class GhostHuntPlugin extends JavaPlugin {
     }
 
     private void start(CommandSender sender, String[] args) {
+        start(sender, args, false);
+    }
+
+    private void start(CommandSender sender, String[] args, boolean rerolled) {
         if (match != null) {
             msg(sender, "已經有一局在進行。", NamedTextColor.RED);
             return;
@@ -172,6 +184,12 @@ public final class GhostHuntPlugin extends JavaPlugin {
             }
             if (players.isEmpty() && !solo) {
                 msg(sender, "沒有玩家在線上。", NamedTextColor.RED);
+                return;
+            }
+            // 固定地圖：每局重蓋一次（大門、保全室、木桶重新隨機）
+            if (!rerolled && building.mapName != null && getConfig().getBoolean("pve.reroll-each-match", true)) {
+                msg(sender, "重新隨機大門、保全室、木桶…", NamedTextColor.GRAY);
+                buildFixed(sender, building.mapName, ThreadLocalRandom.current().nextLong(1_000_000), false, () -> start(sender, args, true));
                 return;
             }
             World world = ArenaWorld.getOrCreate(BuildingSettings.from(getConfig()).worldName());
@@ -217,9 +235,18 @@ public final class GhostHuntPlugin extends JavaPlugin {
             msg(sender, "正在蓋，請稍等。", NamedTextColor.RED);
             return;
         }
-        // /gh build [種子] 或 /gh build pve [種子]（PvE 小地圖）
+        // /gh build [種子]、/gh build pve [地圖名|random] [種子]（PvE：預設是 config 的 pve.map 固定地圖）
         boolean pve = args.length > 1 && args[1].equalsIgnoreCase("pve");
         int seedArg = pve ? 2 : 1;
+        String mapName = null;
+        if (pve) {
+            mapName = getConfig().getString("pve.map", "office_park");
+            if (args.length > 2 && !args[2].matches("-?[0-9]+")) {
+                mapName = args[2];
+                seedArg = 3;
+            }
+            if (mapName == null || mapName.isBlank() || mapName.equalsIgnoreCase("random")) mapName = null;
+        }
         long seed;
         try {
             seed = args.length > seedArg ? Long.parseLong(args[seedArg]) : ThreadLocalRandom.current().nextLong(1_000_000);
@@ -227,33 +254,150 @@ public final class GhostHuntPlugin extends JavaPlugin {
             msg(sender, "種子要是數字。", NamedTextColor.RED);
             return;
         }
+        if (mapName != null) {
+            buildFixed(sender, mapName, seed, true, null);
+            return;
+        }
         BuildingSettings s = BuildingSettings.from(getConfig(), pve);
+        place(sender, s, BuildingGenerator.generate(s, seed), true, null);
+    }
+
+    /** PvE 固定地圖（plugins/GhostHunt/pve-maps/名字.txt）。 */
+    private void buildFixed(CommandSender sender, String mapName, long seed, boolean verbose, Runnable after) {
+        java.nio.file.Path file = getDataFolder().toPath().resolve("pve-maps").resolve(mapName + ".txt");
+        if (!java.nio.file.Files.exists(file)) {
+            msg(sender, "找不到地圖 " + mapName + "（" + file + "）。用 /gh maps 看有哪些。", NamedTextColor.RED);
+            return;
+        }
+        com.ghosthunt.building.FixedMap fm;
+        try {
+            fm = com.ghosthunt.building.FixedMap.load(file);
+        } catch (java.io.IOException e) {
+            msg(sender, "讀地圖失敗：" + e.getMessage(), NamedTextColor.RED);
+            return;
+        }
+        BuildingSettings s = BuildingSettings.from(getConfig(), true);
+        place(sender, s, BuildingGenerator.generateFixed(s, fm, seed), verbose, after);
+    }
+
+    private void place(CommandSender sender, BuildingSettings s, BuildingGenerator.Result r, boolean verbose, Runnable after) {
         World world = ArenaWorld.getOrCreate(s.worldName());
         if (world == null) {
             msg(sender, "建立遊戲世界失敗。", NamedTextColor.RED);
             return;
         }
-        long t0 = System.nanoTime();
-        BuildingGenerator.Result r = BuildingGenerator.generate(s, seed);
-        long ms = (System.nanoTime() - t0) / 1_000_000;
         if (!r.ok()) {
             msg(sender, "大樓產生失敗（試了 " + r.attempts() + " 次）：", NamedTextColor.RED);
             r.errors().stream().limit(10).forEach(e -> msg(sender, " - " + e, NamedTextColor.RED));
             return;
         }
-        r.rejected().forEach(e -> getLogger().info("退回的版本：" + e));
-        busy = true;
         Building b = r.building();
-        msg(sender, "產生完成（種子 " + b.seed + "，試了 " + r.attempts() + " 次，" + ms + " ms，"
+        if (b.mapName != null) {
+            r.rejected().forEach(e -> getLogger().warning("地圖 " + b.mapName + "：" + e));
+            if (verbose) r.rejected().stream().limit(8).forEach(e -> msg(sender, "注意：" + e, NamedTextColor.YELLOW));
+        } else r.rejected().forEach(e -> getLogger().info("退回的版本：" + e));
+        busy = true;
+        if (verbose) msg(sender, "產生完成（" + (b.mapName != null ? "地圖 " + b.mapName + "，" : "") + "種子 " + b.seed + "，試了 " + r.attempts() + " 次，"
                 + r.blocks().blocks().size() + " 個方塊），開始分批蓋…", NamedTextColor.GRAY);
         BlockPlacer.place(this, world, r.blocks(), s.blocksPerTick(), ticks -> {
             busy = false;
             building = b;
             int signs = writeSigns(world, b);
-            getLogger().info("告示牌寫好 " + signs + "/" + b.signs.size() + " 個");
-            msg(sender, "大樓蓋好了，花了 " + ticks + " tick。用 /ghosthunt tp 1 進去看看。", NamedTextColor.GREEN);
-            info(sender);
+            if (verbose) {
+                getLogger().info("告示牌寫好 " + signs + "/" + b.signs.size() + " 個");
+                msg(sender, "大樓蓋好了，花了 " + ticks + " tick。用 /ghosthunt tp 1 進去看看。", NamedTextColor.GREEN);
+                info(sender);
+            }
+            if (after != null) after.run();
         });
+    }
+
+    /**
+     * /gh maptest [地圖] [次數]：用很多個種子產生固定地圖（不放方塊），統計每局隨機的結果：
+     * 大門組合、保全室組合、木桶數量、失敗和警告。看「所有可能」是不是都合理。
+     */
+    private void mapTest(CommandSender sender, String[] args) {
+        String name = args.length > 1 ? args[1] : getConfig().getString("pve.map", "office_park");
+        int n = 200;
+        try {
+            if (args.length > 2) n = Integer.parseInt(args[2]);
+        } catch (NumberFormatException ignored) {
+        }
+        java.nio.file.Path file = getDataFolder().toPath().resolve("pve-maps").resolve(name + ".txt");
+        com.ghosthunt.building.FixedMap fm;
+        try {
+            fm = com.ghosthunt.building.FixedMap.load(file);
+        } catch (java.io.IOException e) {
+            msg(sender, "讀不到地圖 " + name + "：" + e.getMessage(), NamedTextColor.RED);
+            return;
+        }
+        BuildingSettings s = BuildingSettings.from(getConfig(), true);
+        java.util.Map<String, Integer> gatePairs = new java.util.TreeMap<>(), secPairs = new java.util.TreeMap<>(), warn = new java.util.TreeMap<>(),
+                fails = new java.util.TreeMap<>(), gateFloors = new java.util.TreeMap<>();
+        java.util.IntSummaryStatistics barrels = new java.util.IntSummaryStatistics(), power = new java.util.IntSummaryStatistics();
+        java.util.DoubleSummaryStatistics gateDist = new java.util.DoubleSummaryStatistics(), secDist = new java.util.DoubleSummaryStatistics();
+        long t0 = System.nanoTime();
+        for (int i = 0; i < n; i++) {
+            BuildingGenerator.Result r = BuildingGenerator.generateFixed(s, fm, 1000L + i);
+            for (String w : r.rejected()) warn.merge(w.replaceAll("[0-9]+", "#"), 1, Integer::sum);
+            if (!r.ok()) {
+                fails.merge(r.errors().get(0).replaceAll("[0-9]+", "#"), 1, Integer::sum);
+                continue;
+            }
+            Building b = r.building();
+            java.util.List<String> gs = new java.util.ArrayList<>();
+            for (Building.Gate g : b.gates) gs.add((g.floor() + 1) + "F" + (g.center().x() - b.layout.ox) + "," + (g.center().z() - b.layout.oz));
+            java.util.Collections.sort(gs);
+            gatePairs.merge(String.join(" + ", gs), 1, Integer::sum);
+            if (b.gates.size() == 2) {
+                gateDist.accept(b.gates.get(0).center().distance(b.gates.get(1).center()));
+                gateFloors.merge((b.gates.get(0).floor() == b.gates.get(1).floor() ? "同一層" : "不同層"), 1, Integer::sum);
+            }
+            java.util.List<String> ss = new java.util.ArrayList<>();
+            for (Pos q : b.securityTerminals) ss.add((q.y() > b.layout.floorY(1) ? "2F" : "1F") + (q.x() - b.layout.ox) + "," + (q.z() - b.layout.oz));
+            java.util.Collections.sort(ss);
+            secPairs.merge(String.join(" + ", ss), 1, Integer::sum);
+            if (b.securityTerminals.size() == 2) secDist.accept(b.securityTerminals.get(0).distance(b.securityTerminals.get(1)));
+            barrels.accept(b.containers.size());
+            power.accept(b.powerCandidates.size());
+        }
+        long ms = (System.nanoTime() - t0) / 1_000_000;
+        java.util.List<String> out = new java.util.ArrayList<>();
+        out.add("地圖 " + name + "：產生 " + n + " 次（" + ms + " ms），失敗 " + fails.values().stream().mapToInt(Integer::intValue).sum() + " 次");
+        fails.forEach((k, v) -> out.add("  失敗 " + v + "×：" + k));
+        out.add(String.format("大門組合 %d 種｜兩扇距離 平均 %.1f（%.1f～%.1f）｜%s", gatePairs.size(), gateDist.getAverage(), gateDist.getMin(), gateDist.getMax(), gateFloors));
+        gatePairs.entrySet().stream().sorted((a, c) -> c.getValue() - a.getValue()).limit(12)
+                .forEach(e -> out.add("  " + e.getValue() + "×  " + e.getKey()));
+        out.add(String.format("保全室組合 %d 種｜兩台終端機距離 平均 %.1f（%.1f～%.1f）", secPairs.size(), secDist.getAverage(), secDist.getMin(), secDist.getMax()));
+        secPairs.entrySet().stream().sorted((a, c) -> c.getValue() - a.getValue()).limit(10)
+                .forEach(e -> out.add("  " + e.getValue() + "×  " + e.getKey()));
+        out.add(String.format("木桶 平均 %.1f（%d～%d）｜電源候選 %d～%d", barrels.getAverage(), barrels.getMin(), barrels.getMax(), power.getMin(), power.getMax()));
+        warn.forEach((k, v) -> out.add("  警告 " + v + "×：" + k));
+        for (String line : out) {
+            getLogger().info("[maptest] " + line);
+            if (sender instanceof Player) msg(sender, line, NamedTextColor.GRAY);
+        }
+    }
+
+    private void listMaps(CommandSender sender) {
+        java.io.File dir = new java.io.File(getDataFolder(), "pve-maps");
+        String[] names = dir.list((d, n) -> n.endsWith(".txt"));
+        if (names == null || names.length == 0) {
+            msg(sender, "pve-maps 資料夾裡沒有地圖。", NamedTextColor.GRAY);
+            return;
+        }
+        java.util.Arrays.sort(names);
+        msg(sender, "PvE 地圖（/gh build pve <名字>）：", NamedTextColor.WHITE);
+        for (String n : names) {
+            String id = n.substring(0, n.length() - 4);
+            String title = id;
+            try {
+                com.ghosthunt.building.FixedMap fm = com.ghosthunt.building.FixedMap.load(dir.toPath().resolve(n));
+                title = id + "：" + fm.name + "（" + fm.type + "，" + fm.W + "×" + fm.H + "，" + fm.floorCount() + " 層）";
+            } catch (java.io.IOException ignored) {
+            }
+            msg(sender, " - " + title, NamedTextColor.GRAY);
+        }
     }
 
     /**

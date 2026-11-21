@@ -99,7 +99,8 @@ class Layout:
                     self.containers.append(c)
                     have.add(c)
         self.power = [self.nid(*p) for p in data['power']]
-        self.gates = [(self.nid(*g['reader'][0]), self.nid(*g['exit'][0])) for g in data['gates']]
+        # 出口在場地外面 2 格（座標可能是負的或超出 S），不能換成格子編號，直接用座標當 key
+        self.gates = [(self.nid(*g['reader'][0]), ('exit',) + tuple(g['exit'][0])) for g in data['gates']]
         self.jails = [self.nid(*p) for p in data['jails']]
         self.real_nodes = [i for i in range(self.n_real) if self.adj[i]]
         # 匯出時鬼房的門還封著（裡面算走不到），鬼從鬼房外最近的格子出發
@@ -112,7 +113,7 @@ class Layout:
             self.fields[c] = self.bfs(self.adjacent_walk(c))
         for g in self.gates:
             # 出口在大樓外面（匯出的地圖沒有），走到大門開口內側（離出口 3.6 格內）就算逃出
-            self.fields[g[1]] = self.bfs(self.near(g[1], 3.6))
+            self.fields[g[1]] = self.bfs(self.near_xyz(*g[1][1:], 3.6))
         self.jail_zone = {}
         for j in self.jails:
             zone = self.near(j, 4.6)
@@ -139,7 +140,9 @@ class Layout:
         return out
 
     def near(self, i, r):
-        f, x, z = self.fxz(i)
+        return self.near_xyz(*self.fxz(i), r)
+
+    def near_xyz(self, f, x, z, r):
         out = []
         for dz in range(-int(r) - 1, int(r) + 2):
             for dx in range(-int(r) - 1, int(r) + 2):
