@@ -1196,7 +1196,7 @@ final class FixedMapGenerator {
             if (!map.type(p).isAir()) continue; // 地毯（障礙物記號）、光源、告示牌、門都不要蓋掉
             String[] kv = v.split(":");
             if (kv[0].equals("item_frame") || kv[0].equals("glow_item_frame")) {
-                Material item = kv.length > 1 ? fm.material(kv[1], Material.MAP) : Material.MAP;
+                Material item = kv.length > 1 ? fm.item(kv[1], Material.MAP) : Material.MAP;
                 b.decorFrames.add(new Building.DecorFrame(p, bf, kv[0].startsWith("glow"), item));
                 continue;
             }

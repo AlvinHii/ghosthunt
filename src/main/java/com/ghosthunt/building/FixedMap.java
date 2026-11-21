@@ -180,6 +180,17 @@ public final class FixedMap {
     }
 
     /** 方塊名稱轉成 Material；不認識就記下來，回傳 fallback。 */
+    /** 物品（展示框裡放的東西，不一定是方塊）。 */
+    public Material item(String name, Material fallback) {
+        if (name == null || name.isBlank()) return fallback;
+        Material mat = Material.matchMaterial(name.strip().toLowerCase(Locale.ROOT));
+        if (mat == null || !mat.isItem()) {
+            problems.add("不認識的物品：" + name);
+            return fallback;
+        }
+        return mat;
+    }
+
     public Material material(String name, Material fallback) {
         if (name == null || name.isBlank()) return fallback;
         Material mat = Material.matchMaterial(name.strip().toLowerCase(Locale.ROOT));
