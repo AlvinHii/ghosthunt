@@ -48,4 +48,20 @@ final class TestGrids {
     static int id(GridNav g, int x, int z) {
         return g.id(x, Y, z);
     }
+
+    /** 可見性表用：# 不透明、D 是門 0、其他（含圖外）透明。節點照 grid() 建的。 */
+    static VisibilityTable.Grid visGrid(GridNav g, String... rows) {
+        return new VisibilityTable.Grid() {
+            public int size() { return g.size(); }
+            public int x(int id) { return g.x(id); }
+            public int y(int id) { return g.y(id); }
+            public int z(int id) { return g.z(id); }
+            public boolean opaque(int x, int y, int z) { return ch(x, z) == '#'; }
+            public int doorAt(int x, int y, int z) { return ch(x, z) == 'D' ? 0 : -1; }
+
+            private char ch(int x, int z) {
+                return z < 0 || z >= rows.length || x < 0 || x >= rows[z].length() ? ' ' : rows[z].charAt(x);
+            }
+        };
+    }
 }
