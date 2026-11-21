@@ -260,8 +260,9 @@ final class AiGhost {
     /** 聽到聲音（Match.noise 已經判斷過同一層、距離）。低等級的聲音蓋不掉還記著的高等級聲音。 */
     void hearNoise(Location at, int level) {
         lastQuietBreakTick = m.tick;
-        for (ParticleTracker t : trackers.values()) t.weightNear(at.getX(), at.getY(), at.getZ(), 2);
-        if (sensedTracker != null) sensedTracker.weightNear(at.getX(), at.getY(), at.getZ(), 2);
+        Location heard = jitter(at, c.noiseError());
+        for (ParticleTracker t : trackers.values()) t.weightNear(heard.getX(), heard.getY(), heard.getZ(), 2);
+        if (sensedTracker != null) sensedTracker.weightNear(heard.getX(), heard.getY(), heard.getZ(), 2);
         if (noise != null && m.tick - noiseTick <= c.searchTime() && level < noiseLevel) return;
         noise = snapWalkable(jitter(at, c.noiseError()), at);
         noiseTick = m.tick;
@@ -290,7 +291,9 @@ final class AiGhost {
         if (id.equals(sensedId)) {
             sensed = null;
             sensedId = null;
+            sensedTracker = null;
         }
+        lostAt.remove(id);
         windupStart = -1;
     }
 
@@ -344,7 +347,10 @@ final class AiGhost {
     private ParticleTracker sensedTracker;
     /** 這個人的這次追丟已經撒過粒子了（重新看到時清掉）。 */
     private UUID lostHandledId;
-    private long lostAtTick = -1;
+    /** 每個逃生者這次追丟的時間（重新看到同一個人才算「重新找到」）。 */
+    private final Map<UUID, Long> lostAt = new HashMap<>();
+    /** 每個尋路格子屬於哪一間房（第一次感應時算一次）。 */
+    private int[] nodeRoom;
     private int losses, reacquire30, thinkCount;
     private DistanceField goalField;
     private String goalFieldKey = "";
@@ -356,12 +362,14 @@ final class AiGhost {
     private final WorldTraces traces = new WorldTraces();
     private int tracesSeen;
 
-    /** 每秒一次：16 格內、看得到的門、木桶、櫃子、小洞，狀態變了就是痕跡（那一區巡邏加分、附近的粒子加權）。 */
+    /** 每秒一次：16 格內、看得到的門、木桶、櫃子，狀態變了就是痕跡（那一區巡邏加分、附近的粒子加權）。 */
     private void lookForTraces() {
         if (nav == null || vis == null) return;
         int gnode = nav.nearest(mob.getLocation(), 2.5);
+        Location me = mob.getLocation();
         for (int i = 0; i < nav.doors.size(); i++) {
             Pos d = nav.doors.get(i);
+            if (Math.abs(d.x() + 0.5 - me.getX()) > 16 || Math.abs(d.z() + 0.5 - me.getZ()) > 16) continue;
             int state = m.isDoorJammed(d) ? 2 : doorClosed(i) ? 0 : 1;
             observeTrace(gnode, WorldTraces.Type.DOOR, i, state, m.loc(d));
         }
@@ -373,10 +381,7 @@ final class AiGhost {
             Pos b = m.b.toppleSpots.get(i).blocks().keySet().iterator().next();
             observeTrace(gnode, WorldTraces.Type.CABINET, i, m.isToppled(i) ? 1 : 0, m.loc(b));
         }
-        for (int i = 0; i < m.b.crawlHoles.size(); i++) {
-            Pos h = m.b.crawlHoles.get(i).lower();
-            observeTrace(gnode, WorldTraces.Type.HOLE, i, m.isHoleWidened(i) ? 1 : 0, m.loc(h));
-        }
+        // 小洞只有鬼會打大，看到變大一定是自己造成的，不看
     }
 
     private void observeTrace(int gnode, WorldTraces.Type type, int id, int state, Location at) {
@@ -399,7 +404,7 @@ final class AiGhost {
         if (nav == null) return;
         for (int i = 0; i < nav.doors.size(); i++) {
             Pos d = nav.doors.get(i);
-            if (Math.abs(d.x() - lower.x()) + Math.abs(d.z() - lower.z()) <= 1 && d.y() == lower.y()) traces.ghostChanged(WorldTraces.Type.DOOR, i, newState);
+            if (Math.abs(d.x() - lower.x()) + Math.abs(d.z() - lower.z()) <= 1 && d.y() == lower.y()) traces.ghostChanged(WorldTraces.Type.DOOR, i, newState, m.tick);
         }
     }
 
@@ -422,9 +427,19 @@ final class AiGhost {
 
     /** 鬼現在看得到這一格嗎（可見性表＋視野角＋距離；表還沒建好就當作看不到）。 */
     private boolean ghostSees(int ghostNode, int cell) {
-        if (vis == null || ghostNode < 0 || !vis.known(ghostNode, cell)) return false;
+        if (vis == null || ghostNode < 0) return false;
         Location l = nav.loc(cell);
         double d = l.distance(mob.getLocation());
+        if (!vis.known(ghostNode, cell)) {
+            // 樓梯上、樓梯間看上下層：表裡沒有，12 格內用真的方塊射線（腳的高度＋1）
+            if (d > 12 || (d > c.nearAware() && !inFront(l, c.fovDegrees()))) return false;
+            if (!SearchRules.sightUsable(m.tick, blindUntil, false, false, d)) return false;
+            Location eye = mob.getEyeLocation(), to = l.clone().add(0, 1, 0);
+            org.bukkit.util.Vector dir = to.toVector().subtract(eye.toVector());
+            if (dir.length() < 0.01) return true;
+            var hit = eye.getWorld().rayTraceBlocks(eye, dir.normalize(), dir.length(), FluidCollisionMode.NEVER, true);
+            return hit == null || hit.getHitBlock() == null;
+        }
         if (d > (m.obj.powerOn() ? c.sightRange() : c.sightRangeDark())) return false;
         if (d > c.nearAware() && !inFront(l, c.fovDegrees())) return false;
         // 跟「看到人」一樣：失明（煙霧彈、手電筒、球車）時不能用視線；鬼或那一格在溫泉蒸氣裡也不行
@@ -468,13 +483,17 @@ final class AiGhost {
         }
         if (thinkCount % Math.max(1, 10 / c.thinkEvery()) != 0) return;
         int gnode = nav.nearest(mob.getLocation(), 2.5);
+        if (gnode < 0) gnode = nav.nearest(mob.getLocation(), 6);
+        if (gnode < 0) return; // 鬼不在尋路圖上（例如爬梯子中）：這一步先不推理
         ghostField = timedField(costFor(Mode.SEARCH), 5.3 * c.searchSpeed(), gnode);
+        final int gn = gnode;
+        Map<Integer, Boolean> seenCache = new HashMap<>();
         DistanceField gf = goalField();
         List<ParticleTracker> all = new ArrayList<>(trackers.values());
         if (sensedTracker != null) all.add(sensedTracker);
         for (ParticleTracker t : all) {
             t.step(0.5, ghostField, gf);
-            t.removeVisible(i -> ghostSees(gnode, i));
+            t.removeVisible(i -> seenCache.computeIfAbsent(i, k -> ghostSees(gn, k)));
         }
     }
 
@@ -648,10 +667,8 @@ final class AiGhost {
             lostHandledId = null;
             trueSeenTick = m.tick;
             trueSeenLoc = seen.getLocation();
-            if (lostAtTick >= 0) {
-                if (m.tick - lostAtTick <= 600) reacquire30++;
-                lostAtTick = -1;
-            }
+            Long lost = lostAt.remove(seen.getUniqueId());
+            if (lost != null && m.tick - lost <= 600) reacquire30++;
             chaseSeenTick = m.tick;
             Location now = seen.getLocation();
             if (prevSeenLoc != null && prevSeenLoc.getWorld().equals(now.getWorld()) && prevSeenLoc.distance(now) > 0.2)
@@ -685,7 +702,7 @@ final class AiGhost {
             if (t.alive() > 0) trackers.put(lastSeenId, t);
             lostHandledId = lastSeenId;
             losses++;
-            lostAtTick = m.tick;
+            lostAt.put(lastSeenId, m.tick);
         }
         return seen;
     }
@@ -732,7 +749,11 @@ final class AiGhost {
         sensedUntil = m.tick + 30 * 20;
         if (nav != null && sensedRoom >= 0) {
             List<Integer> cells = new ArrayList<>();
-            for (int i = 0; i < nav.nav.size(); i++) if (nav.isMain(i) && roomAt(nav.loc(i)) == sensedRoom) cells.add(i);
+            if (nodeRoom == null) {
+                nodeRoom = new int[nav.nav.size()];
+                for (int i = 0; i < nodeRoom.length; i++) nodeRoom[i] = nav.isMain(i) ? roomAt(nav.loc(i)) : -1;
+            }
+            for (int i = 0; i < nodeRoom.length; i++) if (nodeRoom[i] == sensedRoom) cells.add(i);
             sensedTracker = newTracker();
             sensedTracker.seedUniform(cells, m.tick);
             if (sensedTracker.alive() == 0) sensedTracker = null;
@@ -922,7 +943,7 @@ final class AiGhost {
                 // 證據式：看到人在洞口消失、之後沒聲音 → 幾乎一定跟；粒子很多在另一端 → 加倍
                 Location otherTop = m.loc(m.b.hatches.get(other).trapdoor()).add(0, 1, 0);
                 ParticleTracker trk = lastSeenId == null ? null : trackers.get(lastSeenId);
-                double share = trk == null ? 0 : trk.shareWithin(cellsNear(otherTop, 3));
+                double share = trk == null ? 0 : trk.shareNear(otherTop.getX(), otherTop.getY(), otherTop.getZ(), 3);
                 double p = HideoutOdds.chance(c.followTunnelChance(), trueSeenLoc == null ? 99 : t.distance(trueSeenLoc),
                         (m.tick - trueSeenTick) / 20.0, SearchRules.quietSince(lastQuietBreakTick, trueSeenTick), share, 0);
                 if (m.rnd.nextDouble() >= p) break;
@@ -985,7 +1006,7 @@ final class AiGhost {
                 Location ent = m.loc(h.lower());
                 if (ent.distance(pocket) > 3) continue;
                 double share = 0;
-                for (ParticleTracker tr : trackers.values()) share = Math.max(share, tr.shareWithin(cellsNear(pocket, 1)));
+                for (ParticleTracker tr : trackers.values()) share = Math.max(share, tr.shareNear(pocket.getX() + 0.5, pocket.getY(), pocket.getZ() + 0.5, 1));
                 double p = HideoutOdds.chance(base, ent.distance(ref), (m.tick - refTick) / 20.0, SearchRules.quietSince(lastQuietBreakTick, refTick), share, 0);
                 if (p > bestP) {
                     bestP = p;
@@ -996,17 +1017,6 @@ final class AiGhost {
         if (bestHole < 0 || m.rnd.nextDouble() >= bestP) return false;
         pendingHole = bestHole;
         return true;
-    }
-
-    /** 尋路圖上離 at radius 格內的格子（同一層）。 */
-    private List<Integer> cellsNear(Location at, double radius) {
-        List<Integer> out = new ArrayList<>();
-        if (nav == null) return out;
-        for (int i = 0; i < nav.nav.size(); i++) {
-            Location l = nav.loc(i);
-            if (Math.abs(l.getY() - at.getY()) < 1.5 && Math.hypot(l.getX() - at.getX(), l.getZ() - at.getZ()) <= radius) out.add(i);
-        }
-        return out;
     }
 
     private int pendingHole = -1;
@@ -1023,7 +1033,7 @@ final class AiGhost {
             stopMoving();
             int widening = pendingHole;
             if (m.ghostWidenHole(pendingHole)) {
-                traces.ghostChanged(WorldTraces.Type.HOLE, widening, 1);
+                traces.ghostChanged(WorldTraces.Type.HOLE, widening, 1, m.tick);
                 pendingHole = -1;
             }
         } else navigate(hole, Mode.SEARCH);
@@ -1476,7 +1486,7 @@ final class AiGhost {
                 if (fl.distance(here) > 1.8) return false;
                 stopMovingKeepPath();
                 m.ghostWidenHole(e.ref());
-                traces.ghostChanged(WorldTraces.Type.HOLE, e.ref(), 1);
+                traces.ghostChanged(WorldTraces.Type.HOLE, e.ref(), 1, m.tick);
                 return true;
             }
             case HATCH -> {

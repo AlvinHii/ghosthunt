@@ -104,6 +104,23 @@ class ParticleTrackerTest {
     }
 
     @Test
+    void expensiveEdge_debtCarriesOver() {
+        // 只靠一條很貴的邊（地洞，4 格）相連：0.5 秒預算 2.8 格。10 步總預算 28 格，加上最後一次超支最多 4 格 → 最多穿過 8 次
+        GridNav g = TestGrids.grid("T#T");
+        ParticleTracker t = new ParticleTracker(g, FREE, new ParticleTracker.Config(50, 5.6, 0, 0, 3, 1, 10_000), new Random(4));
+        t.seed(TestGrids.id(g, 0, 0), 0);
+        int[] before = t.positions();
+        int crossings = 0;
+        for (int i = 0; i < 10; i++) {
+            t.step(0.5, null, null);
+            int[] after = t.positions();
+            if (after[0] != before[0]) crossings++;
+            before = after;
+        }
+        assertTrue(crossings <= 8, "穿過 " + crossings + " 次");
+    }
+
+    @Test
     void shareNear_countsWithinRadius() {
         GridNav g = TestGrids.grid("..........");
         ParticleTracker t = tracker(g, FREE, 7);

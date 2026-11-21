@@ -38,7 +38,7 @@ class WorldTracesTest {
     void ghostCaused_isNotATrace() {
         WorldTraces t = new WorldTraces();
         t.observe(Type.DOOR, 3, 0, 1, 65, 1, 100);
-        t.ghostChanged(Type.DOOR, 3, 1);
+        t.ghostChanged(Type.DOOR, 3, 1, 100);
         assertNull(t.observe(Type.DOOR, 3, 1, 1, 65, 1, 200));
         // 之後別人再改就算
         assertNotNull(t.observe(Type.DOOR, 3, 0, 1, 65, 1, 300));
@@ -49,9 +49,18 @@ class WorldTracesTest {
         // 鬼開始打大洞（要 4 秒）：中間看到還是原本的狀態，打完才變；這不是別人留下的痕跡
         WorldTraces t = new WorldTraces();
         t.observe(Type.HOLE, 6, 0, 1, 65, 1, 0);
-        t.ghostChanged(Type.HOLE, 6, 1);
+        t.ghostChanged(Type.HOLE, 6, 1, 0);
         assertNull(t.observe(Type.HOLE, 6, 0, 1, 65, 1, 20));
         assertNull(t.observe(Type.HOLE, 6, 1, 1, 65, 1, 100));
+    }
+
+    @Test
+    void ghostMarker_expires() {
+        // 鬼要撞開卡門但動作被取消：記號 10 秒後失效，之後逃生者造成同樣的狀態還是算痕跡
+        WorldTraces t = new WorldTraces();
+        t.observe(Type.DOOR, 1, 2, 1, 65, 1, 0);
+        t.ghostChanged(Type.DOOR, 1, 1, 0);
+        assertNotNull(t.observe(Type.DOOR, 1, 1, 1, 65, 1, 300));
     }
 
     @Test

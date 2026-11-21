@@ -24,7 +24,11 @@ public final class WorldTraces {
 
     private final Map<Long, Seen> seen = new HashMap<>();
     /** 鬼自己造成的新狀態：下次看到是這個狀態時不算痕跡。 */
-    private final Map<Long, Integer> ghostMade = new HashMap<>();
+    private record Mark(int state, long tick) {}
+
+    private final Map<Long, Mark> ghostMade = new HashMap<>();
+    /** 鬼的記號多久沒兌現就失效（動作被取消時不要一直吞掉別人造成的痕跡）。 */
+    private static final long MARK_TTL = 200;
 
     private static long key(Type type, int id) {
         return ((long) type.ordinal() << 32) | (id & 0xffffffffL);
@@ -34,9 +38,13 @@ public final class WorldTraces {
     public Trace observe(Type type, int id, int state, double x, double y, double z, long tick) {
         long k = key(type, id);
         Seen before = seen.put(k, new Seen(state, tick));
-        Integer mine = ghostMade.get(k);
+        Mark mine = ghostMade.get(k);
+        if (mine != null && tick - mine.tick() > MARK_TTL) {
+            ghostMade.remove(k);
+            mine = null;
+        }
         // 鬼自己的動作可能要時間（打大洞 4 秒）：看到的狀態變成鬼要的那個時才把記號用掉
-        if (mine != null && mine == state) {
+        if (mine != null && mine.state() == state) {
             ghostMade.remove(k);
             return null;
         }
@@ -45,7 +53,7 @@ public final class WorldTraces {
     }
 
     /** 鬼自己把這個物件改成 newState（開門、撞開卡門、拆障礙物、打大洞）。 */
-    public void ghostChanged(Type type, int id, int newState) {
-        ghostMade.put(key(type, id), newState);
+    public void ghostChanged(Type type, int id, int newState, long tick) {
+        ghostMade.put(key(type, id), new Mark(newState, tick));
     }
 }

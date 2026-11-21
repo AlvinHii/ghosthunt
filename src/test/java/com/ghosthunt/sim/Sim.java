@@ -70,6 +70,8 @@ public final class Sim {
     private final GridNav.Cost ghostCost = e -> e.kind() == Kind.HOLE || e.kind() == Kind.HATCH ? Double.POSITIVE_INFINITY
             : e.kind() == Kind.DOOR ? 0.15 : 0;
     private final GridNav.Cost escCost = EscaperCost.of(i -> false, i -> false, i -> true, 6, 8);
+    /** 粒子推理用的成本：跟遊戲一樣，鬼不知道的地洞不走（模擬裡鬼一開始都不知道）。 */
+    private final GridNav.Cost trackCost = EscaperCost.of(i -> false, i -> false, i -> false, 6, 8);
     private final List<Integer> mainNodes = new ArrayList<>();
     private double t;
 
@@ -112,15 +114,18 @@ public final class Sim {
             if (sees) lastSawGhost = t;
             running = t - lastSawGhost < 2;
             if (running) {
-                // 跑：往離鬼最遠的鄰格
+                // 跑：往離鬼遠、而且不是死路（鄰格多）的方向，帶一點隨機（跟粒子的推理規則不一樣，不然模型天生猜對）
                 budget += RUN * DT;
                 while (budget >= 1) {
                     int best = -1;
-                    double bv = ghostField.seconds(node);
+                    double here = ghostField.seconds(node), bv = Double.isInfinite(here) ? 1e9 : here;
                     for (GridNav.Edge e : nav.edges(node)) {
-                        if (Double.isInfinite(escCost.extra(e)) || e.kind() == Kind.HATCH) continue;
-                        if (ghostField.seconds(e.to()) > bv) {
-                            bv = ghostField.seconds(e.to());
+                        if (Double.isInfinite(escCost.extra(e))) continue;
+                        double sv = ghostField.seconds(e.to());
+                        if (Double.isInfinite(sv)) sv = bv + 3; // 鬼過不去的地方（小洞、地洞後面）：很想去
+                        double score = sv + rnd.nextDouble() * 0.6;
+                        if (score > bv) {
+                            bv = score;
                             best = e.to();
                         }
                     }
@@ -263,7 +268,7 @@ public final class Sim {
                 g.lostAt = t;
                 g.waitReacquire = true;
                 if (v3) {
-                    g.tracker = new ParticleTracker(nav, escCost, pc, rnd);
+                    g.tracker = new ParticleTracker(nav, trackCost, pc, rnd);
                     g.tracker.seed(g.lastSeen, (long) (t * 20));
                     g.trackerStepAt = t;
                 } else g.phase = 1;

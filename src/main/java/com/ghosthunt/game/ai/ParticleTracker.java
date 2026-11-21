@@ -37,6 +37,8 @@ public final class ParticleTracker {
     private final RandomGenerator rnd;
     private int[] node = new int[0];
     private double[] weight = new double[0];
+    /** 每顆粒子上一步超支的成本（走很貴的邊時，下一步要先扣掉）。 */
+    private double[] debt = new double[0];
     private long seedTick;
 
     public ParticleTracker(GridNav nav, GridNav.Cost escaperCost, Config cfg, RandomGenerator rnd) {
@@ -52,12 +54,14 @@ public final class ParticleTracker {
         if (at < 0 || at >= nav.size()) {
             node = new int[0];
             weight = new double[0];
+            debt = new double[0];
             return;
         }
         node = new int[cfg.count()];
         Arrays.fill(node, at);
         weight = new double[cfg.count()];
         Arrays.fill(weight, 1);
+        debt = new double[cfg.count()];
     }
 
     /** 在這些格子裡平均（隨機）撒。 */
@@ -68,12 +72,14 @@ public final class ParticleTracker {
         if (ok.isEmpty()) {
             node = new int[0];
             weight = new double[0];
+            debt = new double[0];
             return;
         }
         node = new int[cfg.count()];
         for (int i = 0; i < node.length; i++) node[i] = ok.get(rnd.nextInt(ok.size()));
         weight = new double[cfg.count()];
         Arrays.fill(weight, 1);
+        debt = new double[cfg.count()];
     }
 
     /** 每顆粒子走 seconds 秒（goalField 可以是 null，那部分當成隨機）。 */
@@ -81,14 +87,18 @@ public final class ParticleTracker {
         double budget = cfg.blocksPerSecond() * seconds;
         for (int i = 0; i < node.length; i++) {
             int cur = node[i];
-            double left = budget;
+            double left = budget - debt[i];
             for (int guard = 0; left > 0 && guard < 16; guard++) {
                 int next = choose(cur, ghostField, goalField);
-                if (next < 0) break;
+                if (next < 0) {
+                    left = 0;
+                    break;
+                }
                 GridNav.Edge e = nav.edge(cur, next);
                 left -= e.length() + cost.extra(e);
                 cur = next;
             }
+            debt[i] = Math.max(0, -left);
             node[i] = cur;
         }
     }
@@ -132,10 +142,12 @@ public final class ParticleTracker {
             if (visibleToGhost.test(node[i])) continue;
             node[k] = node[i];
             weight[k] = weight[i];
+            debt[k] = debt[i];
             k++;
         }
         node = Arrays.copyOf(node, k);
         weight = Arrays.copyOf(weight, k);
+        debt = Arrays.copyOf(debt, k);
     }
 
     /**
@@ -170,6 +182,7 @@ public final class ParticleTracker {
         node = out;
         weight = new double[n];
         Arrays.fill(weight, 1);
+        debt = new double[n];
     }
 
     public int alive() {
@@ -207,11 +220,14 @@ public final class ParticleTracker {
         for (int c : cands) {
             if (!unseen.test(c) || !reachable.test(c)) continue;
             double score = 0;
-            for (int o : cells) {
-                if (nav.y(o) != nav.y(c)) continue;
-                double dx = nav.x(o) - nav.x(c), dz = nav.z(o) - nav.z(c), d2 = dx * dx + dz * dz;
-                if (d2 <= 4) score += counts.get(o) / (1 + d2); // 越近權重越大：分數最高的是粒子最密的地方
-            }
+            for (int dx = -2; dx <= 2; dx++)
+                for (int dz = -2; dz <= 2; dz++) {
+                    int d2 = dx * dx + dz * dz;
+                    if (d2 > 4) continue;
+                    int o = nav.id(nav.x(c) + dx, nav.y(c), nav.z(c) + dz);
+                    Integer k = o < 0 ? null : counts.get(o);
+                    if (k != null) score += k / (1.0 + d2); // 越近權重越大：分數最高的是粒子最密的地方
+                }
             if (score > bs || (score == bs && c < best)) {
                 bs = score;
                 best = c;
