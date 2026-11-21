@@ -15,7 +15,9 @@ record AiGhostSettings(
         double guardJailChance, int guardCap, double checkHideoutChance, double checkHideoutNoiseChance, double followTunnelChance,
         int stuckTime, int powerCutDelay,
         int flashTime, int flashBlind, int flashImmune,
-        double chaseSpeed, double searchSpeed, double patrolSpeed) {
+        double chaseSpeed, double searchSpeed, double patrolSpeed,
+        int particles, double particleFlee, double particleGoal, double particleSigma, int particleMin, int particleMaxAge,
+        double escaperSpeed) {
 
     /** 依難度讀：先看 ai-ghost.presets.<難度>.<key>，沒有再看 ai-ghost.<key>。 */
     private static double d(FileConfiguration c, ConfigurationSection preset, String key, double def) {
@@ -45,9 +47,12 @@ record AiGhostSettings(
                 t(c, p, "sense-quiet", 45), t(c, p, "sense-gap", 45), d(c, p, "sense-error", 8),
                 d(c, p, "pressure-limit", 60), t(c, p, "calm-time", 30),
                 d(c, p, "guard-jail-chance", 0.5), t(c, p, "guard-cap", 45),
-                d(c, p, "check-hideout-chance", 0.4), d(c, p, "check-hideout-noise-chance", 0.2), d(c, p, "follow-tunnel-chance", 0.5),
+                d(c, p, "check-hideout-base", d(c, p, "check-hideout-chance", 0.4)), d(c, p, "check-hideout-noise-chance", 0.2), d(c, p, "follow-tunnel-chance", 0.5),
                 t(c, p, "stuck-time", 2), t(c, p, "power-cut-delay", 20),
                 t(c, p, "flash-time", 1.0), t(c, p, "flash-blind", 1.5), t(c, p, "flash-immune", 12),
-                d(c, p, "chase-speed", 1.0), d(c, p, "search-speed", 0.9), d(c, p, "patrol-speed", 0.75));
+                d(c, p, "chase-speed", 1.0), d(c, p, "search-speed", 0.9), d(c, p, "patrol-speed", 0.75),
+                (int) d(c, p, "particles", 200), d(c, p, "particle-flee", 0.6), d(c, p, "particle-goal", 0.25),
+                d(c, p, "particle-sigma", 3), (int) d(c, p, "particle-min", 10), t(c, p, "particle-max-age", 40),
+                d(c, p, "escaper-speed", 5.6));
     }
 }

@@ -9,7 +9,11 @@ import com.ghosthunt.game.ai.GhostBrain.Goal;
 import com.ghosthunt.game.ai.GhostBrain.Kind;
 import com.ghosthunt.game.ai.GhostBrain.Point;
 import com.ghosthunt.game.ai.DistanceField;
+import com.ghosthunt.game.ai.EscaperCost;
 import com.ghosthunt.game.ai.GridNav;
+import com.ghosthunt.game.ai.HideoutOdds;
+import com.ghosthunt.game.ai.WorldTraces;
+import com.ghosthunt.game.ai.ParticleTracker;
 import com.ghosthunt.game.ai.PathFollow;
 import com.ghosthunt.game.ai.RoomScores;
 import com.ghosthunt.game.ai.SenseDirector;
@@ -254,6 +258,9 @@ final class AiGhost {
 
     /** 聽到聲音（Match.noise 已經判斷過同一層、距離）。低等級的聲音蓋不掉還記著的高等級聲音。 */
     void hearNoise(Location at, int level) {
+        lastQuietBreakTick = m.tick;
+        for (ParticleTracker t : trackers.values()) t.weightNear(at.getX(), at.getY(), at.getZ(), 2);
+        if (sensedTracker != null) sensedTracker.weightNear(at.getX(), at.getY(), at.getZ(), 2);
         if (noise != null && m.tick - noiseTick <= c.searchTime() && level < noiseLevel) return;
         noise = snapWalkable(jitter(at, c.noiseError()), at);
         noiseTick = m.tick;
@@ -271,6 +278,8 @@ final class AiGhost {
 
     /** 某個逃生者被抓、淘汰、逃出、離線：忘掉跟他有關的記憶（不然會在抓人的空地搜 10 秒、追不存在的人）。 */
     void forget(UUID id) {
+        trackers.remove(id);
+        if (id.equals(lostHandledId)) lostHandledId = null;
         if (id.equals(chaseId)) chaseId = null;
         if (id.equals(lastSeenId)) {
             lastSeen = null;
@@ -328,6 +337,144 @@ final class AiGhost {
     private DistanceField ghostField;
     /** 最近一次推著走的方向（單位向量），判斷新路線是不是往回走。 */
     private double lastDirX, lastDirZ;
+    /** 可見性表（背景建好之前是 null）。 */
+    private volatile com.ghosthunt.game.ai.VisibilityTable vis;
+
+    // ---- 粒子濾波（第三版）：追丟、感應後推理人在哪 ----
+    private final Map<UUID, ParticleTracker> trackers = new HashMap<>();
+    private ParticleTracker sensedTracker;
+    /** 這個人的這次追丟已經撒過粒子了（重新看到時清掉）。 */
+    private UUID lostHandledId;
+    private long lostAtTick = -1;
+    private int losses, reacquire30, thinkCount;
+    private DistanceField goalField;
+    private String goalFieldKey = "";
+    /** 真的看到人的最後時間、位置（粒子搜尋會改 lastSeen，證據要用真的）。 */
+    private long trueSeenTick = -1_000_000;
+    private Location trueSeenLoc;
+    /** 最後一次聽到任何聲音（腳步、開門、做事）的時間：看到人之後一直很安靜 → 他多半躲起來了。 */
+    private long lastQuietBreakTick = -1_000_000;
+    private final WorldTraces traces = new WorldTraces();
+    private int tracesSeen;
+
+    /** 每秒一次：16 格內、看得到的門、木桶、櫃子、小洞，狀態變了就是痕跡（那一區巡邏加分、附近的粒子加權）。 */
+    private void lookForTraces() {
+        if (nav == null || vis == null) return;
+        int gnode = nav.nearest(mob.getLocation(), 2.5);
+        for (int i = 0; i < nav.doors.size(); i++) {
+            Pos d = nav.doors.get(i);
+            int state = m.isDoorJammed(d) ? 2 : doorClosed(i) ? 0 : 1;
+            observeTrace(gnode, WorldTraces.Type.DOOR, i, state, m.loc(d));
+        }
+        for (int i = 0; i < m.b.containers.size(); i++) {
+            Pos b = m.b.containers.get(i);
+            observeTrace(gnode, WorldTraces.Type.BARREL, i, m.obj.isSearched(b) ? 1 : 0, m.loc(b));
+        }
+        for (int i = 0; i < m.b.toppleSpots.size(); i++) {
+            Pos b = m.b.toppleSpots.get(i).blocks().keySet().iterator().next();
+            observeTrace(gnode, WorldTraces.Type.CABINET, i, m.isToppled(i) ? 1 : 0, m.loc(b));
+        }
+        for (int i = 0; i < m.b.crawlHoles.size(); i++) {
+            Pos h = m.b.crawlHoles.get(i).lower();
+            observeTrace(gnode, WorldTraces.Type.HOLE, i, m.isHoleWidened(i) ? 1 : 0, m.loc(h));
+        }
+    }
+
+    private void observeTrace(int gnode, WorldTraces.Type type, int id, int state, Location at) {
+        if (at.distance(mob.getLocation()) > 16) return;
+        int cell = nav.nearest(at, 1.6);
+        if (cell < 0 || !ghostSees(gnode, cell)) return;
+        WorldTraces.Trace t = traces.observe(type, id, state, at.getX(), at.getY(), at.getZ(), m.tick);
+        if (t == null) return;
+        tracesSeen++;
+        double use = t.usefulness();
+        if (rooms != null) rooms.noise(roomAt(at), 60 * use);
+        for (ParticleTracker tr : trackers.values()) tr.weightNear(at.getX(), at.getY(), at.getZ(), 2);
+        if (sensedTracker != null) sensedTracker.weightNear(at.getX(), at.getY(), at.getZ(), 2);
+        if (STUCK_DEBUG || !debugViewers.isEmpty())
+            m.plugin.getLogger().info("[AI 鬼] 痕跡：" + type + " " + id + " → " + state + "（隔 " + t.gapTicks() / 20 + " 秒）");
+    }
+
+    /** 鬼自己開門、撞開卡門、打大洞：下次看到不算痕跡。 */
+    private void ghostChangedDoorsNear(Pos lower, int newState) {
+        if (nav == null) return;
+        for (int i = 0; i < nav.doors.size(); i++) {
+            Pos d = nav.doors.get(i);
+            if (Math.abs(d.x() - lower.x()) + Math.abs(d.z() - lower.z()) <= 1 && d.y() == lower.y()) traces.ghostChanged(WorldTraces.Type.DOOR, i, newState);
+        }
+    }
+
+    private ParticleTracker newTracker() {
+        return new ParticleTracker(nav.nav, escaperCost(),
+                new ParticleTracker.Config(c.particles(), c.escaperSpeed(), c.particleFlee(), c.particleGoal(), c.particleSigma(),
+                        c.particleMin(), c.particleMaxAge()), m.rnd);
+    }
+
+    /** 逃生者在尋路圖上的成本：小洞正常走、放了障礙物的門口過不去、卡住的門自己拆得開。 */
+    private GridNav.Cost escaperCost() {
+        return EscaperCost.of(i -> m.isDoorJammed(nav.doors.get(i)), i -> m.barricadeIndexBarricaded(i),
+                m.o.jamDoor() / 20.0 * c.escaperSpeed(), 2 * c.escaperSpeed());
+    }
+
+    private boolean doorClosed(int d) {
+        return m.block(nav.doors.get(d)).getBlockData() instanceof org.bukkit.block.data.Openable o && !o.isOpen();
+    }
+
+    /** 鬼現在看得到這一格嗎（可見性表＋視野角＋距離；表還沒建好就當作看不到）。 */
+    private boolean ghostSees(int ghostNode, int cell) {
+        if (vis == null || ghostNode < 0 || !vis.known(ghostNode, cell)) return false;
+        Location l = nav.loc(cell);
+        double d = l.distance(mob.getLocation());
+        if (d > (m.obj.powerOn() ? c.sightRange() : c.sightRangeDark())) return false;
+        if (d > c.nearAware() && !inFront(l, c.fovDegrees())) return false;
+        return vis.visible(ghostNode, cell, this::doorClosed);
+    }
+
+    /** 逃生者下一個遊戲目標的距離場：沒電 → 電源；有電 → 終端機和大門讀卡機（多起點）。同樣的目標、地圖沒變就不重算。 */
+    private DistanceField goalField() {
+        boolean power = m.obj.powerOn();
+        String key = power + ":" + m.mapVersion;
+        if (key.equals(goalFieldKey)) return goalField;
+        List<Integer> src = new ArrayList<>();
+        if (!power) {
+            Location lever = m.obj.leverLocation();
+            if (lever != null) src.add(nav.nearest(lever.clone().add(0, -1, 0), 2.5));
+        } else {
+            for (Pos t : m.b.securityTerminals) src.add(nav.nearest(m.loc(t), 2.5));
+            for (Building.Gate g : m.b.gates) src.add(nav.nearest(m.loc(g.reader()), 2.5));
+        }
+        src.removeIf(i -> i < 0);
+        goalFieldKey = key;
+        goalField = src.isEmpty() ? null : timedField(escaperCost(), c.escaperSpeed(), src.stream().mapToInt(Integer::intValue).toArray());
+        return goalField;
+    }
+
+    /** 每次 think：丟掉過期的追蹤器；每 0.5 秒讓粒子走一步、刪掉看得到的格子裡的粒子；有追蹤器時延長搜尋。 */
+    private void updateTrackers() {
+        thinkCount++;
+        trackers.entrySet().removeIf(e -> e.getValue().expired(m.tick));
+        if (sensedTracker != null && sensedTracker.expired(m.tick)) sensedTracker = null;
+        if ((trackers.isEmpty() && sensedTracker == null) || nav == null) return;
+        if (lastSeenId != null && trackers.containsKey(lastSeenId)) lastSeenTick = m.tick; // 推理還有線索：繼續搜
+        if (thinkCount % Math.max(1, 10 / c.thinkEvery()) != 0) return;
+        int gnode = nav.nearest(mob.getLocation(), 2.5);
+        ghostField = timedField(costFor(Mode.SEARCH), 5.3 * c.searchSpeed(), gnode);
+        DistanceField gf = goalField();
+        List<ParticleTracker> all = new ArrayList<>(trackers.values());
+        if (sensedTracker != null) all.add(sensedTracker);
+        for (ParticleTracker t : all) {
+            t.step(0.5, ghostField, gf);
+            t.removeVisible(i -> ghostSees(gnode, i));
+        }
+    }
+
+    /** 這個追蹤器的搜尋目標（粒子最密、現在看不到、鬼走得到）；沒有回傳 null。 */
+    private Location trackerTarget(ParticleTracker t) {
+        if (t == null || nav == null) return null;
+        int gnode = nav.nearest(mob.getLocation(), 2.5);
+        int tgt = t.bestTarget(i -> !ghostSees(gnode, i), nav::isMain);
+        return tgt < 0 ? null : nav.loc(tgt);
+    }
 
     private List<Integer> timedPath(int a, int b, GridNav.Cost cost) {
         long t0 = System.nanoTime();
@@ -385,6 +532,15 @@ final class AiGhost {
             if (id >= 0) mob.teleport(nav.loc(id));
         }
         m.plugin.getLogger().info("[AI 鬼] 尋路圖：" + nav.nav.size() + " 個格子（" + (System.nanoTime() - t0) / 1_000_000 + " ms）");
+        // 可見性表：主執行緒拍快照，背景建表（建好前 vis 是 null，用到的地方當作「不知道」）
+        com.ghosthunt.game.ai.VisibilityTable.Grid grid = nav.visibilityGrid();
+        org.bukkit.Bukkit.getScheduler().runTaskAsynchronously(m.plugin, () -> {
+            long v0 = System.nanoTime();
+            com.ghosthunt.game.ai.VisibilityTable t = com.ghosthunt.game.ai.VisibilityTable.build(grid, 30);
+            vis = t;
+            m.plugin.getLogger().info("[AI 鬼] 可見性表：" + grid.size() + " 格（" + (System.nanoTime() - v0) / 1_000_000 + " ms，約 "
+                    + t.approxBytes() / 1024 + " KB）");
+        });
     }
 
     private void think(boolean busy) {
@@ -402,6 +558,8 @@ final class AiGhost {
             if (d <= 5 || (prog < 0.5 && d <= 8)) m.acts.cancel(mob.getUniqueId(), null);
             else return;
         }
+        updateTrackers();
+        if (thinkCount % Math.max(1, 20 / c.thinkEvery()) == 0) lookForTraces();
         if (director.shouldSense(m.tick)) sense();
         if (sensed != null && m.tick > sensedUntil) sensed = null;
         Goal prev = goal;
@@ -476,6 +634,14 @@ final class AiGhost {
         chaseId = pick;
         LivingEntity seen = pick == null ? null : byId.get(pick);
         if (seen != null) {
+            trackers.remove(seen.getUniqueId());
+            lostHandledId = null;
+            trueSeenTick = m.tick;
+            trueSeenLoc = seen.getLocation();
+            if (lostAtTick >= 0) {
+                if (m.tick - lostAtTick <= 600) reacquire30++;
+                lostAtTick = -1;
+            }
             chaseSeenTick = m.tick;
             Location now = seen.getLocation();
             if (prevSeenLoc != null && prevSeenLoc.getWorld().equals(now.getWorld()) && prevSeenLoc.distance(now) > 0.2)
@@ -499,6 +665,14 @@ final class AiGhost {
             if (e != null && m.tick - chaseSeenTick <= 15) {
                 lastSeen = e.getLocation();
                 lastSeenTick = m.tick;
+            } else if (nav != null && lastSeen != null && !chaseId.equals(lostHandledId)) {
+                // 追丟了（超過 1 秒看不到）：在最後看到的格子撒粒子
+                ParticleTracker t = newTracker();
+                t.seed(nav.nearest(lastSeen, 2.5), m.tick);
+                if (t.alive() > 0) trackers.put(chaseId, t);
+                lostHandledId = chaseId;
+                losses++;
+                lostAtTick = m.tick;
             }
         }
         return seen;
@@ -544,6 +718,13 @@ final class AiGhost {
         sensed = sensedRoom >= 0 ? snapWalkable(m.loc(roomList.get(sensedRoom).center()), null) : snapWalkable(best.getLocation(), null);
         sensedId = best.getUniqueId();
         sensedUntil = m.tick + 30 * 20;
+        if (nav != null && sensedRoom >= 0) {
+            List<Integer> cells = new ArrayList<>();
+            for (int i = 0; i < nav.nav.size(); i++) if (nav.isMain(i) && roomAt(nav.loc(i)) == sensedRoom) cells.add(i);
+            sensedTracker = newTracker();
+            sensedTracker.seedUniform(cells, m.tick);
+            if (sensedTracker.alive() == 0) sensedTracker = null;
+        }
         if (best instanceof Player target) {
             target.playSound(target.getLocation(), Sound.ENTITY_WARDEN_HEARTBEAT, 1f, 1.6f);
             Bukkit.getScheduler().runTaskLater(m.plugin, () -> target.playSound(target.getLocation(), Sound.ENTITY_WARDEN_HEARTBEAT, 1f, 1.8f), 6L);
@@ -658,13 +839,19 @@ final class AiGhost {
             case INVESTIGATE_NOISE -> {
                 if (noise.distance(here) < 2.5) {
                     noise = null;
-                    if (!hideoutCheck(here, 4, c.checkHideoutNoiseChance())) startLook();
+                    if (!hideoutCheck(here, noiseTick, c.checkHideoutNoiseChance())) startLook();
                 } else navigate(noise, mode);
             }
             case GO_SENSED -> {
                 if (sensed.distance(here) < 2.5) {
+                    Location tgt = trackerTarget(sensedTracker);
+                    if (tgt != null && tgt.distance(here) > 2.5 && m.tick < sensedUntil) {
+                        sensed = tgt;
+                        navigate(tgt, mode);
+                        return;
+                    }
                     sensed = null;
-                    if (!hideoutCheck(here, 8, c.checkHideoutNoiseChance())) startLook();
+                    if (!hideoutCheck(here, lastSenseTick, c.checkHideoutNoiseChance())) startLook();
                 } else navigate(sensed, mode);
             }
             case MOVE_CARD -> {
@@ -718,9 +905,15 @@ final class AiGhost {
             for (int i = 0; i < m.b.hatches.size(); i++) {
                 Location t = m.loc(m.b.hatches.get(i).trapdoor()).add(0, 1, 0);
                 if (t.distance(lastSeen) > 2.5) continue;
-                if (m.rnd.nextDouble() >= c.followTunnelChance()) break;
                 int other = i ^ 1; // 生成時兩個出入口一組：0-1、2-3……
                 if (other >= m.b.hatches.size()) break;
+                // 證據式：看到人在洞口消失、之後沒聲音 → 幾乎一定跟；粒子很多在另一端 → 加倍
+                Location otherTop = m.loc(m.b.hatches.get(other).trapdoor()).add(0, 1, 0);
+                ParticleTracker trk = lastSeenId == null ? null : trackers.get(lastSeenId);
+                double share = trk == null ? 0 : trk.shareWithin(cellsNear(otherTop, 3));
+                double p = HideoutOdds.chance(c.followTunnelChance(), trueSeenLoc == null ? 99 : t.distance(trueSeenLoc),
+                        (m.tick - trueSeenTick) / 20.0, lastQuietBreakTick < trueSeenTick, share, 0);
+                if (m.rnd.nextDouble() >= p) break;
                 knownHatches.add(i);
                 knownHatches.add(other); // 跟著鑽下去，自然會知道通到哪
                 lastSeen = m.loc(m.b.hatches.get(other).trapdoor()).add(0, 1, 0);
@@ -732,13 +925,24 @@ final class AiGhost {
         // ② 附近有暗格：這次搜尋只擲一次骰子，中了就查最近的一個
         if (!searchHideoutDone) {
             searchHideoutDone = true;
-            if (hideoutCheck(lastSeen, 8, c.checkHideoutChance())) {
+            if (hideoutCheck(trueSeenLoc != null ? trueSeenLoc : lastSeen, trueSeenTick, c.checkHideoutChance())) {
                 extendSearch();
                 return;
             }
         }
-        // ③ 照對方最後的移動方向多走 6～8 格
-        if (!searchExtendDone && lastDir != null) {
+        // ③（第三版）有粒子：去粒子最密、現在看不到的地方
+        ParticleTracker tr = lastSeenId == null ? null : trackers.get(lastSeenId);
+        if (tr != null) {
+            Location tgt = trackerTarget(tr);
+            if (tgt != null && tgt.distance(here) > 2.5) {
+                lastSeen = tgt;
+                lastSeenTick = m.tick;
+                navigate(tgt, Mode.SEARCH);
+                return;
+            }
+        }
+        // ③（第二版，沒有粒子時）照對方最後的移動方向多走 6～8 格
+        if (tr == null && !searchExtendDone && lastDir != null) {
             searchExtendDone = true;
             Location ahead = snapWalkable(lastSeen.clone().add(lastDir.clone().multiply(7)), lastSeen);
             if (ahead != null && ahead.distance(here) > 3) {
@@ -751,26 +955,46 @@ final class AiGhost {
         startLook();
     }
 
-    /** 在 at 附近 radius 格內找暗格入口，擲一次 chance，中了就去打大最近的那個。 */
-    private boolean hideoutCheck(Location at, double radius, double chance) {
+    /**
+     * 證據式查暗格：12 格內每個暗格算機率（{@link HideoutOdds}：參考點 ref 離入口多遠、ref 那時之後多久、之後有沒有聲音、
+     * 粒子在暗格裡的比例），挑機率最高的那個擲一次，中了就去打大它的入口。
+     */
+    private boolean hideoutCheck(Location ref, long refTick, double base) {
+        if (ref == null) return false;
         int bestHole = -1;
-        double bd = Double.MAX_VALUE;
+        double bestP = 0;
         for (Building.Room r : m.b.rooms) {
-            if (!r.hideout() || m.loc(r.center()).distance(at) > radius) continue;
+            if (!r.hideout()) continue;
+            Location pocket = m.loc(r.center());
+            if (!pocket.getWorld().equals(ref.getWorld()) || pocket.distance(ref) > 12) continue;
             for (int i = 0; i < m.b.crawlHoles.size(); i++) {
                 Building.CrawlHole h = m.b.crawlHoles.get(i);
                 if (m.holeIndexAt(h.lower()) < 0) continue;
-                if (m.loc(h.lower()).distance(m.loc(r.center())) > 3) continue;
-                double d = m.loc(h.lower()).distance(mob.getLocation());
-                if (d < bd) {
-                    bd = d;
+                Location ent = m.loc(h.lower());
+                if (ent.distance(pocket) > 3) continue;
+                double share = 0;
+                for (ParticleTracker tr : trackers.values()) share = Math.max(share, tr.shareWithin(cellsNear(pocket, 1)));
+                double p = HideoutOdds.chance(base, ent.distance(ref), (m.tick - refTick) / 20.0, lastQuietBreakTick < refTick, share, 0);
+                if (p > bestP) {
+                    bestP = p;
                     bestHole = i;
                 }
             }
         }
-        if (bestHole < 0 || m.rnd.nextDouble() >= chance) return false;
+        if (bestHole < 0 || m.rnd.nextDouble() >= bestP) return false;
         pendingHole = bestHole;
         return true;
+    }
+
+    /** 尋路圖上離 at radius 格內的格子（同一層）。 */
+    private List<Integer> cellsNear(Location at, double radius) {
+        List<Integer> out = new ArrayList<>();
+        if (nav == null) return out;
+        for (int i = 0; i < nav.nav.size(); i++) {
+            Location l = nav.loc(i);
+            if (Math.abs(l.getY() - at.getY()) < 1.5 && Math.hypot(l.getX() - at.getX(), l.getZ() - at.getZ()) <= radius) out.add(i);
+        }
+        return out;
     }
 
     private int pendingHole = -1;
@@ -785,7 +1009,11 @@ final class AiGhost {
         Location hole = m.loc(m.b.crawlHoles.get(pendingHole).lower());
         if (hole.distance(mob.getLocation()) <= 2.5) {
             stopMoving();
-            if (m.ghostWidenHole(pendingHole)) pendingHole = -1;
+            int widening = pendingHole;
+            if (m.ghostWidenHole(pendingHole)) {
+                traces.ghostChanged(WorldTraces.Type.HOLE, widening, 1);
+                pendingHole = -1;
+            }
         } else navigate(hole, Mode.SEARCH);
         return true;
     }
@@ -1227,6 +1455,7 @@ final class AiGhost {
                 if (fl.distance(here) > 1.8) return false;
                 stopMovingKeepPath();
                 m.ghostBreakJam(door);
+                ghostChangedDoorsNear(door, 1);
                 return true;
             }
             case HOLE -> {
@@ -1234,6 +1463,7 @@ final class AiGhost {
                 if (fl.distance(here) > 1.8) return false;
                 stopMovingKeepPath();
                 m.ghostWidenHole(e.ref());
+                traces.ghostChanged(WorldTraces.Type.HOLE, e.ref(), 1);
                 return true;
             }
             case HATCH -> {
@@ -1288,6 +1518,7 @@ final class AiGhost {
             Pos lower = new Pos(bl.getX(), bl.getY(), bl.getZ());
             if (m.isDoorJammed(lower)) continue;
             m.setDoorOpenPublic(lower, true);
+            ghostChangedDoorsNear(lower, 1);
             m.world.playSound(bl.getLocation(), Sound.BLOCK_WOODEN_DOOR_OPEN, 1f, 0.9f);
         }
     }
@@ -1421,7 +1652,8 @@ final class AiGhost {
                 + "｜路點 " + (wayPath.isEmpty() ? "-" : wayIdx + "/" + wayPath.size())
                 + "｜卡住 " + stuckCount + "｜速度 " + speedMul
                 + (chaseId != null ? "｜追 " + chaseId.toString().substring(0, 4) : "")
-                + "｜壓力 " + Math.round(director.pressure());
+                + "｜壓力 " + Math.round(director.pressure())
+                + "｜粒子 " + (trackers.values().stream().mapToInt(ParticleTracker::alive).sum() + (sensedTracker == null ? 0 : sensedTracker.alive()));
     }
 
     private void debugDraw() {
@@ -1437,6 +1669,20 @@ final class AiGhost {
             dot(p, sensed, Color.PURPLE);
             dot(p, watchSpot, Color.AQUA);
             dot(p, patrolTarget, Color.LIME);
+            // 粒子：每個逃生者一種顏色、每格一點、最多 100 點
+            Color[] cols = {Color.ORANGE, Color.FUCHSIA, Color.TEAL, Color.WHITE};
+            int ci = 0, drawn = 0;
+            List<ParticleTracker> all = new ArrayList<>(trackers.values());
+            if (sensedTracker != null) all.add(sensedTracker);
+            for (ParticleTracker t : all) {
+                java.util.Set<Integer> cells = new java.util.HashSet<>();
+                for (int v : t.positions()) cells.add(v);
+                Color col = cols[ci++ % cols.length];
+                for (int v : cells) {
+                    if (drawn++ >= 100) break;
+                    p.spawnParticle(Particle.DUST, nav.loc(v).add(0, 0.2, 0), 1, 0, 0, 0, 0, new Particle.DustOptions(col, 0.8f));
+                }
+            }
         }
     }
 
@@ -1459,6 +1705,9 @@ final class AiGhost {
         StringBuilder sb = new StringBuilder();
         for (Map.Entry<Kind, Integer> e : goalTicks.entrySet()) sb.append(sb.isEmpty() ? "" : ",").append(e.getKey()).append(':').append(e.getValue() / 20);
         stats.put("aiGoalSeconds", sb.toString());
+        stats.put("aiLosses", losses);
+        stats.put("aiTraces", tracesSeen);
+        stats.put("aiReacquire30s", reacquire30);
         stats.put("aiTickMsAvg", tickTime.avgMs());
         stats.put("aiTickMsMax", tickTime.maxMs());
         stats.put("aiPathMsAvg", pathTime.avgMs());

@@ -94,7 +94,7 @@ ai-ghost:                      # PvE 的 AI 鬼（/gh start ai [easy|normal|hard
   calm-time: 30                # 冷靜期（也包括剛抓到人之後）：不感應、巡邏偏向遠的地方
   guard-jail-chance: 0.5       # 有人被關時去守監獄的機率
   guard-cap: 45                # 守監獄最久幾秒
-  check-hideout-chance: 0.4    # 追丟時去查附近暗格的機率（這次搜尋只擲一次）
+  check-hideout-base: 0.4      # 追丟時查附近暗格的基礎機率；再乘證據倍率（在鬼眼前鑽進去、之後沒聲音 ×2.5；粒子 30% 以上在裡面 ×2；離 8 格以上 ×0.3），上限 95%
   check-hideout-noise-chance: 0.2  # 到了聲音、感應的位置後去查附近暗格的機率
   follow-tunnel-chance: 0.5    # 看到人鑽進地洞時跟下去（撬開、爬梯子、走通道，或從地面繞過去）的機率
   stuck-time: 2                # 幾秒幾乎沒移動算卡住
@@ -102,20 +102,31 @@ ai-ghost:                      # PvE 的 AI 鬼（/gh start ai [easy|normal|hard
   flash-time: 1.0              # 手電筒要連續照臉多久才有效
   flash-blind: 1.5             # 照到之後幾秒看不到人
   flash-immune: 12             # 之後幾秒不會再被照到
+  particles: 200               # 追丟後的粒子濾波：每個逃生者撒幾顆粒子（猜他可能在哪）
+  particle-flee: 0.6           # 粒子每一步往「離鬼更遠」走的機率
+  particle-goal: 0.25          # 往逃生者下一個遊戲目標（電源／終端機／讀卡機）走的機率；其他是隨機
+  particle-sigma: 3            # 聽到聲音、看到痕跡時，附近幾格的粒子權重加倍（高斯半徑）
+  particle-min: 10             # 粒子剩不到幾顆就放棄
+  particle-max-age: 40         # 追丟後最多推理幾秒（取代 search-cap）
+  escaper-speed: 5.6           # 推理時假設逃生者的跑速（每秒幾格）
   presets:                     # 難度：只調感知和決策，不調跑速
     easy:
       reaction: 0.5
       sight-range: 18
       sense-quiet: 75
       whiff-chance: 0.6
-      check-hideout-chance: 0.25
+      check-hideout-base: 0.25
+      particles: 80              # 簡單：粒子少、只隨機走（不會推理「往離鬼遠的地方跑」）
+      particle-flee: 0
+      particle-goal: 0
     normal: {}
     hard:
       reaction: 0.2
       sight-range: 28
       sense-quiet: 30
       whiff-chance: 0.1
-      check-hideout-chance: 0.6
+      check-hideout-base: 0.6
+      particles: 400
 
 survivor:
   dash-duration: 1.5           # 緊急衝刺（F 鍵）持續時間

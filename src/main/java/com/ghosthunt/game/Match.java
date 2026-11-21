@@ -304,6 +304,9 @@ public final class Match {
         }
         later.accept("AI 鬼尋路：尋路圖 " + nm.nav.size() + " 格（" + ms + " ms），找得到路 " + ok + "/" + targets.size()
                 + (fails.isEmpty() ? "" : "｜走不到：" + String.join("、", fails)));
+        long v0 = System.nanoTime();
+        com.ghosthunt.game.ai.VisibilityTable vt = com.ghosthunt.game.ai.VisibilityTable.build(nm.visibilityGrid(), 30);
+        later.accept("可見性表：" + nm.nav.size() + " 格、" + (System.nanoTime() - v0) / 1_000_000 + " ms、約 " + vt.approxBytes() / 1024 + " KB");
     }
 
     private int floorOf(Location l) {
@@ -1035,6 +1038,11 @@ public final class Match {
     /** 這格是哪個蹲伏破洞（不管有沒有打大），不是回傳 -1。 */
     int holeAt(Pos p) {
         return holeAt(p.x(), p.y(), p.z());
+    }
+
+    /** 第 i 個可推倒的櫃子已經推倒了（AI 看痕跡用）。 */
+    boolean isToppled(int i) {
+        return toppled.contains(i);
     }
 
     boolean isHoleWidened(int i) {

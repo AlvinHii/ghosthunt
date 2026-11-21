@@ -34,9 +34,13 @@ public final class WorldTraces {
     public Trace observe(Type type, int id, int state, double x, double y, double z, long tick) {
         long k = key(type, id);
         Seen before = seen.put(k, new Seen(state, tick));
-        Integer mine = ghostMade.remove(k);
+        Integer mine = ghostMade.get(k);
+        // 鬼自己的動作可能要時間（打大洞 4 秒）：看到的狀態變成鬼要的那個時才把記號用掉
+        if (mine != null && mine == state) {
+            ghostMade.remove(k);
+            return null;
+        }
         if (before == null || before.state() == state) return null;
-        if (mine != null && mine == state) return null;
         return new Trace(type, id, x, y, z, tick - before.tick(), tick);
     }
 

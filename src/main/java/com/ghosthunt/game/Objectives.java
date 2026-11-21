@@ -188,6 +188,11 @@ final class Objectives {
     // 容器
     // =====================================================================
 
+    /** 這個木桶被翻過了（AI 看痕跡用）。 */
+    boolean isSearched(Pos container) {
+        return searched.contains(container);
+    }
+
     boolean isContainer(Block block) {
         return block.getType() == Material.BARREL && b.containers.contains(pos(block));
     }

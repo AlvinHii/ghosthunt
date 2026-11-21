@@ -45,6 +45,16 @@ class WorldTracesTest {
     }
 
     @Test
+    void ghostCaused_delayedChange_isNotATrace() {
+        // 鬼開始打大洞（要 4 秒）：中間看到還是原本的狀態，打完才變；這不是別人留下的痕跡
+        WorldTraces t = new WorldTraces();
+        t.observe(Type.HOLE, 6, 0, 1, 65, 1, 0);
+        t.ghostChanged(Type.HOLE, 6, 1);
+        assertNull(t.observe(Type.HOLE, 6, 0, 1, 65, 1, 20));
+        assertNull(t.observe(Type.HOLE, 6, 1, 1, 65, 1, 100));
+    }
+
+    @Test
     void oldGap_isLessUseful() {
         WorldTraces t = new WorldTraces();
         t.observe(Type.CABINET, 0, 0, 1, 65, 1, 0);

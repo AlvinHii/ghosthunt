@@ -198,6 +198,55 @@ final class NavMap {
         return doors.size() - 1;
     }
 
+    /**
+     * 可見性表要的快照（主執行緒呼叫）：每個節點高度那一層，眼睛那格（y+1）是不是不透明、是不是門。
+     * 不透明＝會擋視線的實心方塊或樹葉；柵欄、鐵欄杆、玻璃、門算透明（門另外記）。回傳的物件不再碰世界，可以給別的執行緒建表。
+     */
+    com.ghosthunt.game.ai.VisibilityTable.Grid visibilityGrid() {
+        Layout L = m.b.layout;
+        int ox = L.ox, oz = L.oz, size = L.size;
+        java.util.Map<Integer, boolean[]> opaque = new java.util.HashMap<>();
+        for (int i = 0; i < nav.size(); i++) {
+            int y = nav.y(i);
+            opaque.computeIfAbsent(y, yy -> {
+                boolean[] a = new boolean[size * size];
+                for (int x = 0; x < size; x++)
+                    for (int z = 0; z < size; z++) {
+                        Material t = block(ox + x, yy + 1, oz + z).getType();
+                        a[x * size + z] = t.isOccluding() || Tag.LEAVES.isTagged(t);
+                    }
+                return a;
+            });
+        }
+        java.util.Map<Pos, Integer> doorIdx = new java.util.HashMap<>();
+        for (int i = 0; i < doors.size(); i++) doorIdx.put(doors.get(i), i);
+        int n = nav.size();
+        int[] xs = new int[n], ys = new int[n], zs = new int[n];
+        for (int i = 0; i < n; i++) {
+            xs[i] = nav.x(i);
+            ys[i] = nav.y(i);
+            zs[i] = nav.z(i);
+        }
+        return new com.ghosthunt.game.ai.VisibilityTable.Grid() {
+            public int size() { return n; }
+            public int x(int id) { return xs[id]; }
+            public int y(int id) { return ys[id]; }
+            public int z(int id) { return zs[id]; }
+
+            public boolean opaque(int x, int y, int z) {
+                boolean[] a = opaque.get(y);
+                int lx = x - ox, lz = z - oz;
+                if (a == null || lx < 0 || lz < 0 || lx >= size || lz >= size) return true;
+                return a[lx * size + lz];
+            }
+
+            public int doorAt(int x, int y, int z) {
+                Integer d = doorIdx.get(new Pos(x, y, z));
+                return d == null ? -1 : d;
+            }
+        };
+    }
+
     // ---- 給 AI 用的小工具 ----
 
     Location loc(int id) {
