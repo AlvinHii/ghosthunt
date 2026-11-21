@@ -51,3 +51,10 @@ tasks.register<Copy>("deploy") {
     from(tasks.jar)
     into(layout.projectDirectory.dir("test-server/plugins"))
 }
+
+// gradlew sim --args="--map hydro_plant --runs 200 --search v3"：最小模擬器（AI 鬼第三版，只驅動純邏輯類別，見 src/test/java/com/ghosthunt/sim）
+tasks.register<JavaExec>("sim") {
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("com.ghosthunt.sim.Sim")
+    workingDir = projectDir
+}
