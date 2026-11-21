@@ -76,6 +76,8 @@ public final class Building {
     public boolean pve;
     /** 固定地圖的名字（plugins/GhostHunt/pve-maps/名字.txt）；隨機產生的大樓是 null。 */
     public String mapName;
+    /** 固定地圖的 [sounds]（key, value）；沒有就是空的。 */
+    public List<String[]> sounds = List.of();
     public final Layout layout;
     public final RoomType[][][] types; // [floor][cx][cz]
 

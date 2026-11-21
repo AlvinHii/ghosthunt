@@ -926,6 +926,10 @@ final class AiGhost {
         int g = nav == null ? -1 : nav.nearestMain(goal, 3);
         if (g < 0 && nav != null) g = nav.nearest(goal, 3); // 例如跟著鑽地洞：目標在通道另一端的出入口
         if (g < 0) {
+            // 目標不在自己的圖上：交給原版尋路，舊的路點要清掉，不然兩邊一起推會卡住（度假村實測，2026-11-21）
+            rawPath = List.of();
+            wayPath = List.of();
+            rawGoal = -1;
             vanillaMove(goal);
             return;
         }

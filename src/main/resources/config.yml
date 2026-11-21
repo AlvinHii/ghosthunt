@@ -205,3 +205,10 @@ match:
   time-limit: 1020             # 17 分鐘強制結束
   record-stats: true           # 每局結束把數據寫進記錄檔
   # 不分勝負：場上沒有能自由行動的逃生者時立刻結束，只顯示每個人的結果
+
+resource-pack:                 # 地圖音效的資源包（插件自己開一個小網頁伺服器送給玩家，進伺服器時會問要不要裝）
+  enabled: true
+  port: 8164                   # 網頁伺服器的 port（跟 Minecraft 的 25565 不一樣）
+  host: localhost              # 玩家連得到的位址：自己電腦測試用 localhost；跟朋友連線要改成你的公開 IP 或網域（port 也要開）
+  url: ""                      # 自己把 ghosthunt-pack.zip 放在別的網站的話填網址（填了就不開網頁伺服器）
+  required: false              # true＝不裝資源包就進不來

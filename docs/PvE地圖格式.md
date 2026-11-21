@@ -2,7 +2,8 @@
 
 PvE 地圖可以是「固定格局」：照一份文字平面圖蓋，**每局開始前重蓋一次**，重新隨機挑：
 
-- 大門 2 扇（從 `G` 候選裡挑，條件：不同樓層 → 相距 ≥ `gate.min-distance` → 靠不同樓梯，挑不到會逐級放寬）
+- 大門 2 扇（從 `G` 候選裡挑，條件：不同樓層 → 相距 ≥ `gate.min-distance` → 靠不同樓梯，挑不到會逐級放寬；
+  候選全在同一層的話只看距離）
 - 保全室 2 間（從有 `Q` 的房間裡挑，優先不同樓層、離得遠）
 - 木桶（整張地圖隨機，靠牆、不擋路，數量依面積 `pve.barrel-area`）
 - 電源開關（遊戲開局時從所有 `E` 裡挑一個）
@@ -25,6 +26,7 @@ description: 一句話說明
 %,,,,,,,,,,%
 ...
 [2F]                           ← 沒有 2F 就不用寫；每層的圖大小一樣、上下對齊
+                               （[1F]／[2F] 下一行就是第一列；上面整列空白的列也要留著）
 ...
 
 [furniture]
@@ -39,12 +41,35 @@ hedge = dark_oak_leaves        # %（3 格高）
 hedge-base = moss_block        # % 底下的地面
 fence = dark_oak_fence         # +（1 格高，會自動接起來）
 outdoor = grass_block, moss_block      # , 的地面（第一個為主，其他偶爾混進去）
+deck = oak_planks              # 2F 的 , 地面（陽台、天橋；沒寫就跟 outdoor 一樣）
 path = stone_bricks, andesite          # ; 的地面
 room-floors = white_concrete, cyan_wool, ...   # 室內每間房間輪流用（認路用）
 door = spruce                  # 門的木頭
+
+[sounds]                       ← 可以不寫：地圖音效（要玩家裝資源包，見下面「音效」）
+global = hydro.global 0.35
+zone = hydro.turbine 0.8 1F 2,27 13,36
 ```
 
 地圖區塊裡一個字元一格，**不能寫註解**；其他區塊 `#` 後面是註解。
+
+## 音效（`[sounds]`）
+
+聲音檔放在 `resourcepack/assets/ghosthunt/sounds/`，在 `resourcepack/assets/ghosthunt/sounds.json` 取名字（例如 `hydro.global`）。
+`./gradlew build` 會把 `resourcepack/` 打包進插件，插件自己開網頁伺服器送給玩家（`config.yml` 的 `resource-pack`；`/gh pack` 重送）。
+
+| 寫法 | 意思 |
+|---|---|
+| `loop = 30` | 環境音多久重播一次（秒，跟音檔一樣長） |
+| `global = 名稱 音量` | 全場一直播的底層環境音 |
+| `zone = 名稱 音量 樓層 x,z x,z [x,z x,z …]` | 玩家站在這些方塊範圍裡時播（兩個角一組，可以好幾組；座標＝地圖格子座標；先寫的優先） |
+| `tunnel = 名稱 音量` | 在地下通道裡時播 |
+| `random = 名稱 最短秒 最長秒 音量` | 隨機間隔的事件音，全場都聽到 |
+| `power-on = 名稱 音量`／`power-off = 名稱 音量` | 電源打開／被關掉（停電、鬼關電源）時 |
+
+- 名稱沒寫命名空間就是 `ghosthunt:`；也可以用原版的，例如 `minecraft:block.beacon.deactivate`。
+- 音檔是立體聲的話，Minecraft 不會依距離變小聲，所以插件是直接在玩家身上播、只給他聽；「區域」靠玩家站的位置決定。
+- 純裝飾：AI 鬼聽不到這些聲音。玩家沒裝資源包就是沒聲音，不影響遊戲。
 
 ## 符號
 
@@ -70,7 +95,7 @@ door = spruce                  # 門的木頭
 | `E` | 電源開關候選 | 靠牆；旁邊是樹籬／欄杆的話補一個鐵方塊配電箱 |
 | `S` | 出生點 | 出生點＝S 和旁邊 8 格 |
 | `K` | 鬼房地板 | 鬼從中心出生；要用牆和 `I` 圍起來 |
-| `J` | 監獄籠子內部 | 外面一圈自動蓋鐵欄杆；再外面一圈要能站人（救人範圍 4.6 格） |
+| `J` | 監獄籠子內部 | 外面一圈是地面的格子自動蓋鐵欄杆（是牆的就留著當籠子的一邊）；再外面一圈要能站人（救人範圍 4.6 格） |
 | `C` | 可推倒的櫃子 | 2 格內要有 `O` 開口，推倒會擋住那個開口 |
 | 小寫字母（`h`、`v` 除外） | 家具 | `[furniture]` 定義；上面不能走 |
 

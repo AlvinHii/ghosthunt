@@ -122,6 +122,8 @@ public final class Match {
     /** 被卡住的門（下半部）、這局已經卡過的門。 */
     private final java.util.Set<Pos> jammed = new java.util.HashSet<>(), jamUsed = new java.util.HashSet<>();
     final Nightmare nightmare;
+    /** 地圖音效（固定地圖有 [sounds] 才有）。 */
+    MapAudio audio;
     /** PvE：AI 鬼（真人鬼時是 null）。 */
     AiGhost aiGhost;
     final ObjectiveSettings o;
@@ -174,6 +176,7 @@ public final class Match {
         this.acts = new Interactions(this);
         this.obj = new Objectives(this);
         this.items = new ItemUse(this);
+        this.audio = MapAudio.create(this);
     }
 
     // ---- 開始 ----
@@ -497,6 +500,7 @@ public final class Match {
         dummies.tick(g);
         escapes();
         if (nightmare != null) nightmare.tick(g);
+        if (audio != null && tick % 20 == 0) audio.tick();
         if (tick % 10 == 0 && g instanceof Player gp) ghostHud(gp);
         if (tick % 200 == 0) refreshSurvivorFog();
         if (tick % 10 == 0) closeHatches();
@@ -1220,6 +1224,7 @@ public final class Match {
         ended = true;
         if (task != null) task.cancel();
         if (nightmare != null) nightmare.stop();
+        if (audio != null) audio.stop();
         if (aiGhost != null) {
             aiGhost.statsInto(stats);
             stats.put("dummyCatches", dummies.caught);

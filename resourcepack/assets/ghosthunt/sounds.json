@@ -1,0 +1,10 @@
+{
+  "hydro.global":     {"subtitle": "發電廠的低鳴",   "sounds": [{"name": "ghosthunt:hydro/hydro_plant_global_ambience", "stream": true}]},
+  "hydro.turbine":    {"subtitle": "渦輪機運轉",     "sounds": [{"name": "ghosthunt:hydro/turbine_hall_ambience", "stream": true}]},
+  "hydro.substation": {"subtitle": "高壓電嗡嗡聲",   "sounds": [{"name": "ghosthunt:hydro/substation_ambience", "stream": true}]},
+  "hydro.dam":        {"subtitle": "大壩水聲",       "sounds": [{"name": "ghosthunt:hydro/dam_intake_ambience", "stream": true}]},
+  "hydro.tunnel":     {"subtitle": "通道裡的回聲",   "sounds": [{"name": "ghosthunt:hydro/maintenance_tunnel_ambience", "stream": true}]},
+  "hydro.creak":      {"subtitle": "遠處金屬異響",   "sounds": [{"name": "ghosthunt:hydro/distant_metal_creak"}]},
+  "hydro.valve":      {"subtitle": "壓力閥洩壓",     "sounds": [{"name": "ghosthunt:hydro/pressure_valve_release"}]},
+  "hydro.relay":      {"subtitle": "繼電器跳動",     "sounds": [{"name": "ghosthunt:hydro/transformer_relay_trip"}]}
+}

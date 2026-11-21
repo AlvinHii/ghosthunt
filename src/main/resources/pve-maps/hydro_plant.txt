@@ -1,0 +1,139 @@
+name: 廢棄水力發電廠
+type: mixed
+description: 北窄南寬的階梯梯形：北邊大壩廣場和拘留室，中間東西兩棟 2 層廠房夾著變電廣場（鬼的高壓隔離籠），南邊是被貨櫃切碎的維修堆置場。2F 有繞圈的鋼構天橋。
+
+[1F]
+
+             ######%%%%%%%%%GGG%%%%%%%%%%%%%%
+             #JJJJ,,,,,tt,,,l,,,,,,,,tt,,,E,%
+             #JJJJ,,,,2tt,,,,,,%,,,,,tt,,,,,%
+             #JJJJ,,,,,,,,,,,,%%%,,,,,,,,,,,%
+             #JJJJ,,,,,pp,,,,,%H%,,,,,rr,,,,%
+             #,,,,#,,,,pp,,,,,,,,,,,,,rr,,,,%
+             %,,,,,l,,,,,,,,,,,,,,tt,,,,,,,,%
+             %,,,,,,,,,,,,,,%,,,,,tt,,,,,,,,%
+         #######D#####,,,,,,%,,,,,,,##h##D#######
+         #.Q.........#,,,,,,%,,,,,,,#...........#
+         #...pp..aa..#,,uu,,%,,rr,,,#..gg..gg.1.#
+         #...pp..aa.C#,,uu,,h,,rr,,,#..gg..gg...#
+         #...........O,,,,,,%,,,,,,,D...........#
+         #..xx...bb..#,,,,,,%,,,,,,,#..aa...bb..#
+         #..xx...bb..#,,,l,,,,,,l,,,#..aa...bb..#
+         #...........#,,,,,,,,,,,,,,#...........#
+     ##########D######,,,,,,,,,,,,,,######D##########
+     #.aa..aa......#,,,,,,,,,,,,,,,,,,#......dd...Q.#
+     #.............#,,,,l,,,,,,,,l,,,,#.............#
+     #...>>>>>.....#,,,,,,#######,,,,,#.....<<<<<...#
+     #...>>>>>.....#,,,,,,#KKKKK#,,,,,#.....<<<<<...#
+     #.............#,,tt,,#KKKKK#,,c,,#.............#
+     #..xx....pp...W,,tt,,#KKKKK#,,c,,W...bb...dd...#
+     #..xx....pp...W,,,,,,#KKKKK#,,,,,W...bb...dd...#
+     #...........C.#,,,,,,#KKKKK#,,,,,#....C........#
+     ###OO######O######,,,###I###,c,,,######O########
+ #####........#.......#,,,,,,,,,,,,,,,,,,#..........#####
+ #............#..aa...#,,,l,,,,,,,,,,l,,,#...........E..#
+ #..ggg..ggg..#..aa...#,,,,,,,,%,,,,,,,,,#..tt....tt....#
+ #..ggg..ggg.C#.......D,,tt,,,%%%%,,,tt,,#..tt....tt....#
+ ##...........O.......#,,tt,,,%H%%,,,tt,,W.............##
+##H...........#..bb...#,,,,,,,%,,%,,,,,,,W.............H##
+ ##..pp...pp..#..bb...#,c,,,,,,,,,,,,,,,,#...rr....rr..##
+ #...pp...pp..#.......#,,,,uu,,,,,,uu,,,,#...rr....rr...#
+ #..........1.#......Q#,,,,uu,,,,,,uu,,,,#............2.#
+ #.E..........#..C....#,,,,,,,,,,,,,,,,,,#......C.......#
+ #####WW###h######O####,,,,,,,,,,,,,,,,,,########O#######
+ %,,,,,,,,,,,,,,l,,,,,,,,,,,,tt,,,,,,%,,,,,kkk,,,,,,,,,,%
+ G,,,,,,,,,,,kkk,,,,,,,,,,,,,tt,,,,,,%,,,,%kkk,,,,,rr,,,G
+ G,,,,,,,,,,,kkk,,,,,,%,,,,,,,,,,,,,,%,,,%%%,,,,,,,rr,,,G
+ G,,,SS,,,,,,,,,,c,,,,h,,,,uu,,,,,,,,%,,,%H%,,,,,,,,,,,,G
+ %,,,SS,,,,l,,,,,,,,,,%,,,,uu,,,,,,l,,,,,,,,,,,kk,,,,,,,%
+ %,,,,,,,,,,,,E,,,,,,,%,,,,,,,,,,c,,E,,,,,,,,,,kk,,,,,,,%
+ %%%%%%%%%%%%%%%%%%%%%%%%%%%GGG%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+[2F]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                        ++++++++++++
+                        +,,,,,,,,,,+
+                    +++++,,,,,,,,,,+++
+     ###############,,,,,,,++++++,,,,,###############
+     #.Q.......bb..D,,,,,,,+    +,,,,,D..dd.....bb..#
+     #..++++++.....#++++++++    ++++++#.....++++++..#
+     #..+=====.....#                  #.....=====+..#
+     #..+=====.....#                  #.....=====+..#
+     #..++++++.....#                  #.....++++++..#
+     #.............#++++++++    ++++++#.............#
+     #..aa...dd....D,,,,,,,+    +,,,,,D...aa........#
+     #..aa...dd....#,,,,,,,++++++,,,,,#...aa......Q.#
+     ###############+++++,,,,,,,,,,+++###############
+                        +,,,,,,,,,,+
+                        ++++++++++++
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[furniture]
+a = chiseled_tuff_bricks, observer                       # 配電盤
+b = iron_block, iron_block                                # 鐵製檔案櫃
+c = gray_concrete, gray_concrete, gray_concrete           # 混凝土支撐柱
+d = dark_oak_planks                                       # 工業辦公桌
+g = waxed_oxidized_copper, waxed_oxidized_copper_grate, waxed_oxidized_cut_copper   # 大型渦輪發電機
+k = cyan_terracotta, cyan_terracotta, cyan_terracotta     # 維修貨櫃
+l = deepslate_brick_wall, iron_bars, waxed_copper_bulb | light   # 工業高壓路燈（跟著電源亮暗）
+p = waxed_copper_block, waxed_exposed_copper, waxed_copper_block # 粗輸水管線
+r = stripped_spruce_log, spruce_planks                    # 大型電纜捲盤
+t = deepslate_tiles, tuff_bricks, deepslate_tiles         # 高壓變壓器
+u = yellow_terracotta, yellow_terracotta                  # 廢棄工程車
+x = polished_andesite                                     # 閘門閥門座（原圖的 v）
+
+[palette]
+wall = stone_bricks
+outer-wall = cracked_stone_bricks
+ceiling = smooth_stone
+hedge = tuff_bricks
+hedge-base = tuff
+fence = dark_oak_fence
+outdoor = gravel, polished_andesite, grass_block
+deck = tuff_bricks
+path = polished_andesite
+room-floors = prismarine_bricks, polished_diorite, waxed_oxidized_cut_copper, yellow_terracotta, red_nether_bricks, polished_granite, gray_glazed_terracotta, light_blue_concrete, brown_terracotta
+door = spruce
+
+[sounds]
+loop = 30                                         # 環境音都是 30 秒，每 30 秒重播
+global = hydro.global 0.35                        # 全場底層
+zone = hydro.dam 0.8 1F 13,2 44,8                 # 北邊大壩進水口廣場（含監獄）
+zone = hydro.turbine 0.8 1F 2,27 13,36 37,10 47,16   # 西南主渦輪室、東北備用發電機房
+zone = hydro.turbine 0.45 2F 6,18 18,25           # 2F 渦輪高層觀測室（隔一層，小聲）
+zone = hydro.substation 0.7 1F 22,9 35,17 20,18 37,26 23,27 40,36   # 中央高壓變電廣場（含鬼房）
+tunnel = hydro.tunnel 0.9                         # 地下檢修通道
+random = hydro.creak 45 100 0.5                   # 遠處金屬異響
+random = hydro.valve 70 140 0.6                   # 壓力閥洩壓
+power-on = hydro.relay 1.0                        # 開電源／修好電源
+power-off = hydro.relay 1.0                       # 停電、鬼關電源

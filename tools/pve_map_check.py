@@ -40,9 +40,7 @@ def parse(path):
                     sec = 'map'
                 continue
             if sec == 'map':
-                if st == '' and not cur:
-                    continue
-                cur.append(line)
+                cur.append(line)  # 上面空的列也算
                 continue
             if '#' in line and sec not in ('map',):
                 line = line.split('#', 1)[0]
@@ -271,8 +269,10 @@ def main():
                     ring.add(n)
     for n in ring:
         c = m.at(*n)
+        if c in '#% ':
+            continue  # 牆留著當籠子的一邊
         if not (walkable_char(c) and c not in MARKERS or c in '.,;'):
-            E(f'{n[0] + 1}F 監獄 J 外圍 ({n[1]},{n[2]}) 要是地面（會放鐵欄杆），現在是 {c!r}')
+            E(f'{n[0] + 1}F 監獄 J 外圍 ({n[1]},{n[2]}) 要是地面（會放鐵欄杆）或牆，現在是 {c!r}')
     for f, x, z in ring:
         for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
             n = (f, x + dx, z + dz)
@@ -335,7 +335,17 @@ def main():
                     else:
                         dx, dz = out[0]
                         rx, rz = x - 2 * dx, z - 2 * dz
-                        if not stand(f, rx, rz) or is_furn(m.at(f, rx, rz)):
+                        # 跟讀取器一樣：只看這一排大門的中間那格
+                        comp, todo = {(x, z)}, [(x, z)]
+                        while todo:
+                            a, b2 = todo.pop()
+                            for ddx, ddz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                                n2 = (a + ddx, b2 + ddz)
+                                if n2 not in comp and m.at(f, *n2) == 'G':
+                                    comp.add(n2)
+                                    todo.append(n2)
+                        mid = sorted(comp)[len(comp) // 2]
+                        if mid == (x, z) and (not stand(f, rx, rz) or is_furn(m.at(f, rx, rz))):
                             E(f'{f + 1}F 大門候選 G ({x},{z}) 往內 2 格 ({rx},{rz}) 要是空地（放讀卡機）')
                     continue
                 if not (all(ew) or all(ns)):

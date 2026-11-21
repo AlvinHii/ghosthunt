@@ -284,6 +284,7 @@ final class Objectives {
 
     private void setPower(boolean on, String message) {
         powerOn = on;
+        if (m.audio != null) m.audio.event(on ? "power-on" : "power-off");
         if (on) powerOnTick = m.tick;
         if (lever != null && m.block(lever).getBlockData() instanceof Switch sw) {
             sw.setPowered(on);

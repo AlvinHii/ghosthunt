@@ -28,7 +28,17 @@ tasks.withType<JavaCompile>().configureEach {
     options.release.set(25)
 }
 
+// 資源包（地圖音效）：resourcepack/ 打包成 ghosthunt-pack.zip 放進 jar，插件啟動時自己送給玩家
+val packZip = tasks.register<Zip>("resourcePack") {
+    from(layout.projectDirectory.dir("resourcepack")) { exclude("README.md") }
+    archiveFileName.set("ghosthunt-pack.zip")
+    destinationDirectory.set(layout.buildDirectory.dir("pack"))
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+}
+
 tasks.processResources {
+    from(packZip)
     filteringCharset = "UTF-8"
     filesMatching("plugin.yml") {
         expand("version" to project.version)

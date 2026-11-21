@@ -50,7 +50,7 @@ final class FixedMapGenerator {
 
     // 材質
     private Material wallM, outerM, ceilM, hedgeM, hedgeBaseM, fenceM, doorM;
-    private List<Material> outdoorM, pathM, roomFloorsM;
+    private List<Material> outdoorM, deckM, pathM, roomFloorsM;
 
     // 分析結果
     private int[][][] region;            // [f][z][x] 區域編號，-1 = 不是區域
@@ -186,6 +186,7 @@ final class FixedMapGenerator {
         b = new Building(seed, L);
         b.pve = true;
         b.mapName = fm.id;
+        b.sounds = List.copyOf(fm.sounds);
 
         findRegions();
         findStairs();
@@ -229,6 +230,7 @@ final class FixedMapGenerator {
         fenceM = fm.pal("fence", Material.DARK_OAK_FENCE);
         outdoorM = fm.palList("outdoor", List.of(Material.GRASS_BLOCK));
         hedgeBaseM = fm.pal("hedge-base", outdoorM.get(0));
+        deckM = fm.palList("deck", outdoorM); // 2F 以上的戶外地面（陽台、天橋）
         pathM = fm.palList("path", List.of(Material.STONE_BRICKS));
         roomFloorsM = fm.palList("room-floors", List.of(Material.WHITE_CONCRETE, Material.LIGHT_BLUE_TERRACOTTA, Material.CYAN_WOOL,
                 Material.LIME_TERRACOTTA, Material.PINK_TERRACOTTA, Material.YELLOW_TERRACOTTA, Material.LIGHT_GRAY_WOOL, Material.ORANGE_TERRACOTTA));
@@ -465,7 +467,10 @@ final class FixedMapGenerator {
         }
         // 所有兩扇的組合裡，挑符合條件的，平均隨機；條件由嚴到寬：不同樓層、距離、最近的樓梯不同
         double minD = s.gateMinDistance();
-        for (int level = 0; level < 6; level++) {
+        // 大門候選全在同一層（例如 2F 不想開在半空中）：「不同樓層」「靠不同樓梯」都不適用，直接只看距離
+        boolean oneFloor = all.stream().mapToInt(GateRun::f).distinct().count() == 1;
+        int start = oneFloor ? 3 : 0;
+        for (int level = start; level < 6; level++) {
             boolean diffFloor = level < 2 && F > 1, diffStair = level < 1 || level == 2;
             double dist = level < 4 ? minD : level == 4 ? minD / 2 : 0;
             List<int[]> pairs = new ArrayList<>();
@@ -478,7 +483,7 @@ final class FixedMapGenerator {
                     pairs.add(new int[]{i, j});
                 }
             if (!pairs.isEmpty()) {
-                if (level > 0) warnings.add("大門放寬了條件才挑得到（第 " + level + " 級）");
+                if (level > start) warnings.add("大門放寬了條件才挑得到（第 " + level + " 級）");
                 int[] pr = pairs.get(rnd.nextInt(pairs.size()));
                 return want >= 2 ? List.of(all.get(pr[0]), all.get(pr[1])) : List.of(all.get(pr[0]));
             }
@@ -496,10 +501,10 @@ final class FixedMapGenerator {
         if (r != null) {
             if (c == 'J') return Material.POLISHED_BLACKSTONE_BRICKS;
             if (r.ghost) return Material.SCULK;
-            if (c == ',') return pick(outdoorM, x, z);
+            if (c == ',') return pick(f > 0 ? deckM : outdoorM, x, z);
             if (c == ';') return pick(pathM, x, z);
             if (c == '.' || r.indoor) return r.security ? Material.BLUE_TERRACOTTA : roomFloorsM.get(Math.floorMod(r.id * 7 + f, roomFloorsM.size()));
-            return r.path * 2 > r.plainOutdoor ? pick(pathM, x, z) : pick(outdoorM, x, z);
+            return r.path * 2 > r.plainOutdoor ? pick(pathM, x, z) : pick(f > 0 ? deckM : outdoorM, x, z);
         }
         if (c == '#') return wallM;
         if (c == '%') return hedgeBaseM;

@@ -26,11 +26,12 @@ import java.util.concurrent.ThreadLocalRandom;
 public final class GhostHuntPlugin extends JavaPlugin {
 
     /** 插件裡附的 PvE 固定地圖（第一次啟動時複製到 plugins/GhostHunt/pve-maps/）。 */
-    private static final List<String> BUNDLED_MAPS = List.of("office_park");
+    private static final List<String> BUNDLED_MAPS = List.of("office_park", "hydro_plant", "seaside_resort");
 
     private Building building;
     private boolean busy;
     private com.ghosthunt.game.Match match;
+    private ResourcePackHost pack;
 
     @Override
     public void onEnable() {
@@ -39,6 +40,7 @@ public final class GhostHuntPlugin extends JavaPlugin {
             if (!new java.io.File(getDataFolder(), "pve-maps/" + m + ".txt").exists()) saveResource("pve-maps/" + m + ".txt", false);
         }
         com.ghosthunt.game.Items.init(this);
+        pack = ResourcePackHost.start(this);
         getServer().getPluginManager().registerEvents(new com.ghosthunt.game.GameListener(() -> match), this);
         com.ghosthunt.game.Match.recoverAfterCrash(this);
         if (FogExperiment.install(this)) {
@@ -50,6 +52,7 @@ public final class GhostHuntPlugin extends JavaPlugin {
     @Override
     public void onDisable() {
         if (match != null) match.end("伺服器關閉");
+        if (pack != null) pack.stop();
     }
 
     @Override
@@ -69,6 +72,13 @@ public final class GhostHuntPlugin extends JavaPlugin {
             case "clear" -> { if (!inMatch(sender)) clear(sender); }
             case "start" -> start(sender, args);
             case "maps" -> listMaps(sender);
+            case "pack" -> {
+                if (pack == null) msg(sender, "資源包沒開（config 的 resource-pack.enabled，或 port 被佔用，看伺服器 log）。", NamedTextColor.RED);
+                else if (sender instanceof org.bukkit.entity.Player p) {
+                    pack.send(p);
+                    msg(sender, "重新送了資源包。", NamedTextColor.GRAY);
+                } else msg(sender, "只有玩家能用。", NamedTextColor.RED);
+            }
             case "maptest" -> mapTest(sender, args);
             case "stop" -> {
                 if (match == null) msg(sender, "目前沒有在進行的遊戲。", NamedTextColor.GRAY);
