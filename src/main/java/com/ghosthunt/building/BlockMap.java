@@ -46,11 +46,11 @@ public final class BlockMap {
                     set(new Pos(x, y, z), m);
     }
 
-    /** 人可以穿過去的方塊：空氣、看不見的光源方塊、地毯（障礙物記號），門也算（可以打開）。 */
+    /** 人可以穿過去的方塊：空氣、看不見的光源方塊、地毯（障礙物記號），門也算（可以打開）；家具正面的按鈕、拉桿沒有碰撞。 */
     public boolean passable(Pos p) {
         Material m = type(p);
         return m.isAir() || m == Material.LIGHT || org.bukkit.Tag.WOOL_CARPETS.isTagged(m) || org.bukkit.Tag.DOORS.isTagged(m)
-                || org.bukkit.Tag.WALL_SIGNS.isTagged(m);
+                || org.bukkit.Tag.WALL_SIGNS.isTagged(m) || org.bukkit.Tag.BUTTONS.isTagged(m) || m == Material.LEVER;
     }
 
     public boolean solid(Pos p) {

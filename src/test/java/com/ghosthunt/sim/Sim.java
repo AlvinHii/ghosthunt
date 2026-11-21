@@ -115,7 +115,7 @@ public final class Sim {
                     i + 1, candidates, n, flee, sigma, 100 * r.reacquire(), r.catchesPerMin(), r.firstContact(), loss);
         }
         all.sort((a, b) -> Double.compare(a.loss(), b.loss()));
-        System.out.printf("%n地圖 %s｜難度 %s｜目標重新找到 %.0f%%｜每組 %d 局 × %d 秒｜最接近的前 5 組（第 1 組是現在的普通設定 200/0.6/3）：%n",
+        System.out.printf("%n地圖 %s｜難度 %s｜目標重新找到 %.0f%%｜每組 %d 局 × %d 秒｜最接近的前 5 組（上面清單的 [1] 是現在的普通設定 200/0.6/3，可以拿來比）：%n",
                 map, difficulty, 100 * target, runs, seconds);
         for (int i = 0; i < Math.min(5, all.size()); i++) {
             Cand c = all.get(i);
