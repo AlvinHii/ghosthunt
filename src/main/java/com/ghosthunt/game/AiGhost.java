@@ -386,7 +386,9 @@ final class AiGhost {
         int r = n < 0 ? -1 : nodeRoom[n];
         if (r < 0) return;
         Integer prev = lastRegionSeen.put(seen.getUniqueId(), r);
-        if (prev != null && prev != r) memory.routes.transition(regionKey(prev), regionKey(r));
+        // 只記相鄰兩區之間的移動（中間沒看到的那段不算）
+        if (prev != null && prev != r && regions != null && regions.neighbors(prev).contains(r))
+            memory.routes.transition(regionKey(prev), regionKey(r));
     }
 
     /** 局末：更新個性拉桿（勢均力敵分數）、舊資料 ×memory-decay、存檔。 */
