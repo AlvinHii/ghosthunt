@@ -46,4 +46,19 @@ class SoundFieldTest {
         SoundField.Heard h = SoundField.hear(g, TestGrids.id(g, 8, 0), TestGrids.id(g, 9, 0), 16, NONE, 6);
         assertEquals(TestGrids.id(g, 8, 0), h.pointNode());
     }
+
+    @Test
+    void farSound_pointStopsShortOfSource_alongPath() {
+        // 聲音 9 格遠：聽到的位置是「沿路離聲音 3 格」（至少離聽的人 2 格），不是直線上的誤差
+        GridNav g = TestGrids.grid("..........");
+        SoundField.Heard h = SoundField.hear(g, TestGrids.id(g, 0, 0), TestGrids.id(g, 9, 0), 16, NONE, 2, 3);
+        assertEquals(TestGrids.id(g, 3, 0), h.pointNode());
+    }
+
+    @Test
+    void shortOfSource_neverCloserThanToward() {
+        GridNav g = TestGrids.grid("..........");
+        SoundField.Heard h = SoundField.hear(g, TestGrids.id(g, 5, 0), TestGrids.id(g, 9, 0), 16, NONE, 2, 3);
+        assertEquals(TestGrids.id(g, 7, 0), h.pointNode()); // d=4，4-3=1 < 2 → 用 2
+    }
 }

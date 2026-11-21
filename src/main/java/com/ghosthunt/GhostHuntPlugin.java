@@ -103,6 +103,20 @@ public final class GhostHuntPlugin extends JavaPlugin {
                 match.spawnDummies(n);
                 msg(sender, "生出 " + n + " 個假逃生者。", NamedTextColor.GREEN);
             }
+            case "aimemory" -> {
+                // /gh aimemory reset [地圖|all]：清掉 AI 鬼學到的東西
+                if (args.length < 2 || !args[1].equalsIgnoreCase("reset")) {
+                    msg(sender, "用法：/gh aimemory reset [地圖名|all]", NamedTextColor.YELLOW);
+                    break;
+                }
+                java.io.File dir = new java.io.File(getDataFolder(), "ai-memory");
+                String which = args.length > 2 ? args[2] : (building != null && building.mapName != null ? building.mapName : "all");
+                int n = 0;
+                java.io.File[] files = dir.listFiles((d, name) -> name.endsWith(".yml"));
+                if (files != null) for (java.io.File f : files)
+                    if (which.equalsIgnoreCase("all") || f.getName().equalsIgnoreCase(which + ".yml")) if (f.delete()) n++;
+                msg(sender, "清掉了 " + n + " 份 AI 鬼記憶（" + which + "）。", NamedTextColor.GREEN);
+            }
             case "aidebug" -> {
                 if (!(sender instanceof Player p) || match == null || !match.isAi()) {
                     msg(sender, "要在 AI 局裡由玩家使用。", NamedTextColor.RED);
@@ -187,11 +201,12 @@ public final class GhostHuntPlugin extends JavaPlugin {
         // /gh start ai：PvE，所有玩家都是逃生者，鬼是電腦；/gh start ai solo：沒有逃生者，只看 AI 鬼巡邏（測試用）
         if (args.length >= 2 && args[1].equalsIgnoreCase("ai")) {
             boolean solo = false;
-            String difficulty = null;
+            String difficulty = null, persona = null;
             for (int i = 2; i < args.length; i++) {
                 String a = args[i].toLowerCase(Locale.ROOT);
                 if (a.equals("solo")) solo = true;
                 else if (a.equals("easy") || a.equals("normal") || a.equals("hard")) difficulty = a;
+                else if (a.equals("hound") || a.equals("ambusher") || a.equals("watcher") || a.equals("standard") || a.equals("auto")) persona = a;
             }
             if (players.isEmpty() && !solo) {
                 msg(sender, "沒有玩家在線上。", NamedTextColor.RED);
@@ -205,7 +220,7 @@ public final class GhostHuntPlugin extends JavaPlugin {
             }
             World world = ArenaWorld.getOrCreate(BuildingSettings.from(getConfig()).worldName());
             match = com.ghosthunt.game.Match.pve(this, building, world, com.ghosthunt.game.GameSettings.from(getConfig()),
-                    solo ? List.of() : players, () -> match = null, difficulty);
+                    solo ? List.of() : players, () -> match = null, difficulty, persona);
             match.start();
             if (!building.pve) msg(sender, "提醒：這是大樓，不是 PvE 小地圖（/gh build pve）。", NamedTextColor.YELLOW);
             return;
@@ -273,6 +288,35 @@ public final class GhostHuntPlugin extends JavaPlugin {
         place(sender, s, BuildingGenerator.generate(s, seed), true, null);
     }
 
+    /** 遊戲世界裡所有的物品展示框和掉在地上的物品（家具裝飾）。 */
+    private void clearDecorFrames(World world) {
+        for (org.bukkit.entity.Entity e : world.getEntities())
+            if (e instanceof org.bukkit.entity.ItemFrame || e instanceof org.bukkit.entity.Item) e.remove();
+    }
+
+    /** 家具正面的展示框：固定、無敵（不能拿走物品、不能轉、不能打掉）。 */
+    private void spawnDecorFrames(World world, Building b) {
+        int n = 0;
+        for (Building.DecorFrame fr : b.decorFrames) {
+            org.bukkit.Location l = new org.bukkit.Location(world, fr.at().x(), fr.at().y(), fr.at().z());
+            if (!l.getBlock().getType().isAir()) continue;
+            Class<? extends org.bukkit.entity.ItemFrame> type = fr.glow() ? org.bukkit.entity.GlowItemFrame.class : org.bukkit.entity.ItemFrame.class;
+            try {
+                world.spawn(l, type, f -> {
+                    f.setFacingDirection(fr.facing(), true);
+                    f.setItem(new org.bukkit.inventory.ItemStack(fr.item()), false);
+                    f.setFixed(true);
+                    f.setInvulnerable(true);
+                    f.setPersistent(true);
+                });
+                n++;
+            } catch (IllegalArgumentException e) {
+                // 這個位置掛不上去（背後不是實心方塊）：跳過
+            }
+        }
+        if (n > 0) getLogger().info("家具展示框：" + n + " 個");
+    }
+
     /** PvE 固定地圖（plugins/GhostHunt/pve-maps/名字.txt）。 */
     private void buildFixed(CommandSender sender, String mapName, long seed, boolean verbose, Runnable after) {
         java.nio.file.Path file = getDataFolder().toPath().resolve("pve-maps").resolve(mapName + ".txt");
@@ -310,10 +354,12 @@ public final class GhostHuntPlugin extends JavaPlugin {
         busy = true;
         if (verbose) msg(sender, "產生完成（" + (b.mapName != null ? "地圖 " + b.mapName + "，" : "") + "種子 " + b.seed + "，試了 " + r.attempts() + " 次，"
                 + r.blocks().blocks().size() + " 個方塊），開始分批蓋…", NamedTextColor.GRAY);
+        clearDecorFrames(world); // 先拿掉上一棟的展示框，不然牆換掉時會掉出物品
         BlockPlacer.place(this, world, r.blocks(), s.blocksPerTick(), ticks -> {
             busy = false;
             building = b;
             int signs = writeSigns(world, b);
+            spawnDecorFrames(world, b);
             if (verbose) {
                 getLogger().info("告示牌寫好 " + signs + "/" + b.signs.size() + " 個");
                 msg(sender, "大樓蓋好了，花了 " + ticks + " tick。用 /ghosthunt tp 1 進去看看。", NamedTextColor.GREEN);
@@ -529,6 +575,7 @@ public final class GhostHuntPlugin extends JavaPlugin {
         Layout L = building != null ? building.layout : s.layout();
         BlockMap air = new BlockMap();
         air.fill(L.rel(-4, L.floorY(0), -4), L.rel(L.size + 3, L.topY() + 1, L.size + 3), Material.AIR);
+        clearDecorFrames(world);
         busy = true;
         BlockPlacer.place(this, world, air, s.blocksPerTick(), ticks -> {
             busy = false;

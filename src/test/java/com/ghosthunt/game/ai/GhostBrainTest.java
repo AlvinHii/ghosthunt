@@ -214,4 +214,89 @@ class GhostBrainTest {
         Goal g = brain.decide(calm(null, new Point(7, 65, 7), false));
         assertEquals(Kind.GUARD_READER, g.kind());
     }
+
+    // ---- 第三版第 3 批：Utility（個性＝標準時要跟第二版一樣） ----
+
+    /** 第二版每個測試情境（不含機率的守監獄）。 */
+    private static List<Situation> v2Cases() {
+        Point gate = new Point(30, 65, 30);
+        return List.of(
+                with(empty(), new Seen(VICTIM, new Point(2, 65, 0), 2.0)),
+                with(empty(), new Seen(VICTIM, new Point(10, 65, 0), 10)),
+                new Situation(NOW, false, null, new Point(5, 65, 5), NOW - 100, null, -1_000_000, null,
+                        false, false, false, false, List.of(), false, null, HERE),
+                new Situation(NOW, false, null, null, -1_000_000, new Point(8, 65, -3), NOW - 50, null,
+                        false, false, false, false, List.of(), false, null, HERE),
+                new Situation(NOW, false, null, null, -1_000_000, null, -1_000_000, new Point(-20, 65, 4),
+                        false, false, false, false, List.of(), false, null, HERE),
+                new Situation(NOW, false, null, null, -1_000_000, null, -1_000_000, null,
+                        true, true, false, false, List.of(), false, null, HERE),
+                new Situation(NOW, false, null, null, -1_000_000, null, -1_000_000, null,
+                        false, false, true, false, List.of(gate), false, null, HERE),
+                new Situation(NOW, false, null, null, -1_000_000, null, -1_000_000, null,
+                        false, false, true, false, List.of(), false, null, HERE),
+                empty(),
+                new Situation(NOW, false, new Seen(VICTIM, new Point(1, 65, 0), 1.5), new Point(5, 65, 5), NOW - 10,
+                        new Point(8, 65, 8), NOW - 10, new Point(9, 65, 9), true, true, true, false, List.of(new Point(3, 65, 3)),
+                        true, new Point(4, 65, 4), HERE),
+                new Situation(NOW, false, null, new Point(5, 65, 5), NOW - 10, new Point(8, 65, -3), NOW - 10, new Point(-20, 65, 4),
+                        true, true, true, false, List.of(new Point(3, 65, 3)), false, null, HERE),
+                new Situation(NOW, false, null, new Point(5, 65, 5), NOW - 180, new Point(8, 65, -3), NOW - 20, null,
+                        false, false, false, false, List.of(), false, null, HERE),
+                new Situation(NOW, false, null, new Point(5, 65, 5), NOW - 20, new Point(8, 65, -3), NOW - 180, null,
+                        false, false, false, false, List.of(), false, null, HERE),
+                calm(new Point(3, 65, 3), null, false),
+                calm(null, new Point(7, 65, 7), false));
+    }
+
+    @Test
+    void utility_standardPersona_matchesV2Order() {
+        for (Situation s : v2Cases()) {
+            GhostBrain u = new GhostBrain(new GhostBrain.Config(2.5, 200, 200, 0.5), new Random(1));
+            assertEquals(brain.decide(s).kind(), u.decideUtility(s, GhostBrain.Weights.STANDARD, true).kind(), s.toString());
+        }
+    }
+
+    @Test
+    void utility_personaWeight_canTipCloseCall() {
+        // 遠處看到人（24 格）而大門在倒數：標準的鬼平手時選順序前面的（追），把追的權重壓低就去弄壞大門
+        Situation s = new Situation(NOW, false, new Seen(VICTIM, new Point(24, 65, 0), 24), null, -1_000_000, null, -1_000_000, null,
+                false, false, false, false, List.of(new Point(3, 65, 3)), false, null, HERE);
+        GhostBrain u = new GhostBrain(new GhostBrain.Config(2.5, 200, 200, 0.5), new Random(1));
+        assertEquals(Kind.CHASE, u.decideUtility(s, GhostBrain.Weights.STANDARD, true).kind());
+        GhostBrain v = new GhostBrain(new GhostBrain.Config(2.5, 200, 200, 0.5), new Random(1));
+        assertEquals(Kind.SABOTAGE_GATE, v.decideUtility(s, GhostBrain.Weights.of(java.util.Map.of(Kind.CHASE, 0.9)), true).kind());
+    }
+
+    @Test
+    void utility_holdsGoalAtLeast1_5s_exceptChase() {
+        GhostBrain u = new GhostBrain(new GhostBrain.Config(2.5, 200, 200, 0.5), new Random(1));
+        Situation patrol = empty();
+        assertEquals(Kind.PATROL, u.decideUtility(patrol, GhostBrain.Weights.STANDARD, true).kind());
+        // 10 tick 後出現埋伏點：還在 1.5 秒內，繼續巡邏
+        Situation amb = new Situation(NOW + 10, false, null, null, -1_000_000, null, -1_000_000, null,
+                false, false, false, false, List.of(), false, null, HERE, new Point(3, 65, 3), null);
+        assertEquals(Kind.PATROL, u.decideUtility(amb, GhostBrain.Weights.STANDARD, true).kind());
+        // 但看到人就馬上追
+        Situation seen = new Situation(NOW + 12, false, new Seen(VICTIM, new Point(9, 65, 0), 9), null, -1_000_000, null, -1_000_000, null,
+                false, false, false, false, List.of(), false, null, HERE);
+        assertEquals(Kind.CHASE, u.decideUtility(seen, GhostBrain.Weights.STANDARD, true).kind());
+        // 過了 1.5 秒：換成埋伏
+        Situation later = new Situation(NOW + 40, false, null, null, -1_000_000, null, -1_000_000, null,
+                false, false, false, false, List.of(), false, null, HERE, new Point(3, 65, 3), null);
+        GhostBrain w = new GhostBrain(new GhostBrain.Config(2.5, 200, 200, 0.5), new Random(1));
+        w.decideUtility(patrol, GhostBrain.Weights.STANDARD, true);
+        assertEquals(Kind.AMBUSH, w.decideUtility(later, GhostBrain.Weights.STANDARD, true).kind());
+    }
+
+    @Test
+    void utility_scoresListed_forDebug() {
+        GhostBrain u = new GhostBrain(new GhostBrain.Config(2.5, 200, 200, 0.5), new Random(1));
+        u.decideUtility(new Situation(NOW, false, null, null, -1_000_000, new Point(8, 65, -3), NOW - 50, null,
+                false, false, true, false, List.of(), false, null, HERE), GhostBrain.Weights.STANDARD, true);
+        List<GhostBrain.Scored> top = u.lastScores();
+        assertEquals(Kind.INVESTIGATE_NOISE, top.get(0).kind());
+        assertEquals(Kind.CUT_POWER, top.get(1).kind());
+        assertEquals(Kind.PATROL, top.get(top.size() - 1).kind());
+    }
 }

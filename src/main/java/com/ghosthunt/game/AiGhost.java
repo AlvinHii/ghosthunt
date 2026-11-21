@@ -8,7 +8,14 @@ import com.ghosthunt.game.ai.GhostBrain;
 import com.ghosthunt.game.ai.GhostBrain.Goal;
 import com.ghosthunt.game.ai.GhostBrain.Kind;
 import com.ghosthunt.game.ai.GhostBrain.Point;
+import com.ghosthunt.game.ai.AbilityTiming;
+import com.ghosthunt.game.ai.AiMemory;
+import com.ghosthunt.game.ai.GhostPersona;
+import com.ghosthunt.game.ai.PersonaBandit;
+import com.ghosthunt.game.ai.Chokepoints;
 import com.ghosthunt.game.ai.DistanceField;
+import com.ghosthunt.game.ai.Interceptor;
+import com.ghosthunt.game.ai.SoundField;
 import com.ghosthunt.game.ai.EscaperCost;
 import com.ghosthunt.game.ai.GridNav;
 import com.ghosthunt.game.ai.HideoutOdds;
@@ -43,6 +50,7 @@ import org.bukkit.inventory.meta.LeatherArmorMeta;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.util.Vector;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.HashMap;
@@ -111,6 +119,50 @@ final class AiGhost {
     private long patrolUntil;
     private final Map<Location, Long> badTargets = new HashMap<>();
 
+    // ---- 第三版第 2 批：區域圖、繞前堵、埋伏、守讀卡機、看時機關電源 ----
+    /** 區域圖（每個房間一區；相鄰 = 尋路圖上有一般的邊跨過去，不算蹲伏小洞、地洞）。 */
+    private Chokepoints regions;
+    /** 每區的出口：{區外那一格, 相鄰區, 區內那一格}。 */
+    private final Map<Integer, List<int[]>> regionExits = new HashMap<>();
+    /** 每區有哪些格子。 */
+    private final List<List<Integer>> roomCells = new ArrayList<>();
+    private record Sample(long tick, double x, double z) {}
+    private final ArrayDeque<Sample> seenHist = new ArrayDeque<>();
+    private UUID histId;
+    private boolean interceptThisChase;
+    private Location interceptAt;
+    private int interceptTarget = -1;
+    private long interceptPlanTick = -1_000_000;
+    private boolean wasCalm;
+    private Location ambushAt, ambushFace;
+    private long ambushArrive = -1, ambushGiveUp;
+    private Location readerTarget, readerSpot;
+    private long readerGuardStart = -1, readerCooldownUntil;
+    private int readerCycle;
+    private long cutCheckTick = -1_000_000;
+    private boolean cutWorth;
+    private String leverFieldKey = "";
+    private DistanceField leverField;
+    private int intercepts, interceptTries, interceptPredicted, ambushes, readerGuards, soundsHeard, soundsBlocked, peeks;
+
+    // ---- 第三版第 3 批：Utility、個性、學習、熱點、路線 ----
+    private GhostPersona persona = GhostPersona.STANDARD;
+    private String personaChosenBy = "預設";
+    private final boolean utility;
+    private final boolean learn, learnFromDummies;
+    private final double memoryDecay;
+    private AiMemory memory = new AiMemory();
+    private final String memoryName;
+    /** 追丟後等著判斷「被哪一招甩掉」：5 秒時看招式，30 秒還沒重新找到就記一筆。 */
+    private record PendingEscape(long lostTick, int lostNode, AiMemory.Trick[] trick) {}
+    private final Map<UUID, PendingEscape> pendingEscapes = new HashMap<>();
+    private long lastSmokeTick = -1_000_000, lastLureTick = -1_000_000;
+    private final Map<UUID, Integer> lastRegionSeen = new HashMap<>();
+    private double[] regionHeat;
+    private long regionHeatTick = -1_000_000;
+    private int patrolCount;
+    private final Map<AiMemory.Trick, Integer> learnedThisMatch = new EnumMap<>(AiMemory.Trick.class);
+
     // ---- 攻擊 ----
     private long windupStart = -1;
 
@@ -145,6 +197,206 @@ final class AiGhost {
         this.picker = new TargetPicker(0.6, 20, 6.0, 6.0);
         this.director = new SenseDirector(c.senseQuiet(), c.senseGap(), c.pressureLimit(), c.calmTime());
         this.stuck = new StuckTracker(Math.max(20, c.stuckTime()), 1.0);
+        var cfg = m.plugin.getConfig();
+        this.utility = !"rules".equalsIgnoreCase(cfg.getString("ai-ghost.brain", "utility"));
+        this.learn = cfg.getBoolean("ai-ghost.learn", true);
+        this.learnFromDummies = cfg.getBoolean("ai-ghost.learn-from-dummies", false);
+        this.memoryDecay = cfg.getDouble("ai-ghost.memory-decay", 0.85);
+        this.memoryName = m.b.mapName != null ? m.b.mapName : "building";
+        if (learn) memory = loadMemory();
+    }
+
+    // ---- 個性、記憶 ----
+
+    private java.io.File memoryFile() {
+        return new java.io.File(new java.io.File(m.plugin.getDataFolder(), "ai-memory"), memoryName + ".yml");
+    }
+
+    private AiMemory loadMemory() {
+        java.io.File f = memoryFile();
+        if (!f.exists()) return new AiMemory();
+        try {
+            var y = org.bukkit.configuration.file.YamlConfiguration.loadConfiguration(f);
+            return AiMemory.fromFlat(y.getValues(true));
+        } catch (RuntimeException e) {
+            m.plugin.getLogger().warning("[AI 鬼] 讀不到記憶 " + f + "：" + e.getMessage());
+            return new AiMemory();
+        }
+    }
+
+    private void saveMemory() {
+        java.io.File f = memoryFile();
+        try {
+            f.getParentFile().mkdirs();
+            var y = new org.bukkit.configuration.file.YamlConfiguration();
+            for (Map.Entry<String, Object> e : memory.toFlat().entrySet()) y.set(e.getKey(), e.getValue());
+            y.save(f);
+        } catch (java.io.IOException | RuntimeException e) {
+            m.plugin.getLogger().warning("[AI 鬼] 存不了記憶 " + f + "：" + e.getMessage());
+        }
+    }
+
+    /** 開局選個性：指定 hound／ambusher／watcher／standard；auto（或 null）= 用記憶裡的拉桿 Thompson sampling 選。 */
+    void usePersona(String arg) {
+        var cfg = m.plugin.getConfig();
+        String a = arg != null ? arg : cfg.getString("ai-ghost.persona", "auto");
+        Map<String, GhostPersona> all = GhostPersona.builtIn();
+        String id;
+        if (a.equalsIgnoreCase("standard")) {
+            persona = GhostPersona.STANDARD;
+            personaChosenBy = "指定";
+            return;
+        } else if (all.containsKey(a.toLowerCase())) {
+            id = a.toLowerCase();
+            personaChosenBy = "指定";
+        } else {
+            id = PersonaBandit.choose(memory.bandit, GhostPersona.arms(), m.rnd);
+            personaChosenBy = "自動";
+        }
+        GhostPersona p = all.get(id);
+        var sec = cfg.getConfigurationSection("ai-ghost.personas." + id);
+        if (sec != null) {
+            Map<String, Double> over = new HashMap<>();
+            for (String k : sec.getKeys(false)) if (sec.isDouble(k) || sec.isInt(k)) over.put(k, sec.getDouble(k));
+            p = p.with(over);
+        }
+        persona = p;
+    }
+
+    GhostPersona persona() {
+        return persona;
+    }
+
+    /** 學習的資料只用真人逃生者（假逃生者的習慣不算，除非 learn-from-dummies）。 */
+    private boolean learnable(LivingEntity e) {
+        return learn && (e instanceof Player || learnFromDummies);
+    }
+
+    private String regionKey(int r) {
+        Pos p = roomList.get(r).center();
+        return p.x() + "_" + p.y() + "_" + p.z();
+    }
+
+    /** 每一區的熱度（0～1，最熱的區是 1）；30 秒重算一次。 */
+    private double regionHeat(int r) {
+        if (!learn || roomCells.isEmpty() || r < 0) return 0;
+        if (regionHeat == null || m.tick - regionHeatTick > 600) {
+            regionHeatTick = m.tick;
+            regionHeat = new double[roomList.size()];
+            double max = 0;
+            for (int i = 0; i < roomCells.size(); i++) {
+                double sum = 0;
+                for (int cell : roomCells.get(i)) sum += memory.heat.at(nav.nav.x(cell), nav.nav.y(cell), nav.nav.z(cell));
+                regionHeat[i] = sum;
+                max = Math.max(max, sum);
+            }
+            if (max > 0) for (int i = 0; i < regionHeat.length; i++) regionHeat[i] /= max;
+        }
+        return r < regionHeat.length ? regionHeat[r] : 0;
+    }
+
+    private double learned(AiMemory.Trick t, double cap) {
+        return learn ? memory.bonus(t, cap) : 0;
+    }
+
+    /** 被煙霧彈打到（跟球車、手電筒分開：學「煙霧彈」這招用）。 */
+    void smoked(int ticks) {
+        lastSmokeTick = m.tick;
+        blind(ticks);
+        // 學會了：不在原地發呆，改去對方最可能跑去的地方（最後看到的位置沿逃跑方向 6 格）
+        if (learned(AiMemory.Trick.SMOKE, 1) >= 0.5 && lastSeen != null && lastDir != null) {
+            Location guess = snapWalkable(lastSeen.clone().add(lastDir.clone().multiply(6)), lastSeen);
+            if (guess != null) {
+                noise = guess;
+                noiseTick = m.tick;
+                noiseLevel = Match.NOISE_MID;
+            }
+        }
+    }
+
+    /** 追丟 5 秒後：看對方用了哪一招（暗格、地洞、蹲伏小洞、死路房間、煙霧彈、迎賓鈴）。 */
+    private AiMemory.Trick whichTrick(LivingEntity e, PendingEscape p) {
+        if (Math.abs(p.lostTick() - lastSmokeTick) <= 100) return AiMemory.Trick.SMOKE;
+        if (p.lostTick() - lastLureTick >= 0 && p.lostTick() - lastLureTick <= 200) return AiMemory.Trick.LURE;
+        Location l = e.getLocation();
+        for (Building.Room r : m.b.rooms) {
+            if (!r.hideout()) continue;
+            Location c0 = m.loc(r.center());
+            if (m.sameFloor(c0, l) && c0.distance(l) <= 2.5) return AiMemory.Trick.HIDEOUT;
+        }
+        for (Building.Hatch h : m.b.hatches) if (l.getY() < h.trapdoor().y() - 1.5) return AiMemory.Trick.HATCH;
+        int now = nav.nearest(l, 2.5);
+        if (now >= 0 && p.lostNode() >= 0) {
+            List<Integer> path = nav.nav.path(p.lostNode(), now, escaperCost());
+            for (int i = 1; i < path.size(); i++) {
+                int a0 = path.get(i - 1), b0 = path.get(i);
+                for (GridNav.Edge ed : nav.nav.edges(a0)) if (ed.to() == b0 && ed.kind() == GridNav.Kind.HOLE) return AiMemory.Trick.HOLE;
+            }
+            if (regions != null && nodeRoom[now] >= 0 && regions.deadEnd(nodeRoom[now])) return AiMemory.Trick.DEAD_END;
+        }
+        return null;
+    }
+
+    private void updateLearning() {
+        if (!learn || pendingEscapes.isEmpty()) return;
+        var it = pendingEscapes.entrySet().iterator();
+        while (it.hasNext()) {
+            var en = it.next();
+            PendingEscape p = en.getValue();
+            long age = m.tick - p.lostTick();
+            if (!lostAt.containsKey(en.getKey())) { // 重新找到了、被抓了、逃出去了：不算
+                it.remove();
+                continue;
+            }
+            if (age >= 100 && p.trick()[0] == null) {
+                LivingEntity e = byId(en.getKey());
+                if (e == null) {
+                    it.remove();
+                    continue;
+                }
+                AiMemory.Trick t = whichTrick(e, p);
+                if (t == null) {
+                    it.remove();
+                    continue;
+                }
+                p.trick()[0] = t;
+            }
+            if (age >= 600 && p.trick()[0] != null) {
+                AiMemory.Trick t = p.trick()[0];
+                boolean first = memory.escapes(t) < 0.5;
+                memory.escaped(t);
+                learnedThisMatch.merge(t, 1, Integer::sum);
+                if (first) {
+                    // 解鎖感：它好像學會了
+                    for (LivingEntity x : targets()) if (x instanceof Player pl)
+                        pl.sendActionBar(Component.text("你覺得那個東西好像記住了這一招……", NamedTextColor.DARK_PURPLE));
+                }
+                it.remove();
+            }
+        }
+    }
+
+    /** 看到人：熱點 +1（每秒一次），記下他從哪一區走到哪一區。 */
+    private void learnSighting(LivingEntity seen) {
+        if (!learnable(seen) || nav == null) return;
+        Location l = seen.getLocation();
+        if (m.tick % 20 == 0) memory.heat.see(l.getBlockX(), l.getBlockY(), l.getBlockZ(), 1);
+        if (nodeRoom == null) return;
+        int n = nav.nearest(l, 2.5);
+        int r = n < 0 ? -1 : nodeRoom[n];
+        if (r < 0) return;
+        Integer prev = lastRegionSeen.put(seen.getUniqueId(), r);
+        if (prev != null && prev != r) memory.routes.transition(regionKey(prev), regionKey(r));
+    }
+
+    /** 局末：更新個性拉桿（勢均力敵分數）、舊資料 ×memory-decay、存檔。 */
+    void endMatch(int realSurvivors, int escaped) {
+        if (!learn) return;
+        if (realSurvivors > 0 && persona != GhostPersona.STANDARD && personaChosenBy.equals("自動"))
+            PersonaBandit.update(memory.bandit, persona.id(),
+                    PersonaBandit.score(escaped / (double) realSurvivors, PersonaBandit.target(c.difficulty())));
+        memory.endMatch(memoryDecay);
+        saveMemory();
     }
 
     AiGhostSettings settings() {
@@ -257,25 +509,68 @@ final class AiGhost {
         by.sendActionBar(Component.text("照到鬼的臉了！它暫時看不到", NamedTextColor.YELLOW));
     }
 
-    /** 聽到聲音（Match.noise 已經判斷過同一層、距離）。低等級的聲音蓋不掉還記著的高等級聲音。 */
+    /** 全圖都聽得到的聲音（迎賓鈴）：不走路徑傳播，位置是「真實位置 ± noise-error」。 */
     void hearNoise(Location at, int level) {
+        if (mob == null) return;
+        lastLureTick = m.tick;
+        // 學會了「迎賓鈴引開」：有機率不理
+        if (m.rnd.nextDouble() < learned(AiMemory.Trick.LURE, 0.6)) return;
+        noticed(snapWalkable(jitter(at, c.noiseError()), at), level);
+    }
+
+    /**
+     * 沿路傳過來的聲音（做事聲、腳步、開關門、閥門）：聲音沿著可走的格子傳，關著的門 +4 格、蹲伏小洞 +2 格、地洞 +4 格，
+     * 傳到鬼的距離超過 range 就聽不到（不分樓層，樓梯照實際長度）。聽到的位置是傳播路徑上「離聲音 noise-error 格」那一格，
+     * 走過去會從聲音傳來的那個門口進去。
+     */
+    void hearSound(Location at, int level, double range) {
+        if (mob == null || !mob.getWorld().equals(at.getWorld())) return;
+        Location here = mob.getLocation();
+        if (at.distance(here) > range) return; // 直線都超過了，路徑一定更長
+        int src = nav == null ? -1 : nav.nearest(at, 3);
+        int me = nav == null ? -1 : nav.nearest(here, 2.5);
+        if (me < 0 && nav != null) me = nav.nearest(here, 6);
+        if (src < 0 || me < 0) {
+            // 尋路圖上找不到（還沒建好、聲源在圖外）：照舊（同一層、直線距離）
+            if (m.sameFloor(at, here)) noticed(snapWalkable(jitter(at, c.noiseError()), at), level);
+            return;
+        }
+        SoundField.Heard h = SoundField.hear(nav.nav, src, me, range, soundPenalty(), 2, c.noiseError());
+        if (h == null) {
+            soundsBlocked++;
+            return;
+        }
+        soundsHeard++;
+        noticed(nav.loc(h.pointNode()), level);
+    }
+
+    /** 聲音傳播的額外距離（每條邊）：關著的門進出各 +2、蹲伏小洞各 +1、地洞各 +2。 */
+    private GridNav.Cost soundPenalty() {
+        return e -> switch (e.kind()) {
+            case WALK, STAIR, BARRICADE -> 0;
+            case DOOR -> doorClosed(e.ref()) ? 2 : 0;
+            case HOLE -> 1;
+            case HATCH -> 2;
+        };
+    }
+
+    private void noticed(Location heard, int level) {
+        if (heard == null) return;
         lastQuietBreakTick = m.tick;
-        Location heard = jitter(at, c.noiseError());
         for (ParticleTracker t : trackers.values()) t.weightNear(heard.getX(), heard.getY(), heard.getZ(), 2);
         if (sensedTracker != null) sensedTracker.weightNear(heard.getX(), heard.getY(), heard.getZ(), 2);
         if (noise != null && m.tick - noiseTick <= c.searchTime() && level < noiseLevel) return;
-        noise = snapWalkable(jitter(at, c.noiseError()), at);
+        noise = heard;
         noiseTick = m.tick;
         noiseLevel = level;
         director.contact(m.tick);
         contactStat();
-        if (rooms != null) rooms.noise(roomAt(at), 60);
+        if (rooms != null) rooms.noise(roomAt(heard), 60);
     }
 
-    /** 開關門的聲音（GameListener）：hear-door 格內聽得到。 */
+    /** 開關門的聲音（GameListener）：hear-door 格內、沿路傳得到才聽得到。 */
     void hearDoor(Location at) {
-        if (mob == null || !mob.getWorld().equals(at.getWorld()) || at.distance(mob.getLocation()) > c.hearDoor()) return;
-        hearNoise(at, Match.NOISE_MID);
+        hearSound(at, Match.NOISE_MID, c.hearDoor());
     }
 
     /** 某個逃生者被抓、淘汰、逃出、離線：忘掉跟他有關的記憶（不然會在抓人的空地搜 10 秒、追不存在的人）。 */
@@ -354,6 +649,7 @@ final class AiGhost {
     private int losses, reacquire30, thinkCount;
     private DistanceField goalField;
     private String goalFieldKey = "";
+    private List<Integer> goalSources = List.of();
     /** 真的看到人的最後時間、位置（粒子搜尋會改 lastSeen，證據要用真的）。 */
     private long trueSeenTick = -1_000_000;
     private Location trueSeenLoc;
@@ -411,7 +707,7 @@ final class AiGhost {
     private ParticleTracker newTracker() {
         return new ParticleTracker(nav.nav, escaperCost(),
                 new ParticleTracker.Config(c.particles(), c.escaperSpeed(), c.particleFlee(), c.particleGoal(), c.particleSigma(),
-                        c.particleMin(), c.particleMaxAge()), m.rnd);
+                        c.particleMin(), Math.round(c.particleMaxAge() * persona.particleAgeMul())), m.rnd);
     }
 
     /** 逃生者在尋路圖上的成本：小洞正常走、放了障礙物的門口過不去、卡住的門自己拆得開。 */
@@ -465,6 +761,7 @@ final class AiGhost {
         }
         src.removeIf(i -> i < 0);
         goalFieldKey = key;
+        goalSources = src;
         goalField = src.isEmpty() ? null : timedField(escaperCost(), c.escaperSpeed(), src.stream().mapToInt(Integer::intValue).toArray());
         return goalField;
     }
@@ -556,6 +853,7 @@ final class AiGhost {
             infos.add(new RoomScores.RoomInfo(infos.size(), l.getX(), l.getY(), l.getZ(), r.floor()));
         }
         rooms = new RoomScores(infos, 1.0, 300);
+        buildRegions();
         if (!mob.getLocation().getBlock().isPassable()) {
             int id = nav.nearest(mob.getLocation(), 4);
             if (id >= 0) mob.teleport(nav.loc(id));
@@ -570,6 +868,326 @@ final class AiGhost {
             m.plugin.getLogger().info("[AI 鬼] 可見性表：" + grid.size() + " 格（" + (System.nanoTime() - v0) / 1_000_000 + " ms，約 "
                     + t.approxBytes() / 1024 + " KB）");
         });
+    }
+
+    /** 區域圖：每一格屬於哪個房間、房間之間怎麼連（割點、介數中心性、死路）。 */
+    private void buildRegions() {
+        long t0 = System.nanoTime();
+        nodeRoom = new int[nav.nav.size()];
+        for (int i = 0; i < roomList.size(); i++) roomCells.add(new ArrayList<>());
+        for (int i = 0; i < nodeRoom.length; i++) {
+            nodeRoom[i] = nav.isMain(i) ? roomAt(nav.loc(i)) : -1;
+            if (nodeRoom[i] >= 0) roomCells.get(nodeRoom[i]).add(i);
+        }
+        List<int[]> edges = new ArrayList<>();
+        for (int i = 0; i < nodeRoom.length; i++) {
+            int a = nodeRoom[i];
+            if (a < 0) continue;
+            for (GridNav.Edge e : nav.nav.edges(i)) {
+                if (e.kind() == GridNav.Kind.HOLE || e.kind() == GridNav.Kind.HATCH) continue;
+                int b = nodeRoom[e.to()];
+                if (b < 0 || b == a) continue;
+                edges.add(new int[]{a, b});
+                // 同一個相鄰區、4 格內已經有出口的就不重複記
+                List<int[]> ex = regionExits.computeIfAbsent(a, k -> new ArrayList<>());
+                boolean dup = false;
+                for (int[] o : ex) {
+                    if (o[1] == b && nav.loc(o[0]).distance(nav.loc(e.to())) < 4) {
+                        dup = true;
+                        break;
+                    }
+                }
+                if (!dup) ex.add(new int[]{e.to(), b, i});
+            }
+        }
+        regions = new Chokepoints(roomList.size(), edges);
+        int dead = 0, art = 0;
+        for (int r = 0; r < roomList.size(); r++) {
+            if (regions.deadEnd(r)) dead++;
+            if (regions.isArticulation(r)) art++;
+        }
+        m.plugin.getLogger().info("[AI 鬼] 區域圖：" + roomList.size() + " 區、死路 " + dead + "、割點 " + art + "（"
+                + (System.nanoTime() - t0) / 1_000_000 + " ms）");
+    }
+
+    private boolean chokeRoom(int r) {
+        return regions != null && (regions.isArticulation(r) || regions.betweenness(r) >= 0.5);
+    }
+
+    /** 這一區有沒有「有人在裡面」的證據：最近的聲音、剛看到的位置、粒子 20% 以上。 */
+    private boolean roomEvidence(int r) {
+        if (r < 0) return false;
+        if (noise != null && m.tick - noiseTick <= 600 && roomAt(noise) == r) return true;
+        if (lastSeen != null && m.tick - lastSeenTick <= 600 && lastSeen.getWorld().equals(mob.getWorld()) && roomAt(lastSeen) == r) return true;
+        if (r < roomCells.size()) {
+            List<Integer> cells = roomCells.get(r);
+            for (ParticleTracker t : trackers.values()) if (t.shareWithin(cells) >= 0.2) return true;
+            if (sensedTracker != null && sensedTracker.shareWithin(cells) >= 0.2) return true;
+        }
+        return false;
+    }
+
+    private boolean visFrom(int from, int cell) {
+        if (vis == null || from < 0 || cell < 0 || !vis.known(from, cell)) return false;
+        return vis.visible(from, cell, this::doorClosed, i -> m.barricadeIndexBarricaded(i));
+    }
+
+    // ---- 繞前堵 ----
+
+    /** 追人時：猜對方要往哪個出口跑，鬼會先到的話去那裡堵；沒有回傳 null（照舊直追）。每秒重算一次。 */
+    private Location interceptPoint(LivingEntity seen) {
+        if (!interceptThisChase || nav == null || regions == null || seen == null) return null;
+        Location here = mob.getLocation(), s = seen.getLocation();
+        if (!s.getWorld().equals(here.getWorld()) || s.distance(here) <= 4) {
+            interceptAt = null;
+            return null;
+        }
+        if (interceptAt != null && interceptAt.distance(here) < 1.5) {
+            interceptAt = null; // 堵到了：直追
+            interceptTarget = -1;
+            interceptPlanTick = m.tick;
+            return null;
+        }
+        if (m.tick - interceptPlanTick < 20) return interceptAt;
+        interceptPlanTick = m.tick;
+        Sample old = null;
+        for (Sample sm : seenHist) if (m.tick - sm.tick() >= 15) old = sm;
+        int sn = nav.nearest(s, 2.5);
+        int r = sn < 0 ? -1 : nodeRoom[sn];
+        if (old == null || r < 0) {
+            interceptAt = null;
+            return null;
+        }
+        interceptTries++;
+        double secs = (m.tick - old.tick()) / 20.0;
+        double vx = (s.getX() - old.x()) / secs, vz = (s.getZ() - old.z()) / secs;
+        List<Integer> nodes = new ArrayList<>();
+        for (int[] ex : regionExits.getOrDefault(r, List.of())) nodes.add(ex[0]);
+        goalField();
+        for (int g : goalSources) if (nav.loc(g).distance(s) < 40) nodes.add(g);
+        if (nodes.isEmpty()) {
+            interceptAt = null;
+            return null;
+        }
+        double[][] cand = new double[nodes.size()][];
+        for (int i = 0; i < nodes.size(); i++) {
+            Location l = nav.loc(nodes.get(i));
+            double before = Math.hypot(l.getX() - old.x(), l.getZ() - old.z()), now = Math.hypot(l.getX() - s.getX(), l.getZ() - s.getZ());
+            cand[i] = new double[]{l.getX(), l.getZ(), (before - now) / secs / c.escaperSpeed()};
+        }
+        double[] p = Interceptor.targetProbabilities(s.getX(), s.getZ(), vx, vz, cand, 0.35);
+        // 第三版第 22 項：以前看過「從這區出去常往哪裡走」當先驗（只看出口；沒資料時每個出口一樣）
+        if (learn) {
+            List<String> opts = new ArrayList<>();
+            for (int node : nodes) opts.add(nodeRoom[node] >= 0 && nodeRoom[node] != r ? regionKey(nodeRoom[node]) : "goal");
+            double sum = 0;
+            for (int i = 0; i < p.length; i++) {
+                p[i] *= opts.get(i).equals("goal") ? 1.0 / opts.size() : memory.routes.probability(regionKey(r), opts.get(i), opts);
+                sum += p[i];
+            }
+            if (sum > 0) for (int i = 0; i < p.length; i++) p[i] /= sum;
+        }
+        int best = 0;
+        for (int i = 1; i < p.length; i++) if (p[i] > p[best]) best = i;
+        int keep = nodes.indexOf(interceptTarget);
+        int pick;
+        if (p[best] > 0.5) pick = best;
+        else if (keep >= 0 && p[keep] >= 0.3) pick = keep; // 對方還大致往同一個方向：繼續堵
+        else {
+            interceptAt = null;
+            interceptTarget = -1;
+            return null;
+        }
+        int target = nodes.get(pick);
+        interceptPredicted++;
+        List<Integer> path = timedPath(sn, target, escaperCost());
+        int gnode = nav.nearest(here, 2.5);
+        if (gnode < 0) gnode = nav.nearest(here, 6);
+        if (path.isEmpty() || gnode < 0) {
+            interceptAt = null;
+            return null;
+        }
+        DistanceField gf = timedField(costFor(Mode.CHASE), 5.3 * c.chaseSpeed(), gnode);
+        DistanceField ef = timedField(escaperCost(), c.escaperSpeed(), sn);
+        int v = Interceptor.interceptNode(path, gf, ef, 0.5);
+        Location at = v < 0 ? null : nav.loc(v);
+        if (at == null || at.distance(s) < 2) {
+            interceptAt = null;
+            return null;
+        }
+        if (interceptTarget != target || interceptAt == null) intercepts++;
+        interceptTarget = target;
+        interceptAt = at;
+        return at;
+    }
+
+    /** 發現人時的吼聲（每種個性不一樣：逃生者可以猜今天是哪一種）。 */
+    private String growl() {
+        return "minecraft:" + persona.growl().toLowerCase().replace('_', '.');
+    }
+
+    private void recordSeen(LivingEntity seen) {
+        if (!seen.getUniqueId().equals(histId)) {
+            seenHist.clear();
+            histId = seen.getUniqueId();
+        }
+        Location l = seen.getLocation();
+        seenHist.addLast(new Sample(m.tick, l.getX(), l.getZ()));
+        while (!seenHist.isEmpty() && m.tick - seenHist.peekFirst().tick() > 40) seenHist.pollFirst();
+    }
+
+    // ---- 退場埋伏 ----
+
+    /** 冷靜期一開始：照逃生者最後的位置和下一個目標，選一個他們會經過、又看不到鬼的地方等。 */
+    private void planAmbush() {
+        if (c.ambushTime() <= 0 || nav == null || regions == null || vis == null) return;
+        // 從哪裡來：最後看到的位置 → 追蹤粒子 → 最後一次真的看到人的地方（剛抓到人時，其他人通常在附近）
+        Location fromLoc = lastSeen;
+        if (fromLoc == null) for (UUID id : trackers.keySet()) if ((fromLoc = knownPosition(id)) != null) break;
+        if (fromLoc == null) fromLoc = trueSeenLoc;
+        if (fromLoc == null || !fromLoc.getWorld().equals(mob.getWorld())) return;
+        int from = nav.nearest(fromLoc, 2.5);
+        if (from < 0) return;
+        goalField();
+        List<Integer> path = List.of();
+        for (int g : goalSources) {
+            List<Integer> p = timedPath(from, g, escaperCost());
+            if (!p.isEmpty() && (path.isEmpty() || p.size() < path.size())) path = p;
+        }
+        if (path.size() < 12) return; // 離目標太近：來不及繞過去
+        // 路上的區域交界：優先選咽喉區的入口，至少離起點 10 格
+        int door = -1, fallback = -1;
+        for (int i = 10; i < path.size(); i++) {
+            int a = nodeRoom[path.get(i - 1)], b = nodeRoom[path.get(i)];
+            if (a < 0 || b < 0 || a == b) continue;
+            if (fallback < 0) fallback = i;
+            if (chokeRoom(b) || chokeRoom(a)) {
+                door = i;
+                break;
+            }
+        }
+        if (door < 0) door = fallback >= 0 ? fallback : Math.min(path.size() - 1, 15);
+        int doorNode = path.get(door);
+        int approach = path.get(Math.max(0, door - 6));
+        Set<Integer> onPath = new HashSet<>(path);
+        Location dl = nav.loc(doorNode);
+        int region = nodeRoom[doorNode];
+        if (region < 0) return;
+        int bestCell = -1;
+        double bestScore = Double.MAX_VALUE;
+        for (int cell : roomCells.get(region)) {
+            Location l = nav.loc(cell);
+            double d = l.distance(dl);
+            if (d < 1.5 || d > 5 || onPath.contains(cell)) continue;
+            if (visFrom(approach, cell) || visFrom(from, cell)) continue; // 走過來的人、最後看到人的地方都看不到
+            // 靠牆（周圍可走的格子少）的優先
+            double score = d + nav.nav.edges(cell).size() * 0.3;
+            if (score < bestScore) {
+                bestScore = score;
+                bestCell = cell;
+            }
+        }
+        if (bestCell < 0) return;
+        ambushAt = nav.loc(bestCell);
+        ambushFace = dl;
+        ambushArrive = -1;
+        ambushGiveUp = m.tick + 30 * 20 + ambushTicks();
+        ambushes++;
+    }
+
+    private void endAmbush() {
+        ambushAt = null;
+        ambushFace = null;
+        ambushArrive = -1;
+    }
+
+    private void updateAmbush() {
+        boolean calm = director.calm(m.tick);
+        if (calm && !wasCalm) planAmbush();
+        wasCalm = calm;
+        if (ambushAt != null && (m.tick > ambushGiveUp || (ambushArrive >= 0 && m.tick - ambushArrive > ambushTicks()))) endAmbush();
+    }
+
+    private long ambushTicks() {
+        return Math.round(c.ambushTime() * persona.ambushTimeMul());
+    }
+
+    // ---- 守讀卡機 ----
+
+    /** 有人授權了：輪流守還沒開的大門的讀卡機，每次最多 guard-reader-cap 秒，之後走開一半的時間再回來。 */
+    private Location readerWatch() {
+        if (c.guardReaderCap() <= 0 || m.obj.authorized.isEmpty()) {
+            readerGuardStart = -1;
+            return null;
+        }
+        List<Location> readers = new ArrayList<>();
+        for (Objectives.GateState gs : m.obj.gates) if (!gs.opened) readers.add(m.loc(gs.g.reader()).add(0.5, 0.5, 0.5));
+        if (readers.isEmpty() || m.tick < readerCooldownUntil) return null;
+        if (readerGuardStart < 0) {
+            readerGuardStart = m.tick;
+            readerTarget = readers.get(readerCycle++ % readers.size());
+            readerSpot = pickWatchSpot(readerTarget, 3, 9, 0);
+            if (readerSpot == null) readerSpot = snapWalkable(readerTarget.clone().add(0, -1, 0), null);
+            readerGuards++;
+        }
+        if (m.tick - readerGuardStart > c.guardReaderCap() || readerSpot == null) {
+            readerGuardStart = -1;
+            readerCooldownUntil = m.tick + c.guardReaderCap() / 2;
+            readerSpot = null;
+            return null;
+        }
+        return readerSpot;
+    }
+
+    private void guardReader(Location spot) {
+        if (spot.distance(mob.getLocation()) > 1.5) navigate(spot, Mode.CALM);
+        else {
+            stopMoving();
+            if (readerTarget != null) face(readerTarget);
+        }
+    }
+
+    private void face(Location at) {
+        Vector v = at.toVector().subtract(mob.getLocation().toVector());
+        mob.setRotation((float) Math.toDegrees(Math.atan2(-v.getX(), v.getZ())), 0);
+    }
+
+    // ---- 看時機關電源 ----
+
+    /** 關掉的價值夠高才去：他們走回電源的平均秒數 − 鬼走過去的秒數 ≥ cut-power-advantage；開了 cut-power-max-wait 秒就不管了。 */
+    private boolean cutPowerWorth() {
+        if (m.tick - m.obj.powerOnTick() >= c.cutPowerMaxWait()) return true;
+        if (m.tick - cutCheckTick < 40) return cutWorth;
+        cutCheckTick = m.tick;
+        Location lever = m.obj.leverLocation();
+        if (lever == null || nav == null) return cutWorth = true;
+        Location stand = lever.clone().add(0, -1, 0);
+        int ln = nav.nearest(stand, 2.5);
+        if (ln < 0) return cutWorth = true;
+        String key = ln + ":" + m.mapVersion;
+        if (!key.equals(leverFieldKey)) {
+            leverFieldKey = key;
+            leverField = timedField(escaperCost(), c.escaperSpeed(), ln);
+        }
+        List<LivingEntity> ts = targets();
+        double[] secs = new double[ts.size()];
+        for (int i = 0; i < ts.size(); i++) {
+            Location known = knownPosition(ts.get(i).getUniqueId());
+            int n = known == null ? -1 : nav.nearest(known, 3);
+            secs[i] = n < 0 ? Double.POSITIVE_INFINITY : leverField.seconds(n);
+        }
+        return cutWorth = AbilityTiming.shouldCutPower(secs, travelSeconds(stand), c.cutPowerAdvantage());
+    }
+
+    /** 鬼知道的某人位置：30 秒內看到的位置，或追蹤粒子最密的地方；不知道回傳 null。 */
+    private Location knownPosition(UUID id) {
+        if (id.equals(lastSeenId) && lastSeen != null && m.tick - lastSeenTick <= 600) return lastSeen;
+        ParticleTracker t = trackers.get(id);
+        if (t != null && t.alive() > 0) {
+            int[] pos = t.positions();
+            return nav.loc(pos[pos.length / 2]);
+        }
+        return null;
     }
 
     private void think(boolean busy) {
@@ -591,8 +1209,15 @@ final class AiGhost {
         if (thinkCount % Math.max(1, 20 / c.thinkEvery()) == 0) lookForTraces();
         if (director.shouldSense(m.tick)) sense();
         if (sensed != null && m.tick > sensedUntil) sensed = null;
+        updateAmbush();
         Goal prev = goal;
-        goal = brain.decide(situation(seen));
+        GhostBrain.Situation sit = situation(seen);
+        goal = utility ? brain.decideUtility(sit, persona.weights(), "hard".equals(c.difficulty())) : brain.decide(sit);
+        updateLearning();
+        switch (goal.kind()) {
+            case ATTACK, CHASE, SEARCH_LAST_SEEN, INVESTIGATE_NOISE, GO_SENSED -> endAmbush(); // 聽到聲音、看到人就結束埋伏
+            default -> {}
+        }
         if (goal.kind() != Kind.SEARCH_LAST_SEEN || prev == null || prev.kind() != Kind.SEARCH_LAST_SEEN) {
             if (goal.kind() != Kind.SEARCH_LAST_SEEN) {
                 searchTunnelDone = searchHideoutDone = searchExtendDone = false;
@@ -670,6 +1295,8 @@ final class AiGhost {
             Long lost = lostAt.remove(seen.getUniqueId());
             if (lost != null && m.tick - lost <= 600) reacquire30++;
             chaseSeenTick = m.tick;
+            recordSeen(seen);
+            learnSighting(seen);
             Location now = seen.getLocation();
             if (prevSeenLoc != null && prevSeenLoc.getWorld().equals(now.getWorld()) && prevSeenLoc.distance(now) > 0.2)
                 lastDir = now.toVector().subtract(prevSeenLoc.toVector()).setY(0).normalize();
@@ -682,8 +1309,11 @@ final class AiGhost {
             contactStat();
             if (m.tick - lastChaseTick > 100) {
                 chases++;
+                interceptThisChase = c.interceptChance() > 0 && (persona.interceptAlways() || m.rnd.nextDouble() < c.interceptChance());
+                interceptAt = null;
+                interceptTarget = -1;
                 // 發現人：短促的低吼，讓逃生者知道「被看到了」
-                mob.getWorld().playSound(mob.getLocation(), Sound.ENTITY_WARDEN_AGITATED, 1.2f, 1.4f);
+                mob.getWorld().playSound(mob.getLocation(), growl(), 1.2f, 1.4f);
             }
             lastChaseTick = m.tick;
         } else if (chaseId != null) {
@@ -703,6 +1333,9 @@ final class AiGhost {
             lostHandledId = lastSeenId;
             losses++;
             lostAt.put(lastSeenId, m.tick);
+            LivingEntity lostOne = byId(lastSeenId);
+            if (lostOne != null && learnable(lostOne))
+                pendingEscapes.put(lastSeenId, new PendingEscape(m.tick, nav.nearest(lastSeen, 2.5), new AiMemory.Trick[1]));
         }
         return seen;
     }
@@ -723,7 +1356,8 @@ final class AiGhost {
                 sprint = m.dummies.running(e);
             }
             if (!moving) continue;
-            if (d <= (sprint ? c.hearSprint() : c.hearWalk())) hearNoise(e.getLocation(), Match.NOISE_LOW);
+            double range = sprint ? c.hearSprint() : c.hearWalk();
+            if (d <= range) hearSound(e.getLocation(), Match.NOISE_LOW, range);
         }
     }
 
@@ -791,17 +1425,19 @@ final class AiGhost {
         int jailed = 0;
         for (Match.Survivor sv : m.survivors.values()) if (sv.status == Match.Status.JAILED) jailed++;
         if (jailed > jailedBefore) {
-            guard = m.rnd.nextDouble() < c.guardJailChance();
+            guard = m.rnd.nextDouble() < c.guardJailChance() + persona.guardJailChanceAdd();
             guardUntil = m.tick + c.guardCap();
         }
         if (jailed == 0 || m.tick > guardUntil) guard = false;
         jailedBefore = jailed;
         Location jail = m.obj.jailNearestTo(mob.getLocation());
         // 電源剛開不要馬上衝去關（像被遙控）：開了 power-cut-delay 秒以後才算
-        boolean powerOn = m.obj.powerOn() && m.tick - m.obj.powerOnTick() >= c.powerCutDelay();
+        // 第三版：而且要「關掉以後他們要花很久才修得回來」（看時機）
+        boolean powerOn = m.obj.powerOn() && m.tick - m.obj.powerOnTick() >= c.powerCutDelay()
+                && !m.obj.cutPowerUsed() && cutPowerWorth();
         return new GhostBrain.Situation(m.tick, m.tick < blindUntil, s, pt(lastSeen), lastSeenTick, pt(noise), noiseTick, pt(sensed),
                 m.obj.cardRevealOpen(), m.obj.cardMoveAvailable(), powerOn, m.obj.cutPowerUsed(), gates,
-                guard && jailed > 0, pt(jail), pt(mob.getLocation()));
+                guard && jailed > 0, pt(jail), pt(mob.getLocation()), pt(ambushAt), pt(readerWatch()));
     }
 
     // =====================================================================
@@ -866,7 +1502,8 @@ final class AiGhost {
         switch (g.kind()) {
             case ATTACK, CHASE -> {
                 lookStep = -1;
-                navigate(seen.getLocation(), mode);
+                Location cut = g.kind() == Kind.CHASE ? interceptPoint(seen) : null;
+                navigate(cut != null ? cut : seen.getLocation(), mode);
             }
             case SEARCH_LAST_SEEN -> search(here);
             case INVESTIGATE_NOISE -> {
@@ -912,6 +1549,17 @@ final class AiGhost {
                 } else navigate(stand, mode);
             }
             case GUARD_JAIL -> guardJail(toLoc(g.target()));
+            case GUARD_READER -> guardReader(toLoc(g.target()));
+            case AMBUSH -> {
+                Location at = toLoc(g.target());
+                if (at.distance(here) > 1.2) navigate(at, Mode.CALM);
+                else {
+                    // 站著不動（沒有腳步聲）、面向來路
+                    stopMoving();
+                    if (ambushArrive < 0) ambushArrive = m.tick;
+                    if (ambushFace != null) face(ambushFace);
+                }
+            }
             case PATROL -> patrol();
         }
     }
@@ -944,7 +1592,7 @@ final class AiGhost {
                 Location otherTop = m.loc(m.b.hatches.get(other).trapdoor()).add(0, 1, 0);
                 ParticleTracker trk = lastSeenId == null ? null : trackers.get(lastSeenId);
                 double share = trk == null ? 0 : trk.shareNear(otherTop.getX(), otherTop.getY(), otherTop.getZ(), 3);
-                double p = HideoutOdds.chance(c.followTunnelChance(), trueSeenLoc == null ? 99 : t.distance(trueSeenLoc),
+                double p = HideoutOdds.chance(Math.min(0.95, c.followTunnelChance() + learned(AiMemory.Trick.HATCH, 0.4)), trueSeenLoc == null ? 99 : t.distance(trueSeenLoc),
                         (m.tick - trueSeenTick) / 20.0, SearchRules.quietSince(lastQuietBreakTick, trueSeenTick), share, 0);
                 if (m.rnd.nextDouble() >= p) break;
                 knownHatches.add(i);
@@ -958,7 +1606,8 @@ final class AiGhost {
         // ② 附近有暗格：這次搜尋只擲一次骰子，中了就查最近的一個
         if (!searchHideoutDone) {
             searchHideoutDone = true;
-            if (hideoutCheck(trueSeenLoc != null ? trueSeenLoc : lastSeen, trueSeenTick, c.checkHideoutChance())) {
+            if (hideoutCheck(trueSeenLoc != null ? trueSeenLoc : lastSeen, trueSeenTick,
+                    Math.min(0.95, c.checkHideoutChance() + learned(AiMemory.Trick.HIDEOUT, 0.35)))) {
                 extendSearch();
                 return;
             }
@@ -1084,7 +1733,7 @@ final class AiGhost {
                 watchSpot = snapWalkable(jitter(jail, m.s.campRadius() + 12), jail);
                 watchUntil = m.tick + 300 + m.rnd.nextInt(100);
             } else {
-                watchSpot = pickWatchSpot(jail);
+                watchSpot = pickWatchSpot(jail, m.s.campRadius() + 1, m.s.campRadius() + 6, 3.3);
                 watchUntil = m.tick + 300;
             }
         }
@@ -1095,14 +1744,13 @@ final class AiGhost {
         if (watchSpot.distance(mob.getLocation()) > 1.5) navigate(watchSpot, Mode.CALM);
         else {
             stopMoving();
-            Vector v = jail.toVector().subtract(mob.getLocation().toVector());
-            mob.setRotation((float) Math.toDegrees(Math.atan2(-v.getX(), v.getZ())), 0);
+            face(jail);
         }
     }
 
-    private Location pickWatchSpot(Location jail) {
+    /** 守望點：同一層、離 target min～max 格、眼睛看得到 target（高度 +targetHeight）的格子，隨機挑一個。 */
+    private Location pickWatchSpot(Location jail, double min, double max, double targetHeight) {
         if (nav == null) return null;
-        double min = m.s.campRadius() + 1, max = m.s.campRadius() + 6;
         List<Location> cands = new ArrayList<>();
         for (int i = 0; i < nav.nav.size(); i++) {
             if (!nav.isMain(i)) continue;
@@ -1110,7 +1758,7 @@ final class AiGhost {
             if (!m.sameFloor(l, jail)) continue;
             double d = l.distance(jail);
             if (d < min || d > max) continue;
-            Location eye = l.clone().add(0, 1.6, 0), cage = jail.clone().add(0, 3.3, 0);
+            Location eye = l.clone().add(0, 1.6, 0), cage = jail.clone().add(0, targetHeight, 0);
             Vector dir = cage.toVector().subtract(eye.toVector());
             var hit = eye.getWorld().rayTraceBlocks(eye, dir.clone().normalize(), dir.length(), FluidCollisionMode.NEVER, true);
             if (hit == null || hit.getHitBlock() == null) cands.add(l);
@@ -1136,6 +1784,10 @@ final class AiGhost {
         if (lookStep >= 0) return;
         int cur = roomAt(here);
         boolean calm = director.calm(m.tick);
+        boolean firstPatrol = patrolCount++ == 0;
+        double hatchRoomBonus = learned(AiMemory.Trick.HATCH, 0.4);
+        Set<Integer> hatchRooms = new HashSet<>();
+        if (hatchRoomBonus > 0) for (Building.Hatch h : m.b.hatches) hatchRooms.add(roomAt(m.loc(h.trapdoor()).add(0, 1, 0)));
         Location contact = lastSeen;
         boolean powerOn = m.obj.powerOn();
         boolean anyAuthorized = !m.obj.authorized.isEmpty();
@@ -1148,6 +1800,16 @@ final class AiGhost {
             // 冷靜期：偏向離最後接觸的地方遠一點
             if (calm && contact != null && contact.getWorld().equals(here.getWorld()))
                 w *= Math.min(3, 0.3 + m.loc(room.center()).distance(contact) / 20.0);
+            // 第三版：死路房間沒有證據 ×0.3（只在門口看一眼）；咽喉區 ×1.5
+            if (regions != null) {
+                // 學會「躲死路房間」：0.3 慢慢回到 1
+                if (regions.deadEnd(r.id()) && !roomEvidence(r.id())) w *= 0.3 + 0.7 * learned(AiMemory.Trick.DEAD_END, 1);
+                else if (chokeRoom(r.id())) w *= 1.5 * persona.chokePatrolMul();
+            }
+            // 熱點：常看到人的區 ×（1 ＋ 熱度）；開局第一個巡邏目標更偏向最熱的區
+            w *= 1 + regionHeat(r.id()) * (firstPatrol ? 3 : 1);
+            // 學會「鑽地洞」：有地洞出入口的區常去看
+            if (hatchRoomBonus > 0 && hatchRooms.contains(r.id())) w *= 1 + hatchRoomBonus;
             Location l = m.loc(room.center());
             for (Map.Entry<Location, Long> b : badTargets.entrySet())
                 if (b.getValue() > m.tick && b.getKey().getWorld().equals(l.getWorld()) && b.getKey().distance(l) < 4) w = 0;
@@ -1156,6 +1818,22 @@ final class AiGhost {
         if (pick < 0) return;
         patrolRoom = pick;
         patrolTarget = snapWalkable(m.loc(roomList.get(pick).center()), null);
+        if (regions != null && regions.deadEnd(pick) && !roomEvidence(pick) && learned(AiMemory.Trick.DEAD_END, 1) < 0.5) {
+            // 死路房間：走到入口往裡面看（不進去，被看到就跑不掉的地方留給有證據的時候）
+            int[] best = null;
+            double bd = Double.MAX_VALUE;
+            for (int[] ex : regionExits.getOrDefault(pick, List.of())) {
+                double d = nav.loc(ex[2]).distance(here);
+                if (d < bd) {
+                    bd = d;
+                    best = ex;
+                }
+            }
+            if (best != null) {
+                patrolTarget = nav.loc(best[2]);
+                peeks++;
+            }
+        }
         patrolUntil = m.tick + 30 * 20;
         if (patrolTarget != null) navigate(patrolTarget, Mode.CALM);
     }
@@ -1202,7 +1880,8 @@ final class AiGhost {
             case DOOR -> m.isDoorJammed(nav.doors.get(e.ref())) ? m.o.breakJam() / 20.0 * bps / 2 : 0.15;
             case BARRICADE -> m.barricadeIndexBarricaded(e.ref()) ? m.s.breakBarricade() / 20.0 * bps / 2 : 0;
             case HOLE -> m.isHoleWidened(e.ref()) ? 0
-                    : mode == Mode.CALM ? Double.POSITIVE_INFINITY : m.o.widenHole() / 20.0 * bps / 2;
+                    : mode == Mode.CALM ? Double.POSITIVE_INFINITY
+                    : m.o.widenHole() / 20.0 * bps / 2 * (1 - learned(AiMemory.Trick.HOLE, 0.4)); // 學會了：更早決定打大洞口
             case HATCH -> {
                 if (mode == Mode.CALM) yield Double.POSITIVE_INFINITY;
                 int other = e.ref() ^ 1;
@@ -1630,7 +2309,7 @@ final class AiGhost {
             Block below = here.clone().add(0, -0.2, 0).getBlock();
             Sound step = below.getBlockData().getSoundGroup().getStepSound();
             boolean chasing = goal != null && (goal.kind() == Kind.CHASE || goal.kind() == Kind.ATTACK);
-            mob.getWorld().playSound(here, step, chasing ? 1.0f : 0.55f, chasing ? 0.9f : 0.75f);
+            mob.getWorld().playSound(here, step, chasing ? 1.0f : 0.55f, (chasing ? 0.9f : 0.75f) * persona.stepPitch());
         }
         lastStepLoc = here;
     }
@@ -1668,6 +2347,14 @@ final class AiGhost {
 
     // ---- 除錯、統計 ----
 
+    private String topScores() {
+        StringBuilder sb = new StringBuilder();
+        List<GhostBrain.Scored> sc = brain.lastScores();
+        for (int i = 0; i < Math.min(3, sc.size()); i++)
+            sb.append(i == 0 ? "｜" : " ").append(sc.get(i).kind().name().toLowerCase()).append(' ').append(String.format("%.1f", sc.get(i).score()));
+        return sb.toString();
+    }
+
     String debug() {
         Location here = mob.getLocation();
         return (goal == null ? "（還沒想）" : goal.kind().name())
@@ -1675,6 +2362,8 @@ final class AiGhost {
                 + "｜路點 " + (wayPath.isEmpty() ? "-" : wayIdx + "/" + wayPath.size())
                 + "｜卡住 " + stuckCount + "｜速度 " + speedMul
                 + (chaseId != null ? "｜追 " + chaseId.toString().substring(0, 4) : "")
+                + (interceptAt != null ? "｜堵" : "") + (ambushAt != null ? "｜埋伏" + (ambushArrive >= 0 ? "中" : "") : "")
+                + "｜" + persona.label() + (utility ? topScores() : "")
                 + "｜壓力 " + Math.round(director.pressure())
                 + "｜粒子 " + (trackers.values().stream().mapToInt(ParticleTracker::alive).sum() + (sensedTracker == null ? 0 : sensedTracker.alive()));
     }
@@ -1736,5 +2425,17 @@ final class AiGhost {
         stats.put("aiPathMsAvg", pathTime.avgMs());
         stats.put("aiPathMsMax", pathTime.maxMs());
         stats.put("aiFieldMsAvg", fieldTime.avgMs());
+        stats.put("aiIntercepts", intercepts + "/" + interceptPredicted + "/" + interceptTries);
+        stats.put("aiAmbushes", ambushes);
+        stats.put("aiReaderGuards", readerGuards);
+        stats.put("aiSoundsHeard", soundsHeard);
+        stats.put("aiSoundsBlocked", soundsBlocked);
+        stats.put("aiPeeks", peeks);
+        stats.put("aiPersona", persona.id() + "(" + personaChosenBy + ")");
+        stats.put("aiBrain", utility ? "utility" : "rules");
+        StringBuilder lt = new StringBuilder();
+        for (Map.Entry<AiMemory.Trick, Integer> e : learnedThisMatch.entrySet()) lt.append(lt.isEmpty() ? "" : ",").append(e.getKey()).append(':').append(e.getValue());
+        stats.put("aiLearned", lt.isEmpty() ? "-" : lt.toString());
+        stats.put("aiMemoryMatches", memory.matches());
     }
 }

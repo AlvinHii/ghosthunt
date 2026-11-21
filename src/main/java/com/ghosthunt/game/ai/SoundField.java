@@ -19,6 +19,15 @@ public final class SoundField {
 
     /** 傳不到或超過 maxDist 回傳 null。penalty 是每條邊額外的距離（例如關著的門每條邊 +2，穿過去 +4）。 */
     public static Heard hear(GridNav nav, int source, int listener, double maxDist, GridNav.Cost penalty, double towardDist) {
+        return hear(nav, source, listener, maxDist, penalty, towardDist, Double.POSITIVE_INFINITY);
+    }
+
+    /**
+     * 同上，但聽到的位置是「沿路離聲音 shortOfSource 格」那格（至少離聽的人 towardDist 格）：
+     * 鬼知道聲音大概多遠、從哪個門口傳來，走過去會停在聲音附近，而不是隔著牆的直線誤差。
+     */
+    public static Heard hear(GridNav nav, int source, int listener, double maxDist, GridNav.Cost penalty, double towardDist,
+                             double shortOfSource) {
         if (source < 0 || listener < 0) return null;
         if (source == listener) return new Heard(0, source);
         int n = nav.size();
@@ -45,13 +54,14 @@ public final class SoundField {
             }
         }
         if (Double.isInfinite(d[source])) return null;
+        double toward = Double.isInfinite(shortOfSource) ? towardDist : Math.max(towardDist, d[source] - shortOfSource);
         // 路徑：聽的人 → 聲音；走 towardDist 格停下
         List<Integer> path = new ArrayList<>();
         for (int v = source; v != -1; v = prev[v]) path.add(v);
         Collections.reverse(path);
         int point = source;
         for (int v : path) {
-            if (d[v] >= towardDist) {
+            if (d[v] >= toward) {
                 point = v;
                 break;
             }

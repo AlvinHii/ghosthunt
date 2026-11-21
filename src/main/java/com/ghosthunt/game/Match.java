@@ -152,13 +152,15 @@ public final class Match {
 
     /** difficulty：easy／normal／hard（null 用 config 的 ai-ghost.difficulty）。 */
     public static Match pve(Plugin plugin, Building b, World world, GameSettings s, List<Player> survivors, Runnable onEnd, String difficulty) {
-        if (difficulty != null) {
-            Match m = new Match(plugin, b, world, s, GhostType.BASIC, UUID.randomUUID(), "電腦", survivors, onEnd);
-            m.aiGhost = new AiGhost(m, AiGhostSettings.from(plugin.getConfig(), difficulty));
-            return m;
-        }
+        return pve(plugin, b, world, s, survivors, onEnd, difficulty, null);
+    }
+
+    /** persona：hound／ambusher／watcher／standard／auto（null 用 config 的 ai-ghost.persona）。 */
+    public static Match pve(Plugin plugin, Building b, World world, GameSettings s, List<Player> survivors, Runnable onEnd,
+                            String difficulty, String persona) {
         Match m = new Match(plugin, b, world, s, GhostType.BASIC, UUID.randomUUID(), "電腦", survivors, onEnd);
-        m.aiGhost = new AiGhost(m, s.ai());
+        m.aiGhost = new AiGhost(m, difficulty != null ? AiGhostSettings.from(plugin.getConfig(), difficulty) : s.ai());
+        m.aiGhost.usePersona(persona);
         return m;
     }
 
@@ -1191,10 +1193,12 @@ public final class Match {
 
     void noise(Location at, int level) {
         LivingEntity g = ghostEntity();
-        if (g == null || !released || !sameFloor(g.getLocation(), at)) return;
+        if (g == null || !released) return;
+        // AI 鬼：聲音沿路傳（關著的門、小洞要多算距離；會沿樓梯傳到別層）
+        if (aiGhost != null) aiGhost.hearSound(at, level, o.noiseRadius());
+        if (!sameFloor(g.getLocation(), at)) return;
         double d = horiz(g.getLocation(), at);
         if (d > o.noiseRadius()) return;
-        if (aiGhost != null) aiGhost.hearNoise(at, level);
         ghostArrow(g, at);
     }
 
@@ -1331,6 +1335,7 @@ public final class Match {
             }
         }
         stats.put("escaped", escaped);
+        if (aiGhost != null) aiGhost.endMatch(survivors.size(), escaped); // 學習：個性拉桿、舊資料淡掉、存檔
         stats.put("eliminated", eliminated);
         stats.put("jailedAtEnd", jailed);
         stats.put("freeAtEnd", free);

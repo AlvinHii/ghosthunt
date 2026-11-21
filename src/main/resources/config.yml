@@ -109,6 +109,31 @@ ai-ghost:                      # PvE 的 AI 鬼（/gh start ai [easy|normal|hard
   particle-min: 10             # 粒子剩不到幾顆就放棄
   particle-max-age: 40         # 追丟後最多推理幾秒（取代 search-cap）
   escaper-speed: 5.6           # 推理時假設逃生者的跑速（每秒幾格）
+  intercept-chance: 0.5        # 追人時「繞到前面堵」的機率（每次開始追擲一次；猜得到對方要往哪個出口跑、鬼會先到才堵）
+  ambush-time: 25              # 冷靜期的退場埋伏：在逃生者往下一個目標會經過的咽喉點旁邊、看不到的地方最多等幾秒（0 = 不埋伏）
+  guard-reader-cap: 40         # 有人授權後守大門讀卡機，每次最多幾秒（之後走開一半的時間再回來；0 = 不守）
+  cut-power-advantage: 15      # 關電源的時機：他們走回電源的平均秒數 − 鬼走過去的秒數 ≥ 這個值才去關
+  cut-power-max-wait: 90       # 電源開了這麼多秒以後不管時機，直接去關
+  brain: utility               # 大腦：utility（第三版：打分數＋個性）或 rules（第二版的固定優先順序）
+  persona: auto                # 個性：auto（用記憶裡的勝率自動選，Thompson sampling）、hound、ambusher、watcher、standard；開局指令可以指定
+  learn: true                  # 學習（plugins/GhostHunt/ai-memory/<地圖>.yml）：被哪招甩掉、熱點、路線、個性勝率。/gh aimemory reset 清掉
+  learn-from-dummies: false    # 假逃生者也算進學習（測試用）
+  memory-decay: 0.85           # 每局結束舊資料乘這個（舊習慣慢慢淡掉）
+  personas:                    # 個性的數值（覆寫內建值；權重的 key 是目標名稱，例如 chase、ambush、guard-jail）
+    hound:                     # 獵犬：一直追、很難甩掉（腳步聲比較高、發現人時狼嚎）
+      chase: 1.3
+      search-last-seen: 1.2
+      ambush: 0.6
+      particle-age: 0.7        # 推理粒子的時間 ×0.7
+    ambusher:                  # 埋伏者：每次追人都算繞前堵、愛埋伏（腳步聲比較低、發現人時嗅聞聲）
+      ambush: 1.5
+      chase: 0.9
+      ambush-time: 1.4         # 埋伏時間 ×1.4
+    watcher:                   # 守望者：守監獄、守讀卡機、巡邏偏向咽喉點（腳步聲很低、發現人時咆哮）
+      guard-jail: 1.5
+      guard-reader: 1.5
+      choke-patrol: 1.5
+      guard-jail-add: 0.25     # 守監獄機率 +0.25
   presets:                     # 難度：只調感知和決策，不調跑速
     easy:
       reaction: 0.5
@@ -119,6 +144,7 @@ ai-ghost:                      # PvE 的 AI 鬼（/gh start ai [easy|normal|hard
       particles: 80              # 簡單：粒子少、只隨機走（不會推理「往離鬼遠的地方跑」）
       particle-flee: 0
       particle-goal: 0
+      intercept-chance: 0        # 簡單：不繞前堵
     normal: {}
     hard:
       reaction: 0.2
@@ -127,6 +153,7 @@ ai-ghost:                      # PvE 的 AI 鬼（/gh start ai [easy|normal|hard
       whiff-chance: 0.1
       check-hideout-base: 0.6
       particles: 400
+      intercept-chance: 1.0      # 困難：每次追人都算要不要繞前堵
 
 survivor:
   dash-duration: 1.5           # 緊急衝刺（F 鍵）持續時間

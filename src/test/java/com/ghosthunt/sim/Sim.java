@@ -29,9 +29,10 @@ public final class Sim {
     record Stats(int catches, int losses, int reacquired, double firstContact, double reDelay) {}
 
     public static void main(String[] args) throws Exception {
-        String map = "hydro_plant", search = "v3";
-        int runs = 100, seconds = 300;
+        String map = "hydro_plant", search = "v3", tune = null;
+        int runs = 100, seconds = 300, candidates = 24;
         long seed = 1;
+        double target = -1;
         for (int i = 0; i + 1 < args.length; i += 2) {
             switch (args[i]) {
                 case "--map" -> map = args[i + 1];
@@ -39,10 +40,17 @@ public final class Sim {
                 case "--seconds" -> seconds = Integer.parseInt(args[i + 1]);
                 case "--search" -> search = args[i + 1];
                 case "--seed" -> seed = Long.parseLong(args[i + 1]);
+                case "--tune" -> tune = args[i + 1];
+                case "--candidates" -> candidates = Integer.parseInt(args[i + 1]);
+                case "--target-reacquire" -> target = Double.parseDouble(args[i + 1]);
                 default -> throw new IllegalArgumentException("不認識的參數 " + args[i]);
             }
         }
         SimMap m = SimMap.load(Path.of("src/main/resources/pve-maps/" + map + ".txt"));
+        if (tune != null) {
+            tune(m, map, tune, target, runs, seconds, candidates, seed);
+            return;
+        }
         int catches = 0, losses = 0, re = 0, contacts = 0;
         double first = 0, delay = 0;
         for (int r = 0; r < runs; r++) {
@@ -61,6 +69,61 @@ public final class Sim {
                 re == 0 ? 0 : delay / re, contacts == 0 ? -1 : first / contacts);
     }
 
+    /** 一組設定跑 runs 局的結果。 */
+    record Result(double reacquire, double catchesPerMin, double firstContact) {}
+
+    static Result evaluate(SimMap m, ParticleTracker.Config pc, int runs, int seconds, long seed) {
+        int catches = 0, losses = 0, re = 0, contacts = 0;
+        double first = 0;
+        for (int r = 0; r < runs; r++) {
+            Stats s = new Sim(m, true, new Random(seed + r), pc).run(seconds);
+            catches += s.catches;
+            losses += s.losses;
+            re += s.reacquired;
+            if (s.firstContact >= 0) {
+                first += s.firstContact;
+                contacts++;
+            }
+        }
+        return new Result(losses == 0 ? 0 : re / (double) losses, catches / (runs * seconds / 60.0), contacts == 0 ? -1 : first / contacts);
+    }
+
+    /**
+     * 第三版第 24 項：自動調參（先用隨機搜尋）。模擬沒有大門、木桶，量不到逃出比例，所以目標是
+     * 「追丟後 30 秒內重新找到」的比例照難度（簡單 85%、普通 92%、困難 97%），再加上第一次接觸 60～120 秒。
+     * 只印出建議值，不改 config（調出來的只是起點，真人玩過以後要用 stats.log 校正）。
+     */
+    static void tune(SimMap m, String map, String difficulty, double target, int runs, int seconds, int candidates, long seed) {
+        if (target < 0) target = switch (difficulty) {
+            case "easy" -> 0.85;
+            case "hard" -> 0.97;
+            default -> 0.92;
+        };
+        Random rnd = new Random(seed * 31 + difficulty.hashCode());
+        record Cand(int particles, double flee, double sigma, Result r, double loss) {}
+        List<Cand> all = new ArrayList<>();
+        for (int i = 0; i < candidates; i++) {
+            int n = i == 0 ? 200 : 60 + rnd.nextInt(8) * 50;
+            double flee = i == 0 ? 0.6 : Math.round(rnd.nextDouble() * 10) / 10.0;
+            double sigma = i == 0 ? 3 : 1.5 + Math.round(rnd.nextDouble() * 7) / 2.0;
+            ParticleTracker.Config pc = new ParticleTracker.Config(n, RUN, flee, 0.0, sigma, 10, 40 * 20);
+            Result r = evaluate(m, pc, runs, seconds, seed);
+            double fc = r.firstContact() < 0 ? 300 : r.firstContact();
+            double loss = Math.abs(r.reacquire() - target) + 0.05 * Math.max(0, Math.max(60 - fc, fc - 120)) / 30;
+            all.add(new Cand(n, flee, sigma, r, loss));
+            System.out.printf("  [%2d/%d] particles %3d｜flee %.1f｜sigma %.1f → 重新找到 %.1f%%｜每分鐘抓 %.2f｜第一次接觸 %.0f 秒｜偏差 %.3f%n",
+                    i + 1, candidates, n, flee, sigma, 100 * r.reacquire(), r.catchesPerMin(), r.firstContact(), loss);
+        }
+        all.sort((a, b) -> Double.compare(a.loss(), b.loss()));
+        System.out.printf("%n地圖 %s｜難度 %s｜目標重新找到 %.0f%%｜每組 %d 局 × %d 秒｜最接近的前 5 組（第 1 組是現在的普通設定 200/0.6/3）：%n",
+                map, difficulty, 100 * target, runs, seconds);
+        for (int i = 0; i < Math.min(5, all.size()); i++) {
+            Cand c = all.get(i);
+            System.out.printf("  %d. particles: %d｜particle-flee: %.1f｜particle-sigma: %.1f → 重新找到 %.1f%%｜每分鐘抓 %.2f｜第一次接觸 %.0f 秒%n",
+                    i + 1, c.particles(), c.flee(), c.sigma(), 100 * c.r().reacquire(), c.r().catchesPerMin(), c.r().firstContact());
+        }
+    }
+
     // =====================================================================
 
     private final SimMap m;
@@ -74,6 +137,14 @@ public final class Sim {
     private final GridNav.Cost trackCost = EscaperCost.of(i -> false, i -> false, i -> false, 6, 8);
     private final List<Integer> mainNodes = new ArrayList<>();
     private double t;
+
+    /** 粒子的設定（自動調參時換）。 */
+    private ParticleTracker.Config pc = new ParticleTracker.Config(200, RUN, 0.6, 0.0, 3, 10, 40 * 20);
+
+    Sim(SimMap m, boolean v3, Random rnd, ParticleTracker.Config pc) {
+        this(m, v3, rnd);
+        this.pc = pc;
+    }
 
     Sim(SimMap m, boolean v3, Random rnd) {
         this.m = m;
@@ -213,7 +284,7 @@ public final class Sim {
         for (int i = 0; i < 3; i++) es.add(new Escaper(mainNodes.get(rnd.nextInt(mainNodes.size()))));
         int catches = 0, losses = 0, re = 0;
         double first = -1, reDelay = 0;
-        ParticleTracker.Config pc = new ParticleTracker.Config(200, RUN, 0.6, 0.0, 3, 10, 40 * 20);
+        ParticleTracker.Config pc = this.pc;
         for (t = 0; t < seconds; t += DT) {
             DistanceField gf = DistanceField.compute(nav, escCost, GHOST_SPEED, g.node);
             for (Escaper e : es) e.tick(g, gf);

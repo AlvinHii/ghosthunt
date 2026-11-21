@@ -106,6 +106,95 @@ public final class GhostBrain {
         return new Goal(Kind.PATROL, null, null);
     }
 
+    // ---- 第三版：Utility AI ----
+
+    /** 個性權重（沒列的目標是 1）。 */
+    public record Weights(java.util.Map<Kind, Double> mul) {
+        public static final Weights STANDARD = new Weights(java.util.Map.of());
+
+        public static Weights of(java.util.Map<Kind, Double> mul) {
+            return new Weights(java.util.Map.copyOf(mul));
+        }
+
+        public double of(Kind k) {
+            return mul.getOrDefault(k, 1.0);
+        }
+    }
+
+    public record Scored(Kind kind, double score) {}
+
+    /** 相鄰兩級的基本分差幾倍；考量都在 0.5～1，所以標準個性的順序跟第二版一樣，只有「差不多」的情況才會被個性改變。 */
+    private static final double TIER = 2.0;
+    private static final double STICKY = 1.15;
+    private static final int MIN_HOLD = 30;
+
+    private Kind current;
+    private long currentSince = Long.MIN_VALUE / 2;
+    private List<Scored> lastScores = List.of();
+
+    /**
+     * Utility 版：第二版的規則當作「硬條件」（不成立 = 0 分），成立的目標分數 = 級數基本分 × 考量（0.5～1）× 個性權重，
+     * 目前的目標 +15%；換目標後至少維持 1.5 秒（攻擊、追除外）。
+     *
+     * @param pickBest 困難：選最高分；否則從「最高分 90% 以內」的目標裡照分數加權隨機選
+     */
+    public Goal decideUtility(Situation s, Weights w, boolean pickBest) {
+        int n = rules.size();
+        List<Scored> scored = new java.util.ArrayList<>();
+        java.util.Map<Kind, Rule> valid = new java.util.EnumMap<>(Kind.class);
+        for (int i = 0; i < n; i++) {
+            Rule r = rules.get(i);
+            if (!r.when().test(s)) continue;
+            double score = Math.pow(TIER, n - 1 - i) * consideration(r.kind(), s) * w.of(r.kind());
+            if (r.kind() == current) score *= STICKY;
+            scored.add(new Scored(r.kind(), score));
+            valid.put(r.kind(), r);
+        }
+        if (scored.isEmpty()) return new Goal(Kind.PATROL, null, null);
+        // 列表保持規則順序：平手時順序前面的贏
+        Scored best = scored.get(0);
+        for (Scored sc : scored) if (sc.score() > best.score()) best = sc;
+        Kind pick = best.kind();
+        if (!pickBest) {
+            double max = best.score(), sum = 0;
+            for (Scored sc : scored) if (sc.score() >= 0.9 * max) sum += sc.score();
+            double x = rnd.nextDouble() * sum;
+            for (Scored sc : scored) {
+                if (sc.score() < 0.9 * max) continue;
+                x -= sc.score();
+                if (x <= 0) {
+                    pick = sc.kind();
+                    break;
+                }
+            }
+        }
+        boolean urgent = pick == Kind.ATTACK || pick == Kind.CHASE;
+        if (current != null && pick != current && !urgent && s.tick() - currentSince < MIN_HOLD && valid.containsKey(current)) pick = current;
+        if (pick != current) {
+            current = pick;
+            currentSince = s.tick();
+        }
+        List<Scored> sorted = new java.util.ArrayList<>(scored);
+        sorted.sort((a, b) -> Double.compare(b.score(), a.score()));
+        lastScores = List.copyOf(sorted);
+        return valid.get(pick).make().apply(s);
+    }
+
+    /** 最近一次 decideUtility 每個成立的目標和分數（高到低；除錯顯示前 3 名）。 */
+    public List<Scored> lastScores() {
+        return lastScores;
+    }
+
+    /** 考量（0.5～1）：追 = 越近越高；找最後看到的位置、聲音 = 越新越高；其他照硬條件（1）。 */
+    private double consideration(Kind k, Situation s) {
+        return switch (k) {
+            case CHASE -> 1 - 0.5 * Math.min(1, s.seen().distance() / 24.0);
+            case SEARCH_LAST_SEEN -> 1 - 0.5 * Math.min(1, (s.tick() - s.lastSeenTick()) / (double) Math.max(1, cfg.searchTicks()));
+            case INVESTIGATE_NOISE -> 1 - 0.5 * Math.min(1, (s.tick() - s.noiseTick()) / (double) Math.max(1, cfg.noiseMemoryTicks()));
+            default -> 1;
+        };
+    }
+
     private static Point nearest(Point from, List<Point> ps) {
         Point best = ps.get(0);
         double bd = Double.MAX_VALUE;

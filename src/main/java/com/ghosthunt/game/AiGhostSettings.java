@@ -17,7 +17,8 @@ record AiGhostSettings(
         int flashTime, int flashBlind, int flashImmune,
         double chaseSpeed, double searchSpeed, double patrolSpeed,
         int particles, double particleFlee, double particleGoal, double particleSigma, int particleMin, int particleMaxAge,
-        double escaperSpeed) {
+        double escaperSpeed,
+        double interceptChance, int ambushTime, int guardReaderCap, double cutPowerAdvantage, int cutPowerMaxWait) {
 
     /** 依難度讀：先看 ai-ghost.presets.<難度>.<key>，沒有再看 ai-ghost.<key>。 */
     private static double d(FileConfiguration c, ConfigurationSection preset, String key, double def) {
@@ -53,6 +54,8 @@ record AiGhostSettings(
                 d(c, p, "chase-speed", 1.0), d(c, p, "search-speed", 0.9), d(c, p, "patrol-speed", 0.75),
                 (int) d(c, p, "particles", 200), d(c, p, "particle-flee", 0.6), d(c, p, "particle-goal", 0.25),
                 d(c, p, "particle-sigma", 3), (int) d(c, p, "particle-min", 10), t(c, p, "particle-max-age", 40),
-                d(c, p, "escaper-speed", 5.6));
+                d(c, p, "escaper-speed", 5.6),
+                d(c, p, "intercept-chance", 0.5), t(c, p, "ambush-time", 25), t(c, p, "guard-reader-cap", 40),
+                d(c, p, "cut-power-advantage", 15), t(c, p, "cut-power-max-wait", 90));
     }
 }

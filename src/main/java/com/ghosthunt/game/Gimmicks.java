@@ -172,11 +172,9 @@ final class Gimmicks {
         steamReadyAt.put(i, m.tick + steamTicks + steamCooldown);
         Location c = center(i);
         m.world.playSound(c, Sound.BLOCK_FIRE_EXTINGUISH, 1.2f, 0.6f);
-        // 閥門聲：16 格內的 AI 鬼聽得到；真人鬼照一般聲音規則
-        if (m.aiGhost != null) {
-            LivingEntity g = m.ghostEntity();
-            if (g != null && g.getWorld().equals(c.getWorld()) && g.getLocation().distance(c) <= 16) m.aiGhost.hearNoise(c, Match.NOISE_MID);
-        } else m.noise(c, Match.NOISE_MID);
+        // 閥門聲：沿路 16 格內的 AI 鬼聽得到；真人鬼照一般聲音規則
+        if (m.aiGhost != null) m.aiGhost.hearSound(c, Match.NOISE_MID, 16);
+        else m.noise(c, Match.NOISE_MID);
         p.sendActionBar(Component.text("溫泉蒸氣噴出來了！煙裡鬼看不到人（" + steamTicks / 20 + " 秒）", NamedTextColor.GOLD));
         m.stats.merge("steamUsed", 1, (x, y) -> (Integer) x + (Integer) y);
     }
