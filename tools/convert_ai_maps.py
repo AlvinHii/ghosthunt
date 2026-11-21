@@ -115,7 +115,7 @@ def convert(grids, edits, log):
     return out
 
 
-def write(path, meta, grids, furniture, palette, sounds=''):
+def write(path, meta, grids, furniture, palette, sounds='', interactions=''):
     with open(path, 'w', encoding='utf-8', newline='\n') as fo:
         for k, v in meta.items():
             fo.write(f'{k}: {v}\n')
@@ -126,6 +126,17 @@ def write(path, meta, grids, furniture, palette, sounds=''):
         fo.write('\n[furniture]\n' + furniture.strip() + '\n\n[palette]\n' + palette.strip() + '\n')
         if sounds.strip():
             fo.write('\n[sounds]\n' + sounds.strip() + '\n')
+        if interactions.strip():
+            fo.write('\n[interactions]\n' + interactions.strip() + '\n')
+
+
+# 度假村機關（原圖的特殊機制 1～3；數值在 config.yml 的 gimmicks）。座標是轉換後的格子座標
+RESORT_INTERACTIONS = """
+bell = 19,2 8,19       # 迎賓鈴：接待大廳、海濱酒吧的吧台上
+lure = b               # 聲源：茅草涼亭
+cart = g               # 高爾夫球車遠光燈
+steam = p              # 溫泉蒸氣閥門（芳療屋的池子、中庭造景池）
+"""
 
 
 # 音效（資源包 resourcepack/assets/ghosthunt/sounds/hydro/，使用者提供的水力發電廠音效包）。座標是轉換後（補空白之後）的格子座標
@@ -207,6 +218,7 @@ if __name__ == '__main__':
     # 雙開門旁邊的櫃子移到單門旁邊（雙開門留著卡門用）
     edits += [(0, 17, 21, '.'), (0, 16, 24, 'C'), (0, 38, 21, '.'), (0, 42, 24, 'C'), (0, 41, 29, '.'), (0, 47, 35, 'C')]
     edits += [(0, 16, 40, 'c')]  # 切斷西南大門那排 21 格的直線
+    edits += [(1, 4, 23, 'G'), (1, 51, 22, 'G')]  # 2F 東西兩間房外牆加大門候選（會加寬成 3 格；外面是陽台＋梯子）。西邊往下一格：讀卡機放在 (7,23) 會跟 (7,18) 的終端機一起把樓梯旁的走道封死
     out = convert(g, edits, log)
     write(f'{outdir}/hydro_plant.txt', {
         'name': '廢棄水力發電廠',
@@ -218,10 +230,11 @@ if __name__ == '__main__':
     edits = [(0, 9, y, ',') for y in range(1, 5)] + [(0, x, 5, ',') for x in range(5, 9)]
     edits += [(0, 8, 20, '.'), (0, 6, 23, 'C'), (0, 47, 21, '.'), (0, 51, 23, 'C')]
     edits += [(0, 50, 33, 'c')]  # 東小屋南邊開口往南 25 格的直線
+    edits += [(1, 0, 21, 'G'), (1, 55, 21, 'G')]  # 2F 東西兩塊平台外牆加大門候選
     out = convert(g, edits, log)
     write(f'{outdir}/seaside_resort.txt', {
         'name': '午夜濃霧濱海度假村',
         'type': 'outdoor',
         'description': '幾乎全是戶外的海灣度假村：樹籬、涼亭、椰子樹切出的庭園迷宮，4 間度假小屋，中間是廢棄玻璃花房（鬼房），2F 環狀木棧天橋繞著鬼房一圈。',
-    }, out, RESORT_FURN, RESORT_PAL)
+    }, out, RESORT_FURN, RESORT_PAL, '', RESORT_INTERACTIONS)
     print('== seaside_resort'); print('\n'.join(log))

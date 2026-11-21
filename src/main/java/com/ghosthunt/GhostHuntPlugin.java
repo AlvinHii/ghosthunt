@@ -72,6 +72,7 @@ public final class GhostHuntPlugin extends JavaPlugin {
             case "clear" -> { if (!inMatch(sender)) clear(sender); }
             case "start" -> start(sender, args);
             case "maps" -> listMaps(sender);
+            case "lure" -> msg(sender, match == null ? "沒有進行中的遊戲。" : match.debugLure(), NamedTextColor.GRAY);
             case "pack" -> {
                 if (pack == null) msg(sender, "資源包沒開（config 的 resource-pack.enabled，或 port 被佔用，看伺服器 log）。", NamedTextColor.RED);
                 else if (sender instanceof org.bukkit.entity.Player p) {
@@ -344,12 +345,17 @@ public final class GhostHuntPlugin extends JavaPlugin {
         BuildingSettings s = BuildingSettings.from(getConfig(), true);
         java.util.Map<String, Integer> gatePairs = new java.util.TreeMap<>(), secPairs = new java.util.TreeMap<>(), warn = new java.util.TreeMap<>(),
                 fails = new java.util.TreeMap<>(), gateFloors = new java.util.TreeMap<>();
+        java.util.Map<String, String> warnExample = new java.util.HashMap<>();
         java.util.IntSummaryStatistics barrels = new java.util.IntSummaryStatistics(), power = new java.util.IntSummaryStatistics();
         java.util.DoubleSummaryStatistics gateDist = new java.util.DoubleSummaryStatistics(), secDist = new java.util.DoubleSummaryStatistics();
         long t0 = System.nanoTime();
         for (int i = 0; i < n; i++) {
             BuildingGenerator.Result r = BuildingGenerator.generateFixed(s, fm, 1000L + i);
-            for (String w : r.rejected()) warn.merge(w.replaceAll("[0-9]+", "#"), 1, Integer::sum);
+            for (String w : r.rejected()) {
+                String k = w.replaceAll("[0-9]+", "#");
+                if (!warnExample.containsKey(k)) warnExample.put(k, "種子 " + (1000L + i) + "：" + w);
+                warn.merge(k, 1, Integer::sum);
+            }
             if (!r.ok()) {
                 fails.merge(r.errors().get(0).replaceAll("[0-9]+", "#"), 1, Integer::sum);
                 continue;
@@ -382,7 +388,7 @@ public final class GhostHuntPlugin extends JavaPlugin {
         secPairs.entrySet().stream().sorted((a, c) -> c.getValue() - a.getValue()).limit(10)
                 .forEach(e -> out.add("  " + e.getValue() + "×  " + e.getKey()));
         out.add(String.format("木桶 平均 %.1f（%d～%d）｜電源候選 %d～%d", barrels.getAverage(), barrels.getMin(), barrels.getMax(), power.getMin(), power.getMax()));
-        warn.forEach((k, v) -> out.add("  警告 " + v + "×：" + k));
+        warn.forEach((k, v) -> out.add("  警告 " + v + "×：" + k + "（例如 " + warnExample.get(k) + "）"));
         for (String line : out) {
             getLogger().info("[maptest] " + line);
             if (sender instanceof Player) msg(sender, line, NamedTextColor.GRAY);
@@ -645,8 +651,8 @@ public final class GhostHuntPlugin extends JavaPlugin {
             msg(sender, "大門：" + (g.floor() + 1) + "F，位置 " + g.center(), NamedTextColor.GOLD);
         }
         msg(sender, "鬼房：" + (b.ghostRoom.floor() + 1) + "F｜容器 " + b.containers.size()
-                + " 個｜電源候選 " + b.powerCandidates.size() + " 個｜燈 " + b.lights.size() + " 盞｜雙開門 "
-                + b.doors.size() / 2 + " 組｜障礙物門口 " + b.barricadeSpots.size() + " 個", NamedTextColor.GRAY);
+                + " 個｜電源候選 " + b.powerCandidates.size() + " 個｜燈 " + b.lights.size() + " 盞｜門 "
+                + b.doors.size() + " 扇｜障礙物門口 " + b.barricadeSpots.size() + " 個", NamedTextColor.GRAY);
         StringBuilder st = new StringBuilder("可站的位置（檢查走得到的格子）：");
         for (int f = 0; f < L.floors; f++) {
             st.append(f + 1).append("F ").append(b.spawnTiles.getOrDefault(f, java.util.Set.of()).size()).append("  ");

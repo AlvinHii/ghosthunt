@@ -9,7 +9,7 @@ Paper 26.3 的非對稱小遊戲插件：1 鬼 vs 3–5 逃生者，在隨機生
 - JDK 26（`C:\Program Files\Java\jdk-26.0.1`）編譯，`options.release = 25`；Gradle wrapper。
 - `./gradlew build`：編譯＋單元測試（`src/test`，只測不碰伺服器的純邏輯）。`./gradlew deploy`：打包並複製 jar 到 `test-server/plugins/`。
 - 本機測試伺服器在 `test-server/`（`start.bat`，Paper 26.3）。伺服器開著時換 jar 要重開。
-- 遊戲內指令（`/ghosthunt` 或 `/gh`）：`build [seed]`、`build pve [地圖名|random] [seed]`（PvE：預設是固定地圖 `pve.map`）、`maps`（列出 PvE 固定地圖）、`pack`（重送資源包）、`maptest [地圖] [次數]`（固定地圖產生很多次，統計每局隨機的大門／保全室／木桶）、`selftest`（不需要玩家的整局檢查，改完規則先跑這個；含 AI 鬼尋路檢查）、`start <鬼ID|random> [basic|nightmare]`、`start ai [easy|normal|hard] [solo]`（PvE：所有人當逃生者，鬼是電腦；`solo` 沒有真人逃生者，測試用）、`dummy [n]`（AI 局裡生假逃生者，測試用）、`aidebug`（AI 鬼除錯顯示）、`stop`、`tp [樓層]`、`fog <距離|off> [me|others]`、`info`、`export`（匯出大樓給模擬用）、`reload`、`clear`。
+- 遊戲內指令（`/ghosthunt` 或 `/gh`）：`build [seed]`、`build pve [地圖名|random] [seed]`（PvE：預設是固定地圖 `pve.map`）、`maps`（列出 PvE 固定地圖）、`pack`（重送資源包）、`lure`（測試用：敲迎賓鈴）、`maptest [地圖] [次數]`（固定地圖產生很多次，統計每局隨機的大門／保全室／木桶）、`selftest`（不需要玩家的整局檢查，改完規則先跑這個；含 AI 鬼尋路檢查）、`start <鬼ID|random> [basic|nightmare]`、`start ai [easy|normal|hard] [solo]`（PvE：所有人當逃生者，鬼是電腦；`solo` 沒有真人逃生者，測試用）、`dummy [n]`（AI 局裡生假逃生者，測試用）、`aidebug`（AI 鬼除錯顯示）、`stop`、`tp [樓層]`、`fog <距離|off> [me|others]`、`info`、`export`（匯出大樓給模擬用）、`reload`、`clear`。
 - 每局數據寫在 `test-server/plugins/GhostHunt/stats.log`。
 
 ## 程式結構（`src/main/java/com/ghosthunt/`）
@@ -38,9 +38,11 @@ Paper 26.3 的非對稱小遊戲插件：1 鬼 vs 3–5 逃生者，在隨機生
 - 大門 2 扇隨機放（不同樓層、相距 ≥25、靠不同樓梯）。門禁卡 2 張在不同樓層。
 - 鬼每揮一次拳（揮空也算）1.5 秒內減速 90%（`ghost.attack-fatigue-slow`）。鬼看不到霧（霧只送給逃生者），鬼整場自帶夜視。停電亮度 1、有電 10。
 - 加速效果不疊加。
-- 場景互動：門口旁可推倒的櫃子（推倒＝擋住門口，鬼要拆）、蹲下右鍵雙開門卡門（每扇一次，鬼要撞開）。
+- 場景互動：門口旁可推倒的櫃子（推倒＝擋住門口，鬼要拆）、蹲下右鍵門卡門（單門、雙開門都可以，每扇一次，鬼要撞開；單門可以卡是 2026-11-22 決定的）。
 - 門禁卡要先到保全室（全棟 2 間、不同樓層）的終端機授權才能刷；終端機要有電。
 - PvE：2～3 人對抗 AI 鬼；地圖格局固定（`pve-maps/`，可以是室內、室外、室內＋室外），每局重蓋時大門、保全室、木桶隨機（`pve.reroll-each-match`）；AI 鬼只看得到前方、聽得到腳步和開門，太久沒接觸才感應最近的人在哪一間房（被盯上的人聽到心跳加快）；只有基本鬼的能力（不會熄燈）。AI 攻擊距離維持 2.5 格（故意比真人短，平衡感應）；手電筒照 AI 鬼的臉有效；AI 選目標只用看得到的資訊（不看誰有門禁卡）；AI 下地下通道是「撬開＋爬梯子傳送＋通道裡照路走」。
+- 固定地圖 2F 也放大門候選（每局一扇 1F、一扇 2F）；2F 大門外面是陽台＋欄杆＋梯子下到地面（只是外觀，穿過大門就算逃出）。
+- 度假村機關（地圖檔 `[interactions]`，`game/Gimmicks`，數值在 config 的 `gimmicks`）：迎賓鈴（遠處涼亭響廣播吸引鬼，AI 不管多遠都聽得到）、球車遠光燈（扇形強光，鬼看不到人＋緩速，每台 2 次）、溫泉蒸氣（煙裡 AI 看不到人、真人鬼失明）。路燈分區通電、2F 木棧道腳步聲不做（跟電源規則衝突／等腳步聲系統）。
 - 1F 底下有地下通道（地上活板門＋梯子，連到遠處另一個房間）；逃生者自由進出，鬼要先撬開出入口。每間房間地板顏色不同（認路用）。
 
 ## 目前狀態

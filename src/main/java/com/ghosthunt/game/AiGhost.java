@@ -385,6 +385,8 @@ final class AiGhost {
         double range = m.obj.powerOn() ? c.sightRange() : c.sightRangeDark();
         if (d > range) return false;
         if (d > c.nearAware() && !inFront(e.getLocation(), c.fovDegrees())) return false;
+        // 溫泉蒸氣：鬼在煙裡或人在煙裡都看不到（貼臉 2 格內除外）
+        if (d > 2 && m.gimmicks != null && (m.gimmicks.inSmoke(e.getLocation()) || m.gimmicks.inSmoke(mob.getLocation()))) return false;
         for (double h : new double[]{e.getEyeHeight(), 1.0, 0.2}) {
             Location to = e.getLocation().add(0, h, 0);
             Vector dir = to.toVector().subtract(me.toVector());

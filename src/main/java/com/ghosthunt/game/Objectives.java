@@ -645,7 +645,7 @@ final class Objectives {
         List<String> out = new ArrayList<>();
         out.add("總電源拉桿：" + (lever == null ? "沒有（找不到牆）" : lever + " → " + m.block(lever).getType()));
         out.add("保全室終端機 " + b.securityTerminals.size() + " 台（" + (authRequired() ? "門禁卡要授權" : "不用授權") + "）｜可推倒的櫃子 "
-                + b.toppleSpots.size() + " 個｜雙開門 " + b.doors.size() / 2 + " 組（可以卡門）"); 
+                + b.toppleSpots.size() + " 個｜門 " + b.doors.size() + " 扇（可以卡門，雙開門算 2 扇）"); 
         long cards = content.values().stream().filter(c -> c.startsWith(Items.KEYCARD)).count();
         Map<String, Integer> items = new HashMap<>();
         for (String c : content.values()) if (!c.startsWith(Items.KEYCARD)) items.merge(Items.label(c), 1, Integer::sum);

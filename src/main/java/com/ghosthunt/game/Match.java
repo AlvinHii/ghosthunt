@@ -124,6 +124,8 @@ public final class Match {
     final Nightmare nightmare;
     /** 地圖音效（固定地圖有 [sounds] 才有）。 */
     MapAudio audio;
+    /** 地圖機關（迎賓鈴、球車、蒸氣閥門；固定地圖有 [interactions] 才有）。 */
+    Gimmicks gimmicks;
     /** PvE：AI 鬼（真人鬼時是 null）。 */
     AiGhost aiGhost;
     final ObjectiveSettings o;
@@ -132,7 +134,7 @@ public final class Match {
     final ItemUse items;
     private Hud hud;
     /** 每局記錄的數據（結束時寫進 plugins/GhostHunt/stats.log）。 */
-    private final Map<String, Object> stats = new LinkedHashMap<>();
+    final Map<String, Object> stats = new LinkedHashMap<>();
     private String noiseText;
     private long noiseUntil;
     private BukkitTask task;
@@ -177,6 +179,7 @@ public final class Match {
         this.obj = new Objectives(this);
         this.items = new ItemUse(this);
         this.audio = MapAudio.create(this);
+        this.gimmicks = Gimmicks.create(this);
     }
 
     // ---- 開始 ----
@@ -257,6 +260,17 @@ public final class Match {
         out.addAll(m.obj.selfTestActions());
         m.refreshLights();
         out.add("燈光（沒電）：" + m.ambientLight());
+        if (m.gimmicks != null) out.addAll(m.gimmicks.selfTest());
+        for (Building.Gate gt : b.gates) {
+            if (gt.floor() == 0) continue;
+            int ladders = 0;
+            Location ex = m.loc(gt.exit());
+            for (int dx = -6; dx <= 6; dx++)
+                for (int dz = -6; dz <= 6; dz++)
+                    for (int y = b.layout.floorY(0); y <= ex.getBlockY() + 1; y++)
+                        if (world.getBlockAt(ex.getBlockX() + dx, y, ex.getBlockZ() + dz).getType() == org.bukkit.Material.LADDER) ladders++;
+            out.add((gt.floor() + 1) + "F 大門外面：陽台" + (ladders > 0 ? "＋梯子 " + ladders + " 格" : "（底下是場地，沒放梯子）"));
+        }
         m.aiPathTest(plugin, later);
 
         return out;
@@ -373,7 +387,7 @@ public final class Match {
                         : "2. 翻木桶找門禁卡（共 " + nCards + " 張），拿去大門旁的讀卡機（磁石）刷，大門倒數 " + o.openCountdown() / 20 + " 秒後打開",
                 "3. 穿過打開的大門就算逃出",
                 "操作：右鍵木桶／拉桿／讀卡機 → 站著不動等進度條｜F 衝刺｜蹲下鑽牆上的小洞（鬼過不去）",
-                "障礙物：拿著右鍵門口的黃色地毯｜門口旁邊的深色木頭櫃子：右鍵推倒擋住門口｜蹲下右鍵雙開門：卡門（每扇一次）",
+                "障礙物：拿著右鍵門口的黃色地毯｜門口旁邊的深色木頭櫃子：右鍵推倒擋住門口｜蹲下右鍵門：卡門（每扇一次）",
                 "1F 地上的活板門通到地下通道（爬梯子下去），可以鑽到很遠的另一個房間；鬼要先撬開才能下去",
                 "被抓會關進監獄，隊友站在籠子旁邊就能救｜第 " + s.maxCaptures() + " 次被抓淘汰",
                 "注意：翻箱子、開電源會發出聲音，附近的鬼會知道方向",
@@ -501,6 +515,7 @@ public final class Match {
         escapes();
         if (nightmare != null) nightmare.tick(g);
         if (audio != null && tick % 20 == 0) audio.tick();
+        if (gimmicks != null) gimmicks.tick();
         if (tick % 10 == 0 && g instanceof Player gp) ghostHud(gp);
         if (tick % 200 == 0) refreshSurvivorFog();
         if (tick % 10 == 0) closeHatches();
@@ -810,7 +825,7 @@ public final class Match {
     // ---- 卡門 ----
 
     /**
-     * 有人右鍵雙開門。回傳 true 表示要取消原版的開關門。
+     * 有人右鍵門（單門或雙開門）。回傳 true 表示要取消原版的開關門。
      * 逃生者蹲下右鍵：站著卡門（兩扇一起關上卡住，誰都打不開；每扇門一局一次）。
      * 卡住的門：鬼右鍵撞開（很大聲），逃生者蹲下右鍵可以自己拆掉。
      */
@@ -1172,6 +1187,25 @@ public final class Match {
         double d = horiz(g.getLocation(), at);
         if (d > o.noiseRadius()) return;
         if (aiGhost != null) aiGhost.hearNoise(at, level);
+        ghostArrow(g, at);
+    }
+
+    /** 測試用（/gh lure）：敲迎賓鈴，回傳說明。 */
+    public String debugLure() {
+        if (gimmicks == null) return "這張地圖沒有迎賓鈴";
+        Location at = gimmicks.debugLure();
+        return at == null ? "這張地圖沒有迎賓鈴" : "敲了迎賓鈴，聲源在 " + at.getBlockX() + "," + at.getBlockY() + "," + at.getBlockZ();
+    }
+
+    /** 迎賓鈴的廣播：不管多遠、哪一層，鬼都聽得到（AI 當成高等級聲音；真人鬼另外有方向箭頭）。 */
+    void lureNoise(Location at) {
+        LivingEntity g = ghostEntity();
+        if (g == null || !released) return;
+        if (aiGhost != null) aiGhost.hearNoise(at, NOISE_HIGH);
+        ghostArrow(g, at);
+    }
+
+    private void ghostArrow(LivingEntity g, Location at) {
         double target = Math.toDegrees(Math.atan2(-(at.getX() - g.getLocation().getX()), at.getZ() - g.getLocation().getZ()));
         double rel = ((target - g.getLocation().getYaw()) % 360 + 540) % 360 - 180; // -180..180，正的是右邊
         String[] arrows = {"↓", "↙", "←", "↖", "↑", "↗", "→", "↘"};

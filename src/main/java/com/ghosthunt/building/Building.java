@@ -78,6 +78,16 @@ public final class Building {
     public String mapName;
     /** 固定地圖的 [sounds]（key, value）；沒有就是空的。 */
     public List<String[]> sounds = List.of();
+    /** 地圖機關的一個裝置：trigger＝玩家右鍵的方塊（鐘、按鈕、拉桿），center＝裝置中心（走路高度）。 */
+    public record Gadget(Pos trigger, Pos center) {}
+    /** 迎賓鈴（右鍵→遠處的聲源響起，吸引鬼）。 */
+    public final List<Pos> bells = new ArrayList<>();
+    /** 迎賓鈴的聲源位置（例如涼亭）。 */
+    public final List<Pos> lureSpots = new ArrayList<>();
+    /** 球車遠光燈（按鈕→前方扇形強光，鬼看不到人＋緩速；每台次數有限）。 */
+    public final List<Gadget> carts = new ArrayList<>();
+    /** 蒸氣閥門（拉桿→周圍一段時間濃煙，鬼在煙裡看不到人）。 */
+    public final List<Gadget> valves = new ArrayList<>();
     public final Layout layout;
     public final RoomType[][][] types; // [floor][cx][cz]
 

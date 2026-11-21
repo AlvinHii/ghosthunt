@@ -40,6 +40,8 @@ public final class FixedMap {
     public final Map<String, String> palette = new LinkedHashMap<>();
     /** [sounds] 區塊：每行一筆「key = value」（同一個 key 可以重複，例如好幾個 zone），見 game.MapAudio。 */
     public final List<String[]> sounds = new ArrayList<>();
+    /** [interactions] 區塊：地圖專屬機關（迎賓鈴、球車、蒸氣閥門），見 FixedMapGenerator.gimmicks()。 */
+    public final List<String[]> interactions = new ArrayList<>();
     /** 讀檔時發現的問題（不認識的方塊……），蓋的時候會一起列出來。 */
     public final List<String> problems = new ArrayList<>();
     public final int W, H;
@@ -85,7 +87,7 @@ public final class FixedMap {
         Map<String, String> meta = new HashMap<>();
         List<List<String>> raw = new ArrayList<>();
         Map<String, String> furn = new LinkedHashMap<>(), pal = new LinkedHashMap<>();
-        List<String[]> snd = new ArrayList<>();
+        List<String[]> snd = new ArrayList<>(), inter = new ArrayList<>();
         String sec = null;
         List<String> cur = null;
         for (String line0 : lines) {
@@ -114,15 +116,16 @@ public final class FixedMap {
             } else if (sec.equals("furniture") || sec.equals("palette")) {
                 int e = st.indexOf('=');
                 if (e > 0) (sec.equals("furniture") ? furn : pal).put(st.substring(0, e).strip(), st.substring(e + 1).strip());
-            } else if (sec.equals("sounds")) {
+            } else if (sec.equals("sounds") || sec.equals("interactions")) {
                 int e = st.indexOf('=');
-                if (e > 0) snd.add(new String[]{st.substring(0, e).strip().toLowerCase(Locale.ROOT), st.substring(e + 1).strip()});
+                if (e > 0) (sec.equals("sounds") ? snd : inter).add(new String[]{st.substring(0, e).strip().toLowerCase(Locale.ROOT), st.substring(e + 1).strip()});
             }
         }
         for (List<String> f : raw) while (!f.isEmpty() && f.get(f.size() - 1).isBlank()) f.remove(f.size() - 1);
         FixedMap m = new FixedMap(id, meta, raw);
         m.palette.putAll(pal);
         m.sounds.addAll(snd);
+        m.interactions.addAll(inter);
         for (Map.Entry<String, String> e : furn.entrySet()) {
             if (e.getKey().length() != 1) {
                 m.problems.add("家具代號要是一個字母：" + e.getKey());

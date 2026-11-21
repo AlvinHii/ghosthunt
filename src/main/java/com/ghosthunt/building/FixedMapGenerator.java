@@ -207,6 +207,7 @@ final class FixedMapGenerator {
         openings(gates);
         markers(securityTiles, jail, ghost);
         furniture();
+        gimmicks();
         basement();
         ceilings();
         lights();
@@ -803,6 +804,7 @@ final class FixedMapGenerator {
             map.set(reader, Material.LODESTONE);
             occupied.add(key(f, m[0] - 2 * g.dx(), m[1] - 2 * g.dz()));
             map.fill(exit.add(-1, -1, -1), exit.add(1, -1, 1), Material.POLISHED_BLACKSTONE);
+            if (f > 0) gateBalcony(g);
             b.gates.add(new Building.Gate(f, center, opening, reader, exit));
         }
         for (GateRun g : gateRuns()) {
@@ -810,6 +812,47 @@ final class FixedMapGenerator {
             b.gateCandidates.add(new Building.Gate(g.f(), at(g.f(), m[0], 0, m[1]), List.of(), at(g.f(), m[0] - 2 * g.dx(), 0, m[1] - 2 * g.dz()),
                     at(g.f(), m[0] + 2 * g.dx(), 0, m[1] + 2 * g.dz())));
         }
+    }
+
+    /**
+     * 2F 以上的大門：外面的平台加欄杆，旁邊一座梯子下到地面（不然平台浮在半空中）。
+     * 穿過大門就算逃出，所以這只是看起來合理；梯子底下如果是場地裡面（1F 有東西）就不放梯子，免得擋到 1F。
+     */
+    private void gateBalcony(GateRun g) {
+        int f = g.f(), dx = g.dx(), dz = g.dz(), lx = Math.abs(dz), lz = Math.abs(dx);
+        int[] m = g.mid();
+        int fy = L.floorY(f), gy = L.floorY(0);
+        java.util.function.BiFunction<Integer, Integer, int[]> xz = (d, l) -> new int[]{m[0] + dx * d + lx * l, m[1] + dz * d + lz * l};
+        // 平台加寬成 5 格，欄杆站在平台邊上：兩側＋前面（留梯子那一格）
+        for (int d = 1; d <= 3; d++) for (int l = -2; l <= 2; l++) {
+            int[] t = xz.apply(d, l);
+            map.set(L.rel(t[0], fy, t[1]), Material.POLISHED_BLACKSTONE);
+        }
+        for (int d = 1; d <= 3; d++) for (int l : new int[]{-2, 2}) {
+            int[] t = xz.apply(d, l);
+            map.set(L.rel(t[0], fy + 1, t[1]), fenceM);
+        }
+        boolean clear = true;
+        for (int d = 1; d <= 6 && clear; d++)
+            for (int l = -2; l <= 2; l++) {
+                int[] t = xz.apply(d, l);
+                if (at(0, t[0], t[1]) != ' ') clear = false;
+            }
+        for (int l = -1; l <= (clear ? 0 : 1); l++) {
+            int[] t = xz.apply(3, l);
+            map.set(L.rel(t[0], fy + 1, t[1]), fenceM);
+        }
+        if (!clear) return;
+        int[] lad = xz.apply(4, 1), pil = xz.apply(5, 1);
+        for (int y = gy + 1; y <= fy + 1; y++) map.set(L.rel(pil[0], y, pil[1]), outerM);
+        org.bukkit.block.data.type.Ladder ld = (org.bukkit.block.data.type.Ladder) Bukkit.createBlockData(Material.LADDER);
+        ld.setFacing(face(-dx, -dz));
+        for (int y = gy + 1; y <= fy + 1; y++) map.set(L.rel(lad[0], y, lad[1]), ld);
+        for (int d = 4; d <= 6; d++)
+            for (int l = 0; l <= 2; l++) {
+                int[] t = xz.apply(d, l);
+                map.set(L.rel(t[0], gy, t[1]), Material.POLISHED_BLACKSTONE);
+            }
     }
 
     private void crawlHole(int f, int x, int z, char wall) {
@@ -833,7 +876,7 @@ final class FixedMapGenerator {
             d.setOpen(false);
             map.set(half == Bisected.Half.BOTTOM ? p : p.add(0, 1, 0), d);
         }
-        if (jammable) b.doors.add(p);
+        b.doors.add(p); // 單門、雙開門都可以卡門（使用者決定，2026-11-22）；jammable 留著只是標記原本的符號
     }
 
     // ---- 標記：保全室、電源、櫃子、監獄、鬼房、出生點、地下通道 ----
@@ -985,6 +1028,91 @@ final class FixedMapGenerator {
                 }
             }
         }
+    }
+
+    // ---- 地圖機關（[interactions]）----
+
+    /**
+     * bell = x,z [x,z …]：1F 這些格子的家具頂上放一個鐘（迎賓鈴）。
+     * lure = 字母：這種家具每一座（連在一起的算一座）都是迎賓鈴的聲源。
+     * cart = 字母：每一台頂上放一個按鈕（遠光燈）。
+     * steam = 字母：每一座頂上放一根拉桿（蒸氣閥門）。
+     */
+    private void gimmicks() {
+        for (String[] kv : fm.interactions) {
+            String[] v = kv[1].trim().split("[ \t]+");
+            switch (kv[0]) {
+                case "bell" -> {
+                    for (String t : v) {
+                        String[] xz = t.split(",");
+                        int x = Integer.parseInt(xz[0].trim()), z = Integer.parseInt(xz[1].trim());
+                        char c = at(0, x, z);
+                        if (!furn(c)) {
+                            warnings.add("迎賓鈴（" + x + "," + z + "）不在家具上，跳過");
+                            continue;
+                        }
+                        org.bukkit.block.data.type.Bell bell = (org.bukkit.block.data.type.Bell) Bukkit.createBlockData(Material.BELL);
+                        bell.setAttachment(org.bukkit.block.data.type.Bell.Attachment.FLOOR);
+                        Pos p = at(0, x, height(c), z);
+                        map.set(p, bell);
+                        b.bells.add(p);
+                    }
+                }
+                case "lure" -> {
+                    for (int[] comp : components(v[0].charAt(0))) b.lureSpots.add(at(comp[0], comp[1], 0, comp[2]));
+                }
+                case "cart", "steam" -> {
+                    char c = v[0].charAt(0);
+                    for (int[] comp : components(c)) {
+                        Material m = kv[0].equals("cart") ? Material.STONE_BUTTON : Material.LEVER;
+                        org.bukkit.block.data.type.Switch sw = (org.bukkit.block.data.type.Switch) Bukkit.createBlockData(m);
+                        sw.setAttachedFace(org.bukkit.block.data.FaceAttachable.AttachedFace.FLOOR);
+                        Pos trig = at(comp[0], comp[3], height(c), comp[4]);
+                        map.set(trig, sw);
+                        Building.Gadget gd = new Building.Gadget(trig, at(comp[0], comp[1], 0, comp[2]));
+                        (kv[0].equals("cart") ? b.carts : b.valves).add(gd);
+                    }
+                }
+                default -> warnings.add("不認識的機關設定：" + kv[0]);
+            }
+        }
+    }
+
+    private int height(char c) {
+        FixedMap.Furniture fu = fm.furniture.get(c);
+        return Math.min(fh - 2, fu == null ? 1 : fu.stack().size());
+    }
+
+    /** 某種家具每一座（4 方向連在一起）：{樓層, 中心 x, 中心 z, 放開關的那格 x, z}（中心是最靠近重心的那格）。 */
+    private List<int[]> components(char c) {
+        List<int[]> out = new ArrayList<>();
+        Set<Long> seen = new HashSet<>();
+        for (int f = 0; f < F; f++)
+            for (int z = 0; z < H; z++)
+                for (int x = 0; x < W; x++) {
+                    if (at(f, x, z) != c || !seen.add(key(f, x, z))) continue;
+                    List<int[]> tiles = new ArrayList<>();
+                    ArrayDeque<int[]> q = new ArrayDeque<>();
+                    q.add(new int[]{x, z});
+                    while (!q.isEmpty()) {
+                        int[] t = q.poll();
+                        tiles.add(t);
+                        for (int[] d : DIRS) {
+                            int nx = t[0] + d[0], nz = t[1] + d[1];
+                            if (at(f, nx, nz) == c && seen.add(key(f, nx, nz))) q.add(new int[]{nx, nz});
+                        }
+                    }
+                    double sx = 0, sz = 0;
+                    for (int[] t : tiles) {
+                        sx += t[0];
+                        sz += t[1];
+                    }
+                    double cx = sx / tiles.size(), cz = sz / tiles.size();
+                    int[] best = tiles.get(0);
+                    for (int[] t : tiles) if (Math.hypot(t[0] - cx, t[1] - cz) < Math.hypot(best[0] - cx, best[1] - cz)) best = t;
+                    out.add(new int[]{f, best[0], best[1], best[0], best[1]});
+                }
+        return out;
     }
 
     // ---- 地下通道 ----

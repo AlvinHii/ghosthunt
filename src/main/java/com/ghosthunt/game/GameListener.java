@@ -143,6 +143,10 @@ public final class GameListener implements Listener {
                 m.obj.onTerminal(p, clicked);
                 return;
             }
+            if (m.gimmicks != null && m.gimmicks.onClick(p, clicked)) {
+                e.setCancelled(true);
+                return;
+            }
             if (m.tryTopple(p, clicked)) {
                 e.setCancelled(true);
                 return;
