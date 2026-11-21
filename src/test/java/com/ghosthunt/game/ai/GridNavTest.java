@@ -11,26 +11,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class GridNavTest {
 
-    /** 用字元圖建一層：. 可走、# 牆、B 障礙物（要拆）、H 蹲伏小洞。y 固定。 */
+    /** 用字元圖建一層（共用 TestGrids）：. 可走、# 牆、B 障礙物（要拆）、H 蹲伏小洞。y 固定。 */
     private static GridNav grid(String... rows) {
-        GridNav g = new GridNav();
-        for (int z = 0; z < rows.length; z++)
-            for (int x = 0; x < rows[z].length(); x++)
-                if (rows[z].charAt(x) != '#') g.add(x, 65, z);
-        for (int z = 0; z < rows.length; z++)
-            for (int x = 0; x < rows[z].length(); x++) {
-                char ch = rows[z].charAt(x);
-                if (ch == '#') continue;
-                int a = g.id(x, 65, z);
-                for (int[] d : new int[][]{{1, 0}, {0, 1}}) {
-                    int bx = x + d[0], bz = z + d[1];
-                    if (bz >= rows.length || bx >= rows[bz].length() || rows[bz].charAt(bx) == '#') continue;
-                    char other = rows[bz].charAt(bx);
-                    Kind k = ch == 'B' || other == 'B' ? Kind.BARRICADE : ch == 'H' || other == 'H' ? Kind.HOLE : Kind.WALK;
-                    g.link(a, g.id(bx, 65, bz), 1, k, 0);
-                }
-            }
-        return g;
+        return TestGrids.grid(rows);
     }
 
     private static final GridNav.Cost FREE = e -> 0;
