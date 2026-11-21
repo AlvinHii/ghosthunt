@@ -10,6 +10,7 @@ import com.ghosthunt.game.ai.GhostBrain.Kind;
 import com.ghosthunt.game.ai.GhostBrain.Point;
 import com.ghosthunt.game.ai.DistanceField;
 import com.ghosthunt.game.ai.GridNav;
+import com.ghosthunt.game.ai.PathFollow;
 import com.ghosthunt.game.ai.RoomScores;
 import com.ghosthunt.game.ai.SenseDirector;
 import com.ghosthunt.game.ai.TargetPicker;
@@ -325,6 +326,8 @@ final class AiGhost {
     private final Timing tickTime = new Timing(), pathTime = new Timing(), fieldTime = new Timing();
     /** 鬼到每一格要幾秒（只有在有粒子追蹤器時才每次 think 重算）。 */
     private DistanceField ghostField;
+    /** 最近一次推著走的方向（單位向量），判斷新路線是不是往回走。 */
+    private double lastDirX, lastDirZ;
 
     private List<Integer> timedPath(int a, int b, GridNav.Cost cost) {
         long t0 = System.nanoTime();
@@ -1002,6 +1005,11 @@ final class AiGhost {
         wayPath = nav.nav.simplify(p, nav::clear);
         wayIdx = Math.min(1, wayPath.size() - 1);
         rawGoal = g;
+        // 新路線往回走（目標換到背後）：卡住偵測重新起算，不然「先往前、再折回來」在 2 秒內淨位移很小，會被誤判成卡住
+        Location firstWp = nav.loc(wayPath.get(wayIdx));
+        double ndx = firstWp.getX() - mob.getLocation().getX(), ndz = firstWp.getZ() - mob.getLocation().getZ();
+        double nl = Math.hypot(ndx, ndz);
+        if (nl > 0.3 && (lastDirX != 0 || lastDirZ != 0) && (ndx * lastDirX + ndz * lastDirZ) / nl < -0.3) stuck.reset();
         if (vanillaTarget != null || mob.getPathfinder().hasPath()) mob.getPathfinder().stopPathfinding(); // 原版尋路還在走會跟推著走打架
         vanillaTarget = null;
     }
@@ -1045,14 +1053,30 @@ final class AiGhost {
             stuck.reset();
             return;
         }
-        if (aim == null) aim = lineAim(nav.loc(from), tl, here);
+        boolean last = wayIdx == wayPath.size() - 1;
+        if (aim == null) {
+            // 轉角前瞻：下一個路點是轉角時瞄準點拉長到 1.75 格，超過轉角的部分沿下一段走（提早轉）；
+            // 但「從現在位置到瞄準點」的直線要留得下身體寬度才切，不然照舊（第二版靠這個不擦到桌角）
+            int next = last ? -1 : wayPath.get(wayIdx + 1);
+            GridNav.Edge en = next < 0 ? null : nav.nav.edge(target, next);
+            boolean nearSpecial = (e != null && e.kind() != GridNav.Kind.WALK) || (en != null && en.kind() != GridNav.Kind.WALK);
+            double ahead = PathFollow.lookahead(next < 0 ? 0 : turnDegrees(nav.loc(from), tl, nav.loc(next)), nearSpecial);
+            Location nl = next < 0 || ahead <= 1.0 ? null : nav.loc(next);
+            aim = lineAim(nav.loc(from), tl, here, ahead, nl);
+            if (aim[2] == 1 && !chordClear(here, aim)) aim = lineAim(nav.loc(from), tl, here, 1.0, null);
+            else if (aim[2] == 1 && Math.hypot(tdx, tdz) < 1.0) {
+                // 正在切轉角、而且已經到轉角 1 格內：直接換下一段（不然會走過頭再折回轉角那一點）
+                wayIdx++;
+                return;
+            }
+        }
         double dx = aim[0] - here.getX(), dz = aim[1] - here.getZ(), dh = Math.hypot(dx, dz);
         if (dh < 0.2) {
             dx = tdx;
             dz = tdz;
             dh = Math.hypot(dx, dz);
         }
-        steer(dx, dz, dh);
+        steer(dx, dz, dh, PathFollow.arrivalScale(Math.hypot(tdx, tdz), last));
         // 剛揮完拳（疲勞減速 90%）、抓完人時本來就幾乎不動，不算卡住
         if (m.tick < m.fatigueUntil + 5) stuck.reset();
         else if (stuck.update(m.tick, here.getX(), here.getY(), here.getZ(), lastStep)) onStuck();
@@ -1104,7 +1128,11 @@ final class AiGhost {
      * 沿著路線走：路點之間的直線是確認過留了身體寬度的，但鬼到達路點時不一定剛好在格子中間（0.45 格內就算到），
      * 從偏掉的位置直接斜衝向下一個路點，身體會擦到桌角、木桶。所以瞄準「路線上、鬼的投影往前 1 格」的點，偏了會被拉回線上。
      */
-    private double[] lineAim(Location a, Location b, Location here) {
+    /**
+     * 沿線走的瞄準點：自己在 a→b 上的投影往前 ahead 格。超過 b 而且有下一個路點 next 時，多出來的沿 b→next 走
+     * （回傳的第三個值是 1，呼叫的人要確認切過去的直線沒擋到）；否則停在 b。
+     */
+    private double[] lineAim(Location a, Location b, Location here, double ahead, Location next) {
         double ax = a.getX(), az = a.getZ(), bx = b.getX(), bz = b.getZ();
         double len = Math.hypot(bx - ax, bz - az);
         if (len < 0.01) return new double[]{bx, bz, 0};
@@ -1112,20 +1140,50 @@ final class AiGhost {
         double t = (here.getX() - ax) * ux + (here.getZ() - az) * uz;
         double off = Math.abs((here.getX() - ax) * uz - (here.getZ() - az) * ux);
         if (off > 1.2 || t > len) return new double[]{bx, bz, 0}; // 離線太遠（被推開了）：直接往路點走
-        double ahead = Math.min(len, Math.max(0, t) + 1.0);
-        return new double[]{ax + ux * ahead, az + uz * ahead, 0};
+        double s = Math.max(0, t) + ahead;
+        if (s <= len || next == null || Math.abs(next.getY() - b.getY()) > 0.5) {
+            double at = Math.min(len, s);
+            return new double[]{ax + ux * at, az + uz * at, 0};
+        }
+        double nx = next.getX(), nz = next.getZ(), len2 = Math.hypot(nx - bx, nz - bz);
+        if (len2 < 0.01) return new double[]{bx, bz, 0};
+        double over = Math.min(len2, s - len);
+        return new double[]{bx + (nx - bx) / len2 * over, bz + (nz - bz) / len2 * over, 1};
+    }
+
+    /** a→b 和 b→c 的轉角（度，0 是直走）。 */
+    private static double turnDegrees(Location a, Location b, Location c) {
+        double x1 = b.getX() - a.getX(), z1 = b.getZ() - a.getZ(), x2 = c.getX() - b.getX(), z2 = c.getZ() - b.getZ();
+        double l1 = Math.hypot(x1, z1), l2 = Math.hypot(x2, z2);
+        if (l1 < 0.01 || l2 < 0.01) return 0;
+        double cos = Math.max(-1, Math.min(1, (x1 * x2 + z1 * z2) / (l1 * l2)));
+        return Math.toDegrees(Math.acos(cos));
+    }
+
+    /** 從現在位置到瞄準點的直線（含身體寬度）都是普通可走格子。 */
+    private boolean chordClear(Location here, double[] aim) {
+        int a = nav.nearest(here, 1.0);
+        int b = nav.nearest(new Location(here.getWorld(), aim[0], here.getY(), aim[1]), 1.0);
+        return a >= 0 && b >= 0 && nav.nav.y(a) == nav.nav.y(b) && nav.clear(a, b);
     }
 
     /** 往 (dx, dz) 方向推一步（速度跟著速度屬性走，所以疲勞、加成都有效）。 */
     private void steer(double dx, double dz, double dh) {
+        steer(dx, dz, dh, 1.0);
+    }
+
+    /** scale：抵達減速的倍率（1 = 正常速度）。 */
+    private void steer(double dx, double dz, double dh, double scale) {
         if (dh < 1e-4) {
             lastStep = 0;
             return;
         }
         var attr = mob.getAttribute(Attribute.MOVEMENT_SPEED);
         double perTick = (attr == null ? 0.45 : attr.getValue()) * speedMul * 0.57; // 0.4635 ≈ 每 tick 0.265 格（實測每秒 5.3 格）
-        double step = Math.min(perTick, dh);
+        double step = Math.min(perTick * scale, dh);
         lastStep = step;
+        lastDirX = dx / dh;
+        lastDirZ = dz / dh;
         mob.setVelocity(new Vector(dx / dh * step, mob.getVelocity().getY(), dz / dh * step));
         mob.setRotation((float) Math.toDegrees(Math.atan2(-dx, dz)), 0);
         if (STUCK_DEBUG) {
