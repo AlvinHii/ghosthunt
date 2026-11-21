@@ -184,6 +184,34 @@ class GhostBrainTest {
     @Test
     void priorityOrder_isData() {
         assertEquals(List.of(Kind.ATTACK, Kind.CHASE, Kind.SABOTAGE_GATE, Kind.SEARCH_LAST_SEEN, Kind.INVESTIGATE_NOISE, Kind.GO_SENSED,
-                Kind.MOVE_CARD, Kind.CUT_POWER, Kind.GUARD_JAIL, Kind.PATROL), brain.order());
+                Kind.MOVE_CARD, Kind.CUT_POWER, Kind.GUARD_READER, Kind.GUARD_JAIL, Kind.AMBUSH, Kind.PATROL), brain.order());
+    }
+
+    // ---- 第三版第 2 批：埋伏、守讀卡機 ----
+
+    private static Situation calm(Point ambush, Point reader, boolean jailed) {
+        return new Situation(NOW, false, null, null, -1_000_000, null, -1_000_000, null,
+                false, false, false, false, List.of(), jailed, jailed ? new Point(5, 65, 5) : null, HERE, ambush, reader);
+    }
+
+    @Test
+    void ambush_whenPointGiven_beforePatrol() {
+        Goal g = brain.decide(calm(new Point(3, 65, 3), null, false));
+        assertEquals(Kind.AMBUSH, g.kind());
+        assertEquals(new Point(3, 65, 3), g.target());
+    }
+
+    @Test
+    void noise_beatsAmbush() {
+        Situation s = calm(new Point(3, 65, 3), null, false);
+        s = new Situation(s.tick(), false, null, null, -1_000_000, new Point(9, 65, 9), NOW - 10, null,
+                false, false, false, false, List.of(), false, null, HERE, s.ambush(), null);
+        assertEquals(Kind.INVESTIGATE_NOISE, brain.decide(s).kind());
+    }
+
+    @Test
+    void guardReader_whenSomeoneAuthorized() {
+        Goal g = brain.decide(calm(null, new Point(7, 65, 7), false));
+        assertEquals(Kind.GUARD_READER, g.kind());
     }
 }

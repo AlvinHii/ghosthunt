@@ -24,9 +24,19 @@ public final class GhostBrain {
                             Point noise, long noiseTick, Point sensed,
                             boolean cardRevealOpen, boolean cardMoveAvailable,
                             boolean powerOn, boolean cutPowerUsed, List<Point> sabotageableGates,
-                            boolean someoneJailed, Point jail, Point here) {}
+                            boolean someoneJailed, Point jail, Point here, Point ambush, Point readerWatch) {
+        /** 第二版的欄位（沒有埋伏點、守讀卡機點）。 */
+        public Situation(long tick, boolean blinded, Seen seen, Point lastSeen, long lastSeenTick,
+                         Point noise, long noiseTick, Point sensed,
+                         boolean cardRevealOpen, boolean cardMoveAvailable,
+                         boolean powerOn, boolean cutPowerUsed, List<Point> sabotageableGates,
+                         boolean someoneJailed, Point jail, Point here) {
+            this(tick, blinded, seen, lastSeen, lastSeenTick, noise, noiseTick, sensed, cardRevealOpen, cardMoveAvailable,
+                    powerOn, cutPowerUsed, sabotageableGates, someoneJailed, jail, here, null, null);
+        }
+    }
 
-    public enum Kind { CHASE, ATTACK, SEARCH_LAST_SEEN, INVESTIGATE_NOISE, GO_SENSED, MOVE_CARD, CUT_POWER, SABOTAGE_GATE, GUARD_JAIL, PATROL }
+    public enum Kind { CHASE, ATTACK, SEARCH_LAST_SEEN, INVESTIGATE_NOISE, GO_SENSED, MOVE_CARD, CUT_POWER, SABOTAGE_GATE, GUARD_READER, GUARD_JAIL, AMBUSH, PATROL }
 
     public record Goal(Kind kind, Point target, UUID victim) {}
 
@@ -77,8 +87,12 @@ public final class GhostBrain {
             new Rule(Kind.GO_SENSED, s -> s.sensed() != null, s -> new Goal(Kind.GO_SENSED, s.sensed(), null)),
             new Rule(Kind.MOVE_CARD, s -> s.cardRevealOpen() && s.cardMoveAvailable(), s -> new Goal(Kind.MOVE_CARD, null, null)),
             new Rule(Kind.CUT_POWER, s -> s.powerOn() && !s.cutPowerUsed(), s -> new Goal(Kind.CUT_POWER, null, null)),
+            // 有人授權了：去讀卡機附近的守望點守（AiGhost 決定點、時間上限）
+            new Rule(Kind.GUARD_READER, s -> s.readerWatch() != null, s -> new Goal(Kind.GUARD_READER, s.readerWatch(), null)),
             new Rule(Kind.GUARD_JAIL, s -> s.someoneJailed() && s.jail() != null && rnd.nextDouble() < cfg.guardJailChance(),
                     s -> new Goal(Kind.GUARD_JAIL, s.jail(), null)),
+            // 冷靜期：退場、繞到逃生者下一個目標的咽喉點埋伏（優先度在聲音之下、巡邏之上）
+            new Rule(Kind.AMBUSH, s -> s.ambush() != null, s -> new Goal(Kind.AMBUSH, s.ambush(), null)),
             new Rule(Kind.PATROL, s -> true, s -> new Goal(Kind.PATROL, null, null)));
     }
 
