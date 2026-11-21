@@ -2,7 +2,7 @@
 模組化藍圖（巨集圖＋模組）拼成一張完整地圖（格式見 docs/PvE大地圖_模組化prompt.md）。
 
 用法：python tools/assemble_macro_map.py <藍圖.md> <輸出.txt> [--md 拼好的原圖.md] [--id 代號] [--barrels N]
-  - 輸出 .txt 是 pve-maps 格式（[1F]/[2F]/[furniture]/[palette]），家具、調色盤用下面 PRESETS 裡同名的設定。
+  - 輸出 .txt 是 pve-maps 格式（[1F]/[2F]/[furniture]/[palette]）。家具用藍圖裡的 ```furniture 區塊（沒有才用下面 PRESETS），調色盤用 PRESETS。
   - --md 另外輸出一份「## 1F / ## 2F」的完整原圖，給 ghosthunt-map-check 檢查。
 
 規則：
@@ -162,6 +162,11 @@ def main():
     floors = [f for f in ('1F', '2F') if f in macro]
     grids = {f: assemble(macro, mods, f, log) for f in floors}
     furn, pal = PRESETS['mall']
+    # 藍圖裡有「```furniture」區塊就用它（md 是家具的唯一來源）；沒有才用上面的預設
+    fb = re.search(r'```furniture\r?\n(.*?)```', text, re.S)
+    if fb:
+        furn = fb.group(1)
+        print('家具：用藍圖裡的 ```furniture 區塊')
     with open(dst, 'w', encoding='utf-8', newline='\n') as fo:
         fo.write(f'name: {name.group(1) if name else mid}\ntype: indoor\n')
         fo.write('description: 雙層購物中心：中央挑高中庭（鬼的保全隔離亭），四周一圈店鋪，2F 迴廊商街（由模組化藍圖拼成）。\n')

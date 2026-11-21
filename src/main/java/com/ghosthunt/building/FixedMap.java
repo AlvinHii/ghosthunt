@@ -30,7 +30,21 @@ import java.util.Map;
 public final class FixedMap {
 
     /** 家具：由下往上的方塊；light = 頂上加一盞跟著電源亮暗的燈。 */
-    public record Furniture(List<Material> stack, boolean light) {}
+    /**
+     * 一種家具：由下往上的方塊、要不要接電源的燈，以及「|」後面的選項（{@code key=value} 或單字）：
+     * face=wall|aisle|table（正面朝向的規則）、axis=long（原木沿長邊）、front0／front1=方塊或 item_frame:物品／glow_item_frame:物品
+     * （正面那一格第 0／1 層貼的東西；只能是按鈕、拉桿或物品展示框這種不擋路的）、back1=活板門（第 1 層、椅背那一側）、
+     * top=方塊:one（每一座挑一格放在頂上，例如收銀台的螢幕）、vary0／vary1=方塊,方塊…（第 0／1 層照位置輪流換）、books（雕紋書架插滿書）。
+     */
+    public record Furniture(List<Material> stack, boolean light, Map<String, String> opts) {
+        public Furniture(List<Material> stack, boolean light) {
+            this(stack, light, Map.of());
+        }
+
+        public String opt(String k) {
+            return opts.get(k);
+        }
+    }
 
     public final String id;
     public final String name, type, description;
@@ -141,9 +155,16 @@ public final class FixedMap {
             }
             String v = e.getValue();
             boolean light = false;
+            Map<String, String> opts = new HashMap<>();
             int bar = v.indexOf('|');
             if (bar >= 0) {
-                light = v.substring(bar + 1).toLowerCase(Locale.ROOT).contains("light");
+                for (String tok : v.substring(bar + 1).trim().split("\s+")) {
+                    if (tok.isEmpty()) continue;
+                    int eq = tok.indexOf('=');
+                    if (eq > 0) opts.put(tok.substring(0, eq).toLowerCase(Locale.ROOT), tok.substring(eq + 1).toLowerCase(Locale.ROOT));
+                    else if (tok.equalsIgnoreCase("light")) light = true;
+                    else opts.put(tok.toLowerCase(Locale.ROOT), "true");
+                }
                 v = v.substring(0, bar);
             }
             List<Material> stack = new ArrayList<>();
@@ -152,7 +173,7 @@ public final class FixedMap {
                 if (mat != null) stack.add(mat);
             }
             if (stack.isEmpty()) stack.add(Material.SPRUCE_PLANKS);
-            m.furniture.put(e.getKey().charAt(0), new Furniture(stack, light));
+            m.furniture.put(e.getKey().charAt(0), new Furniture(stack, light, Map.copyOf(opts)));
         }
         if (m.floors.isEmpty()) m.problems.add("沒有任何一層（[1F]）");
         return m;

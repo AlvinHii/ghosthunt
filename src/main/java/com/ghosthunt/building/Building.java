@@ -82,6 +82,11 @@ public final class Building {
     public record Gadget(Pos trigger, Pos center) {}
     /** 迎賓鈴（右鍵→遠處的聲源響起，吸引鬼）。 */
     public final List<Pos> bells = new ArrayList<>();
+    /** 家具的裝飾方塊（書架、櫃子、按鈕、拉桿、椅背活板門……）：逃生者、鬼右鍵沒有反應。 */
+    public final java.util.Set<Pos> decor = new java.util.HashSet<>();
+    /** 家具正面的物品展示框（蓋完方塊以後才生成；固定、不能拿、不能打掉）。 */
+    public record DecorFrame(Pos at, org.bukkit.block.BlockFace facing, boolean glow, org.bukkit.Material item) {}
+    public final List<DecorFrame> decorFrames = new ArrayList<>();
     /** 迎賓鈴的聲源位置（例如涼亭）。 */
     public final List<Pos> lureSpots = new ArrayList<>();
     /** 球車遠光燈（按鈕→前方扇形強光，鬼看不到人＋緩速；每台次數有限）。 */

@@ -556,6 +556,39 @@ W..............#
 
 **參考**：[Store floor plan（Shopify）](https://www.shopify.com/blog/store-floor-plan)、[Store Layout Designs（Lumen Learning）](https://courses.lumenlearning.com/wm-retailmanagement/chapter/store-layout-designs/)、[Minecraft furniture guide（BisectHosting）](https://www.bisecthosting.com/blog/minecraft-furniture-guide-minecraft-cushions-build-hacks-more)、[Getting custom furniture in vanilla Minecraft（Apex Hosting）](https://apexminecrafthosting.com/blog/getting-custom-furniture-in-vanilla-minecraft/)
 
+### 家具設定（給程式讀的；改家具改這裡，`tools/assemble_macro_map.py` 會照這裡蓋）
+
+上面的表是給人看的設計說明，這一段是同一份設計的「機器版」：一行一種家具，`字母 = 方塊（由下往上）| 選項`。
+選項：`face=wall`（靠牆，正面朝空地）、`face=aisle`（朝空地最多的一側）、`face=table`（面向旁邊的桌子／櫃檯，沒有就面向銀幕）、
+`axis=long`（原木沿長邊）、`front0=`／`front1=`（正面那一格第 0／1 層貼的東西：按鈕、拉桿，或 `item_frame:物品`／`glow_item_frame:物品` 展示框）、
+`back1=`（椅背：第 1 層放打開的活板門）、`top=方塊:one`（每一座挑一格放頂上）、`vary0=`／`vary1=`（那一層照位置輪流換方塊）、`books`（雕紋書架插滿書）、`light`（接電源的燈）。
+正面那一格放的東西都不擋路；會擋路的（櫃檯的活板門面板、冰箱的鐵活板門）先不放。
+
+```furniture
+a = stripped_birch_wood, smooth_quartz, decorated_pot          # 島型展示櫃（頂上放展示的陶罐）
+b = bookshelf, chiseled_bookshelf, bookshelf | face=wall books # 高書架（中間那層插滿書、朝房間）
+c = chiseled_quartz_block, quartz_pillar, quartz_pillar, quartz_pillar   # 大理石柱（接到天花板）
+d = smooth_quartz | face=aisle top=iron_trapdoor:one           # 櫃檯／收銀台（每一座挑一格放立起的鐵活板門當螢幕）
+f = spruce_planks, white_wool, spruce_planks | face=wall vary1=white_wool,light_blue_wool,pink_wool,yellow_wool,lime_wool   # 服飾牆櫃
+g = birch_fence, birch_pressure_plate                          # 圓餐桌
+i = smoker, iron_block | face=wall vary0=smoker,blast_furnace  # 後廚檯（爐口朝房間）
+j = chiseled_bookshelf, brown_carpet | face=aisle books        # 平台書桌（書朝走道）
+k = oak_planks, stripped_oak_wood, oak_planks                  # 倉儲木箱堆（木桶是遊戲的容器，改成木板）
+l = polished_deepslate_wall, iron_chain, waxed_copper_bulb | light  # 立燈（跟著電源亮暗）
+m = white_concrete, red_concrete | face=wall front0=stone_button front1=item_frame:potion   # 自動販賣機（投幣口、飲料）
+n = spruce_planks, red_shulker_box | vary1=red_shulker_box,yellow_shulker_box,green_shulker_box,blue_shulker_box   # 商品貨架
+o = jukebox                                                    # 唱片機台
+p = polished_deepslate, moss_block, pink_petals                # 綠籬花台
+q = black_concrete, black_concrete, red_concrete | face=aisle front0=stone_button front1=glow_item_frame:map   # 遊戲機台
+r = black_concrete, white_concrete, white_concrete             # 電影銀幕
+s = brown_wool | face=table back1=spruce_trapdoor              # 座椅（面向桌子或銀幕，椅背是活板門）
+t = stripped_spruce_log | axis=long                            # 長椅
+u = quartz_block, quartz_block | face=wall                     # 冷藏櫃／冰箱
+x = spruce_planks, black_concrete | face=wall front1=glow_item_frame:map   # 電視展示（畫面）
+y = polished_deepslate, black_concrete | face=wall front0=lever front1=glow_item_frame:map   # 監視螢幕牆（控制桿、監視畫面）
+z = composter                                                  # 垃圾桶
+```
+
 ### 主題調色盤
 * **結構方塊**
   * 牆壁（`#`）：`polished_deepslate`（底層）＋`smooth_quartz`／`stone_bricks`（中上層，實心無玻璃）

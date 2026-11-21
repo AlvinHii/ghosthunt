@@ -108,7 +108,14 @@ public final class GameListener implements Listener {
     @EventHandler(priority = EventPriority.LOW)
     public void onInteract(PlayerInteractEvent e) {
         Match m = running();
-        if (m == null || e.getHand() != EquipmentSlot.HAND) return;
+        if (m == null) return;
+        // 家具裝飾（書架、櫃子、按鈕、拉桿、椅背）：兩隻手都沒反應（遊戲的機關不在 decor 裡）
+        if (e.getAction() == Action.RIGHT_CLICK_BLOCK && e.getClickedBlock() != null && m.isParticipant(e.getPlayer())
+                && m.b.decor.contains(new com.ghosthunt.building.Pos(e.getClickedBlock().getX(), e.getClickedBlock().getY(), e.getClickedBlock().getZ()))) {
+            e.setUseInteractedBlock(org.bukkit.event.Event.Result.DENY);
+            if (m.isGhost(e.getPlayer())) return;
+        }
+        if (e.getHand() != EquipmentSlot.HAND) return;
         Player p = e.getPlayer();
         if (!m.isParticipant(p)) return;
         Action a = e.getAction();

@@ -213,6 +213,7 @@ final class FixedMapGenerator {
         lights();
         map.connectPanes();
         barrels();
+        finishDecor();
         for (Pos p : b.ghostDoors) b.ghostDoorBlocks.put(p, map.get(p));
         for (Building.Gate g : b.gates) for (Pos p : g.opening()) b.gateBlocks.put(p, map.get(p));
         for (Pos p : b.doors) {
@@ -1025,7 +1026,9 @@ final class FixedMapGenerator {
         b.toppleSpots.add(new Building.ToppleSpot(blocks, best));
     }
 
+    /** 家具：照 [furniture] 的方塊由下往上疊；有朝向規則的照規則轉向，正面、頂上、椅背加裝飾（見 {@link FixedMap.Furniture}）。 */
     private void furniture() {
+        Map<Pos, Material> decor = new HashMap<>();
         for (int f = 0; f < F; f++) {
             for (int z = 0; z < H; z++) {
                 for (int x = 0; x < W; x++) {
@@ -1036,7 +1039,18 @@ final class FixedMapGenerator {
                         warnings.add("家具 " + c + " 沒有定義，用木板代替");
                         fu = new FixedMap.Furniture(List.of(Material.SPRUCE_PLANKS), false);
                     }
-                    for (int i = 0; i < fu.stack().size() && i < fh - 1; i++) map.set(at(f, x, i, z), solidData(fu.stack().get(i)));
+                    int[] dir = facing(f, x, z, c, fu);
+                    int n = Math.min(fu.stack().size(), fh - 1);
+                    for (int i = 0; i < n; i++) {
+                        Material mat = varied(fu, i, x, z);
+                        BlockData d = solidData(mat);
+                        orient(d, dir, fu, f, x, z, c);
+                        if (d instanceof org.bukkit.block.data.type.ChiseledBookshelf cb && fu.opt("books") != null)
+                            for (int k = 0; k < cb.getMaximumOccupiedSlots(); k++) cb.setSlotOccupied(k, true);
+                        Pos p = at(f, x, i, z);
+                        map.set(p, d);
+                        decor.put(p, mat);
+                    }
                     if (fu.light() && fu.stack().size() < fh - 1) {
                         Pos lp = at(f, x, fu.stack().size(), z);
                         if (map.passable(lp)) {
@@ -1044,8 +1058,165 @@ final class FixedMapGenerator {
                             b.lights.add(lp);
                         }
                     }
+                    if (dir != null) decorate(f, x, z, fu, dir, n, decor);
                     occupied.add(key(f, x, z));
                 }
+            }
+        }
+        // 每一座挑一格放頂上的東西（收銀台的螢幕）
+        for (Map.Entry<Character, FixedMap.Furniture> e : fm.furniture.entrySet()) {
+            String top = e.getValue().opt("top");
+            if (top == null) continue;
+            Material mat = fm.material(top.split(":")[0], null);
+            if (mat == null) continue;
+            for (int[] comp : components(e.getKey())) {
+                int[] dir = facing(comp[0], comp[1], comp[2], e.getKey(), e.getValue());
+                Pos p = at(comp[0], comp[1], height(e.getKey()), comp[2]);
+                if (!map.passable(p)) continue;
+                BlockData d = Bukkit.createBlockData(mat);
+                if (d instanceof org.bukkit.block.data.type.TrapDoor td) {
+                    td.setOpen(true);
+                    if (dir != null) td.setFacing(face(dir));
+                } else if (dir != null && d instanceof org.bukkit.block.data.Directional dd && dd.getFaces().contains(face(dir))) dd.setFacing(face(dir));
+                map.set(p, d);
+                decor.put(p, mat);
+            }
+        }
+        pendingDecor = decor;
+    }
+
+    /** furniture() 放的裝飾；最後（木桶、終端機……都放完）只留還沒被蓋掉的。 */
+    private Map<Pos, Material> pendingDecor = Map.of();
+
+    private void finishDecor() {
+        for (Map.Entry<Pos, Material> e : pendingDecor.entrySet()) if (map.type(e.getKey()) == e.getValue()) b.decor.add(e.getKey());
+        b.decorFrames.removeIf(fr -> !map.type(fr.at()).isAir()); // 後來放了拉桿、告示牌……的格子不掛展示框（不然會擋住點擊）
+    }
+
+    private static org.bukkit.block.BlockFace face(int[] d) {
+        if (d[0] > 0) return org.bukkit.block.BlockFace.EAST;
+        if (d[0] < 0) return org.bukkit.block.BlockFace.WEST;
+        return d[1] > 0 ? org.bukkit.block.BlockFace.SOUTH : org.bukkit.block.BlockFace.NORTH;
+    }
+
+    /** vary0／vary1：這一層照位置輪流換方塊（衣服顏色、貨架上的商品）。 */
+    private Material varied(FixedMap.Furniture fu, int layer, int x, int z) {
+        String v = fu.opt("vary" + layer);
+        if (v != null) {
+            String[] parts = v.split(",");
+            Material m = fm.material(parts[Math.floorMod(x * 7 + z * 3, parts.length)].strip(), null);
+            if (m != null) return m;
+        }
+        return fu.stack().get(layer);
+    }
+
+    /** 方塊本身有方向的（雕紋書架、煙燻爐、高爐）照正面轉；原木 axis=long 沿長邊。 */
+    private void orient(BlockData d, int[] dir, FixedMap.Furniture fu, int f, int x, int z, char c) {
+        if (d instanceof org.bukkit.block.data.Orientable o && "long".equals(fu.opt("axis"))) {
+            o.setAxis(longAxis(f, x, z, c));
+            return;
+        }
+        if (dir == null || !(d instanceof org.bukkit.block.data.Directional dd)) return;
+        org.bukkit.block.BlockFace bf = face(dir);
+        Material t = d.getMaterial();
+        boolean turn = t == Material.CHISELED_BOOKSHELF || t == Material.SMOKER || t == Material.BLAST_FURNACE || t == Material.FURNACE;
+        if (turn && dd.getFaces().contains(bf)) dd.setFacing(bf);
+    }
+
+    /** 長椅：沿著連在一起的同一種家具；單獨一格就沿空地比較長的方向。 */
+    private org.bukkit.Axis longAxis(int f, int x, int z, char c) {
+        if (at(f, x - 1, z) == c || at(f, x + 1, z) == c) return org.bukkit.Axis.X;
+        if (at(f, x, z - 1) == c || at(f, x, z + 1) == c) return org.bukkit.Axis.Z;
+        return openRun(f, x, z, 1, 0) + openRun(f, x, z, -1, 0) >= openRun(f, x, z, 0, 1) + openRun(f, x, z, 0, -1)
+                ? org.bukkit.Axis.X : org.bukkit.Axis.Z;
+    }
+
+    /** 從 (x, z) 往 (dx, dz) 方向（不含自己）有幾格連續的空地（最多 8）。 */
+    private int openRun(int f, int x, int z, int dx, int dz) {
+        int k = 0;
+        for (int i = 1; i <= 8; i++) {
+            if (!walkSide(f, x + dx * i, z + dz * i)) break;
+            k++;
+        }
+        return k;
+    }
+
+    /**
+     * 正面朝哪：wall = 背後是牆（或另一座家具）、正面朝空地最長的一側；aisle = 空地最長的一側；
+     * table = 面向相鄰的桌子 g 或櫃檯 d，都沒有就面向同一區最近的銀幕 r。沒有規則回傳 null。
+     */
+    private int[] facing(int f, int x, int z, char c, FixedMap.Furniture fu) {
+        String rule = fu.opt("face");
+        if (rule == null) return null;
+        if (rule.equals("table")) {
+            for (int[] d : DIRS) {
+                char nb = at(f, x + d[0], z + d[1]);
+                if (nb == 'g' || nb == 'd') return d;
+            }
+            int[] best = null;
+            double bd = 13;
+            for (int dz = -12; dz <= 12; dz++)
+                for (int dx = -12; dx <= 12; dx++) {
+                    if (at(f, x + dx, z + dz) != 'r') continue;
+                    double dist = Math.hypot(dx, dz);
+                    if (dist < bd) {
+                        bd = dist;
+                        best = Math.abs(dx) >= Math.abs(dz) ? new int[]{Integer.signum(dx), 0} : new int[]{0, Integer.signum(dz)};
+                    }
+                }
+            if (best != null) return best;
+            rule = "aisle";
+        }
+        int[] best = null;
+        int bestRun = Integer.MIN_VALUE;
+        for (int[] d : DIRS) {
+            int run = openRun(f, x, z, d[0], d[1]);
+            if (run == 0) continue;
+            if (rule.equals("wall")) {
+                char back = at(f, x - d[0], z - d[1]);
+                if (!(wallChar(back) || furn(back) || back == ' ')) run -= 100; // 背後不是牆：比較不像
+            }
+            if (run > bestRun) {
+                bestRun = run;
+                best = d;
+            }
+        }
+        return best;
+    }
+
+    /** 正面那一格的按鈕、拉桿、物品展示框；椅背活板門。 */
+    private void decorate(int f, int x, int z, FixedMap.Furniture fu, int[] dir, int n, Map<Pos, Material> decor) {
+        org.bukkit.block.BlockFace bf = face(dir);
+        for (int layer = 0; layer <= 1; layer++) {
+            String v = fu.opt("front" + layer);
+            if (v == null) continue;
+            int fx = x + dir[0], fz = z + dir[1];
+            if (!walkSide(f, fx, fz) || occupied.contains(key(f, fx, fz)) || reserved.contains(key(f, fx, fz))) continue;
+            Pos p = at(f, fx, layer, fz);
+            if (!map.type(p).isAir()) continue; // 地毯（障礙物記號）、光源、告示牌、門都不要蓋掉
+            String[] kv = v.split(":");
+            if (kv[0].equals("item_frame") || kv[0].equals("glow_item_frame")) {
+                Material item = kv.length > 1 ? fm.material(kv[1], Material.MAP) : Material.MAP;
+                b.decorFrames.add(new Building.DecorFrame(p, bf, kv[0].startsWith("glow"), item));
+                continue;
+            }
+            Material mat = fm.material(kv[0], null);
+            if (mat == null || mat.isOccluding()) continue; // 只放不擋路的東西（按鈕、拉桿）
+            BlockData d = Bukkit.createBlockData(mat);
+            if (d instanceof org.bukkit.block.data.FaceAttachable fa) fa.setAttachedFace(org.bukkit.block.data.FaceAttachable.AttachedFace.WALL);
+            if (d instanceof org.bukkit.block.data.Directional dd && dd.getFaces().contains(bf)) dd.setFacing(bf);
+            map.set(p, d);
+            decor.put(p, mat);
+        }
+        String back = fu.opt("back1");
+        if (back != null && n < fh - 1) {
+            Material mat = fm.material(back, null);
+            Pos p = at(f, x, n, z);
+            if (mat != null && map.passable(p) && Bukkit.createBlockData(mat) instanceof org.bukkit.block.data.type.TrapDoor td) {
+                td.setOpen(true);
+                td.setFacing(bf); // 打開的活板門貼在 facing 的反方向那一側 = 椅背
+                map.set(p, td);
+                decor.put(p, mat);
             }
         }
     }

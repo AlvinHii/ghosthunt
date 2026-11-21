@@ -161,26 +161,26 @@ G..............#....>>>>>.....#b.............#.nnnnnnnn.....#....<<<<<.....#
 
 [furniture]
 a = stripped_birch_wood, smooth_quartz, decorated_pot          # 島型展示櫃（頂上放展示的陶罐）
-b = bookshelf, chiseled_bookshelf, bookshelf                   # 高書架
+b = bookshelf, chiseled_bookshelf, bookshelf | face=wall books # 高書架（中間那層插滿書、朝房間）
 c = chiseled_quartz_block, quartz_pillar, quartz_pillar, quartz_pillar   # 大理石柱（接到天花板）
-d = smooth_quartz                                              # 櫃檯／收銀台／辦公桌
-f = spruce_planks, white_wool, spruce_planks                   # 服飾牆櫃
+d = smooth_quartz | face=aisle top=iron_trapdoor:one           # 櫃檯／收銀台（每一座挑一格放立起的鐵活板門當螢幕）
+f = spruce_planks, white_wool, spruce_planks | face=wall vary1=white_wool,light_blue_wool,pink_wool,yellow_wool,lime_wool   # 服飾牆櫃
 g = birch_fence, birch_pressure_plate                          # 圓餐桌
-i = smoker, iron_block                                         # 後廚檯
-j = chiseled_bookshelf, brown_carpet                           # 平台書桌
-k = oak_planks, stripped_oak_wood, oak_planks                  # 倉儲木箱堆（原設計用木桶；木桶是遊戲的容器，改成木板）
+i = smoker, iron_block | face=wall vary0=smoker,blast_furnace  # 後廚檯（爐口朝房間）
+j = chiseled_bookshelf, brown_carpet | face=aisle books        # 平台書桌（書朝走道）
+k = oak_planks, stripped_oak_wood, oak_planks                  # 倉儲木箱堆（木桶是遊戲的容器，改成木板）
 l = polished_deepslate_wall, iron_chain, waxed_copper_bulb | light  # 立燈（跟著電源亮暗）
-m = white_concrete, red_concrete                               # 自動販賣機
-n = spruce_planks, red_shulker_box                             # 商品貨架
+m = white_concrete, red_concrete | face=wall front0=stone_button front1=item_frame:potion   # 自動販賣機（投幣口、飲料）
+n = spruce_planks, red_shulker_box | vary1=red_shulker_box,yellow_shulker_box,green_shulker_box,blue_shulker_box   # 商品貨架
 o = jukebox                                                    # 唱片機台
 p = polished_deepslate, moss_block, pink_petals                # 綠籬花台
-q = black_concrete, black_concrete, red_concrete               # 遊戲機台
+q = black_concrete, black_concrete, red_concrete | face=aisle front0=stone_button front1=glow_item_frame:map   # 遊戲機台
 r = black_concrete, white_concrete, white_concrete             # 電影銀幕
-s = brown_wool                                                 # 座椅
-t = stripped_spruce_log                                        # 長椅
-u = quartz_block, quartz_block                                 # 冷藏櫃／冰箱
-x = spruce_planks, black_concrete                              # 電視展示
-y = polished_deepslate, black_concrete                         # 監視螢幕牆
+s = brown_wool | face=table back1=spruce_trapdoor              # 座椅（面向桌子或銀幕，椅背是活板門）
+t = stripped_spruce_log | axis=long                            # 長椅
+u = quartz_block, quartz_block | face=wall                     # 冷藏櫃／冰箱
+x = spruce_planks, black_concrete | face=wall front1=glow_item_frame:map   # 電視展示（畫面）
+y = polished_deepslate, black_concrete | face=wall front0=lever front1=glow_item_frame:map   # 監視螢幕牆（控制桿、監視畫面）
 z = composter                                                  # 垃圾桶
 
 [palette]
