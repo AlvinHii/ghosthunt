@@ -214,9 +214,31 @@ public final class Match {
 
     // ---- 開始 ----
 
+    /** 固定地圖：電源所在房間的門口告示牌加一行「⚡ 電源」（電源位置每局開局才決定）；on = false 時改回原本的字。 */
+    void labelPowerRoom(boolean on) {
+        if (b.placedLever == null || b.signRegion.isEmpty()) return;
+        Integer key = b.powerCandidateRegion.get(b.placedLever.add(0, -1, 0));
+        if (key == null) return;
+        for (Map.Entry<Pos, Integer> e : b.signRegion.entrySet()) {
+            if (!e.getValue().equals(key)) continue;
+            if (!(block(e.getKey()).getState() instanceof org.bukkit.block.Sign sign)) continue;
+            String[] lines = b.signs.getOrDefault(e.getKey(), new String[0]);
+            var side = sign.getSide(org.bukkit.block.sign.Side.FRONT);
+            // 跟 GhostHuntPlugin.writeSigns 一樣的排法：三行以內從第二行開始；「⚡ 電源」放在字下面第一個空行（滿了就蓋最後一行）
+            int off = lines.length >= 4 ? 0 : 1;
+            String[] show = {"", "", "", ""};
+            for (int i = 0; i < lines.length && i + off < 4; i++) show[i + off] = lines[i];
+            if (on) show[Math.min(3, lines.length + off)] = "⚡ 電源";
+            for (int i = 0; i < 4; i++)
+                side.line(i, Component.text(show[i], show[i].startsWith("⚡") ? NamedTextColor.GOLD : NamedTextColor.BLACK));
+            sign.update(true, false);
+        }
+    }
+
     public void start() {
         resetBuilding();
         obj.setup();
+        labelPowerRoom(true);
         stats.put("seed", b.seed);
         stats.put("ghostType", type.name());
         stats.put("survivors", survivors.size());
@@ -1367,6 +1389,7 @@ public final class Match {
         if (nightmare != null) nightmare.stop();
         if (audio != null) audio.stop();
         for (Survivor sv : survivors.values()) stopHeartbeat(sv, Bukkit.getPlayer(sv.id));
+        labelPowerRoom(false);
         if (aiGhost != null) {
             aiGhost.statsInto(stats);
             stats.put("dummyCatches", dummies.caught);

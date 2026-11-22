@@ -563,7 +563,8 @@ public final class GhostHuntPlugin extends JavaPlugin {
             if (!(world.getBlockAt(p.x(), p.y(), p.z()).getState() instanceof org.bukkit.block.Sign sign)) continue;
             org.bukkit.block.sign.SignSide side = sign.getSide(org.bukkit.block.sign.Side.FRONT);
             String[] lines = e.getValue();
-            for (int i = 0; i < lines.length && i < 4; i++) side.line(i + 1, Component.text(lines[i]));
+            int off = lines.length >= 4 ? 0 : 1; // 三行以內從第二行開始寫（看起來置中）
+            for (int i = 0; i < lines.length && i + off < 4; i++) side.line(i + off, Component.text(lines[i]));
             sign.setWaxed(true); // 不能編輯
             sign.update(true, false);
             n++;

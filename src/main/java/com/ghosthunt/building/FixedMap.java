@@ -53,6 +53,13 @@ public final class FixedMap {
     /** [層][z] 一行字串，已經用空白補齊成 W 寬。 */
     public final List<List<String>> floors = new ArrayList<>();
     public final Map<Character, Furniture> furniture = new HashMap<>();
+    /** 房間名稱（[rooms]）：樓層（0 起算）、範圍（含兩角）、名稱。門口的告示牌用。 */
+    public record RoomName(int floor, int x1, int z1, int x2, int z2, String name) {
+        public boolean contains(int f, int x, int z) {
+            return f == floor && x >= Math.min(x1, x2) && x <= Math.max(x1, x2) && z >= Math.min(z1, z2) && z <= Math.max(z1, z2);
+        }
+    }
+    public final List<RoomName> rooms = new ArrayList<>();
     public final Map<String, String> palette = new LinkedHashMap<>();
     /** [sounds] 區塊：每行一筆「key = value」（同一個 key 可以重複，例如好幾個 zone），見 game.MapAudio。 */
     public final List<String[]> sounds = new ArrayList<>();
@@ -112,6 +119,8 @@ public final class FixedMap {
         List<String[]> snd = new ArrayList<>(), inter = new ArrayList<>();
         String sec = null;
         List<String> cur = null;
+        List<RoomName> roomNames = new ArrayList<>();
+        List<String> problems0 = new ArrayList<>();
         for (String line0 : lines) {
             String line = line0.replace("\r", "").replace("\t", "    ");
             String st = line.strip();
@@ -138,6 +147,20 @@ public final class FixedMap {
             } else if (sec.equals("furniture") || sec.equals("palette")) {
                 int e = st.indexOf('=');
                 if (e > 0) (sec.equals("furniture") ? furn : pal).put(st.substring(0, e).strip(), st.substring(e + 1).strip());
+            } else if (sec.equals("rooms")) {
+                // 1F x1,z1 x2,z2 = 名稱
+                int e = st.indexOf('=');
+                if (e > 0) {
+                    String[] k = st.substring(0, e).trim().split("[ \\t]+");
+                    String name = st.substring(e + 1).trim();
+                    try {
+                        int f = Integer.parseInt(k[0].replaceAll("[^0-9]", "")) - 1;
+                        String[] a = k[1].split(","), b2 = k[2].split(",");
+                        roomNames.add(new RoomName(f, Integer.parseInt(a[0]), Integer.parseInt(a[1]), Integer.parseInt(b2[0]), Integer.parseInt(b2[1]), name));
+                    } catch (RuntimeException ex) {
+                        problems0.add("[rooms] 看不懂：" + st);
+                    }
+                }
             } else if (sec.equals("sounds") || sec.equals("interactions")) {
                 int e = st.indexOf('=');
                 if (e > 0) (sec.equals("sounds") ? snd : inter).add(new String[]{st.substring(0, e).strip().toLowerCase(Locale.ROOT), st.substring(e + 1).strip()});
@@ -145,6 +168,8 @@ public final class FixedMap {
         }
         for (List<String> f : raw) while (!f.isEmpty() && f.get(f.size() - 1).isBlank()) f.remove(f.size() - 1);
         FixedMap m = new FixedMap(id, meta, raw);
+        m.rooms.addAll(roomNames);
+        m.problems.addAll(problems0);
         m.palette.putAll(pal);
         m.sounds.addAll(snd);
         m.interactions.addAll(inter);

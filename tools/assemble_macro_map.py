@@ -92,12 +92,40 @@ def parse(path):
         if m:
             macro[f] = [r.split() for r in m.group(1).strip('\n').split('\n')]
     mods = {}
-    for m in re.finditer(r'### (1F|2F) (\S+?)[（(\s][^\n]*\n+```text\n(.*?)```', text, re.S):
-        rows = m.group(3).split('\n')
+    for m in re.finditer(r'### (1F|2F) (\S+?)[（(\s]([^\n]*)\n+```text\n(.*?)```', text, re.S):
+        rows = m.group(4).split('\n')
         if rows and rows[-1] == '':
             rows.pop()
         mods[(m.group(1), m.group(2))] = rows
+        # 標題括號裡最後一段是房間名稱：「1F RM_E（16×16，室內，北側大型書店）」→ 北側大型書店
+        title = m.group(3).rstrip('）)').split('，')[-1].strip()
+        title = re.sub(r'^[0-9]F\s*', '', title)  # 「2F 影城放映監控室」：樓層告示牌上已經有
+        TITLES[(m.group(1), m.group(2))] = title
     return macro, mods
+
+
+TITLES = {}
+
+
+def module_rects(macro, floor):
+    """每個模組在拼好的圖上佔的長方形 (x1, z1, x2, z2, 代號)。"""
+    grid = macro[floor]
+    R, C = len(grid), len(grid[0])
+    out, done = [], set()
+    for r in range(R):
+        for c in range(C):
+            tok = grid[r][c]
+            if tok == '----' or tok in done:
+                continue
+            done.add(tok)
+            c1 = c
+            while c1 + 1 < C and grid[r][c1 + 1] == tok:
+                c1 += 1
+            r1 = r
+            while r1 + 1 < R and grid[r1 + 1][c] == tok:
+                r1 += 1
+            out.append((15 * c, 15 * r, 15 * (c1 + 1), 15 * (r1 + 1), tok))
+    return out
 
 
 def assemble(macro, mods, floor, log):
@@ -177,6 +205,13 @@ def main():
             for row in grids[f]:
                 fo.write(row.rstrip() + '\n')
         fo.write('\n[furniture]\n' + furn.strip() + '\n\n[palette]\n' + pal.strip() + '\n')
+        # 房間名稱（門口的告示牌用）：每個模組的範圍＋藍圖標題裡的名稱
+        fo.write('\n[rooms]\n')
+        for f in floors:
+            for (x1, z1, x2, z2, tok) in module_rects(macro, f):
+                name = TITLES.get((f, tok))
+                if name:
+                    fo.write(f'{f} {x1},{z1} {x2},{z2} = {name}\n')
     if '--md' in opt:
         with open(opt['--md'], 'w', encoding='utf-8', newline='\n') as fo:
             fo.write(f'# {name.group(1) if name else mid}（拼好的原圖）\n\n| 字母 | 名稱 |\n| --- | --- |\n')

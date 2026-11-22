@@ -214,6 +214,7 @@ final class FixedMapGenerator {
         map.connectPanes();
         barrels();
         finishDecor();
+        roomSigns();
         for (Pos p : b.ghostDoors) b.ghostDoorBlocks.put(p, map.get(p));
         for (Building.Gate g : b.gates) for (Pos p : g.opening()) b.gateBlocks.put(p, map.get(p));
         for (Pos p : b.doors) {
@@ -993,6 +994,8 @@ final class FixedMapGenerator {
             occupied.add(key(f, x + wall[0], z + wall[1]));
         }
         b.powerCandidates.add(at(f, x, 0, z));
+        Region pr = regionAt(f, x, z);
+        if (pr != null) b.powerCandidateRegion.put(at(f, x, 0, z), f * 100000 + pr.id);
     }
 
     /** 可推倒的櫃子：連到 2 格內的開口（障礙物門口）。 */
@@ -1669,6 +1672,95 @@ final class FixedMapGenerator {
             }
         }
         return seen;
+    }
+
+    // ---- 門口的告示牌 ----
+
+    /** 這個區域的名稱：鬼房、監獄、保全室優先；其他照 [rooms]（重疊最多的那一塊）；都沒有回傳 null（不掛牌子）。 */
+    private String regionName(Region r) {
+        if (r.ghost) return "鬼房";
+        if (r.jail) return "監獄";
+        if (r.security) return "★保全室★";
+        FixedMap.RoomName best = null;
+        int bestN = 0;
+        for (FixedMap.RoomName rn : fm.rooms) {
+            int n = 0;
+            for (int[] t : r.tiles) if (rn.contains(r.f, t[0], t[1])) n++;
+            if (n > bestN) {
+                bestN = n;
+                best = rn;
+            }
+        }
+        if (best != null && bestN * 3 >= r.tiles.size()) return best.name();
+        return null;
+    }
+
+    /** 告示牌的四行：樓層、名稱（太長換行，一行最多 7 個字），保全室多一行說明。 */
+    private static String[] signLines(int f, String name) {
+        List<String> out = new ArrayList<>();
+        out.add((f + 1) + "F");
+        for (int i = 0; i < name.length() && out.size() < 3; i += 7) out.add(name.substring(i, Math.min(name.length(), i + 7)));
+        if (name.contains("保全室") && out.size() < 4) out.add("門禁卡授權");
+        return out.toArray(new String[0]);
+    }
+
+    /**
+     * 每個門口（門、雙開門、開口）兩邊的門框牆上掛告示牌，寫「門的另一邊是什麼」：
+     * 站在走廊看得到這間是什麼店、哪間是保全室。只掛在普通地面、空的格子（不擋終端機、電源、木桶）。
+     */
+    private void roomSigns() {
+        Set<Long> done = new HashSet<>();
+        for (int f = 0; f < F; f++) {
+            for (int z = 0; z < H; z++) {
+                for (int x = 0; x < W; x++) {
+                    char c = at(f, x, z);
+                    if ("DWO".indexOf(c) < 0 || done.contains(key(f, x, z))) continue;
+                    boolean px = passX(f, x, z);
+                    int tx = px ? 0 : 1, tz = px ? 1 : 0; // 沿著牆
+                    int nx = px ? 1 : 0, nz = px ? 0 : 1; // 穿過門
+                    int sx = x, sz = z;
+                    while (at(f, sx - tx, sz - tz) == c) {
+                        sx -= tx;
+                        sz -= tz;
+                    }
+                    int len = 0;
+                    while (at(f, sx + tx * len, sz + tz * len) == c) {
+                        done.add(key(f, sx + tx * len, sz + tz * len));
+                        len++;
+                    }
+                    for (int side = -1; side <= 1; side += 2) {
+                        // 這一邊（掛牌子）、另一邊（寫名字）
+                        Region here = regionAt(f, sx + nx * side, sz + nz * side);
+                        Region other = regionAt(f, sx - nx * side, sz - nz * side);
+                        if (here == null || other == null || here == other) continue;
+                        String name = regionName(other);
+                        if (name == null || name.equals(regionName(here))) continue;
+                        placeSign(f, sx, sz, len, tx, tz, nx * side, nz * side, other, name);
+                    }
+                }
+            }
+        }
+    }
+
+    /** 門框旁邊（開口前後、往外 1～2 格）找一個空的普通地面，掛一面朝這一邊的告示牌。 */
+    private void placeSign(int f, int sx, int sz, int len, int tx, int tz, int dx, int dz, Region other, String name) {
+        int[][] tries = {{-1}, {len}, {-2}, {len + 1}};
+        for (int[] t : tries) {
+            int wx = sx + tx * t[0], wz = sz + tz * t[0]; // 牆（門框）
+            if (!wallChar(at(f, wx, wz))) continue;
+            int cx = wx + dx, cz = wz + dz; // 牆前面那一格
+            char cc = at(f, cx, cz);
+            if (cc != '.' && cc != ',' && cc != ';') continue;
+            if (occupied.contains(key(f, cx, cz))) continue;
+            Pos p = at(f, cx, 1, cz);
+            if (!map.type(p).isAir() || !map.type(at(f, cx, 0, cz)).isAir()) continue;
+            org.bukkit.block.data.type.WallSign ws = (org.bukkit.block.data.type.WallSign) Bukkit.createBlockData(RoomBuilder.signMaterial(f));
+            ws.setFacing(face(new int[]{dx, dz}));
+            map.set(p, ws);
+            b.signs.put(p, signLines(f, name));
+            b.signRegion.put(p, f * 100000 + other.id);
+            return;
+        }
     }
 
     private void record() {

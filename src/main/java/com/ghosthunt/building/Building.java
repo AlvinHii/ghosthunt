@@ -62,6 +62,10 @@ public final class Building {
     public final List<BarricadeSpot> barricadeSpots = new ArrayList<>();
     /** 走廊上的告示牌和要寫的字（蓋好後才寫得上去）。 */
     public final Map<Pos, String[]> signs = new HashMap<>();
+    /** 固定地圖：每個告示牌寫的是哪個區域（樓層 × 100000 ＋ 區域編號）；開局時把電源所在的房間標出來用。 */
+    public final Map<Pos, Integer> signRegion = new HashMap<>();
+    /** 固定地圖：每個電源候選位置在哪個區域。 */
+    public final Map<Pos, Integer> powerCandidateRegion = new HashMap<>();
     /** 雙開門的下半部位置。 */
     public final List<Pos> doors = new ArrayList<>();
     /** 鬼房門口原本的方塊（每局開始時重新封起來用）。 */

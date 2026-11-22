@@ -192,3 +192,25 @@ fence = dark_oak_fence
 deck = smooth_stone
 room-floors = pink_terracotta, light_gray_terracotta, gray_concrete, cracked_stone_bricks, polished_diorite, stripped_spruce_wood, yellow_terracotta, polished_andesite, brown_terracotta, orange_terracotta, quartz_bricks, smooth_sandstone, light_blue_concrete, terracotta, polished_granite, lime_terracotta, white_terracotta, tuff_bricks, mud_bricks, cyan_terracotta, diorite, white_concrete, red_nether_bricks, andesite, purple_terracotta, red_terracotta, stripped_oak_wood, magenta_terracotta, granite, green_terracotta, stripped_birch_wood, cherry_planks
 door = dark_oak
+
+[rooms]
+1F 0,0 15,15 = 西側卸貨大門與冷凍庫
+1F 15,0 30,15 = 西北手扶梯大廳
+1F 30,0 45,15 = 北側大型書店
+1F 45,0 60,15 = 北側唱片與玩具店
+1F 60,0 75,15 = 東北手扶梯大廳
+1F 0,15 15,30 = 西側滯留拘留廣場
+1F 15,15 30,30 = 西側服務台與警衛室
+1F 30,15 60,45 = 中央挑高中庭與鬼房
+1F 60,15 75,30 = 東側美食街北區
+1F 15,30 30,45 = 西側家電賣場
+1F 60,30 75,45 = 東側美食街南區
+1F 30,45 45,60 = 南西生鮮超市
+1F 45,45 60,60 = 南東生活百貨
+1F 60,45 75,60 = 東南倉儲與值班室
+1F 30,60 45,75 = 南側主入口大廳
+1F 45,60 60,75 = 南側售票與防災中心
+2F 15,0 30,15 = 西北手扶梯迴廊
+2F 30,0 45,15 = 北側逃生陽台與藝廊
+2F 45,0 60,15 = 影城放映監控室
+2F 60,0 75,15 = 東北手扶梯迴廊
