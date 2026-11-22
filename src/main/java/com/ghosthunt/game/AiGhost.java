@@ -1590,7 +1590,10 @@ final class AiGhost {
                     // 困難：做事的聲音（中、高等級）→ 對方還沒發現鬼，從視線外摸過去
                     boolean sneak = c.tacticalApproach() && noiseLevel >= Match.NOISE_MID && nav != null;
                     sneakFrom = sneak ? nav.nearest(noise, 3) : -1;
-                    if (sneak && sneakFrom >= 0 && (rawGoal < 0 || nav.loc(rawGoal).distance(noise) > 2)) sneaks++;
+                    if (sneak && sneakFrom >= 0 && noiseTick != sneakNoiseTick) { // 每個聲音只算一次
+                        sneaks++;
+                        sneakNoiseTick = noiseTick;
+                    }
                     navigate(noise, mode);
                     sneakFrom = -1;
                 }
@@ -2007,6 +2010,7 @@ final class AiGhost {
     /** 去聲音的地方時，從這一格（聲音）看得到的格子要避開；-1 = 不用。 */
     private int sneakFrom = -1;
     private int sneaks;
+    private long sneakNoiseTick = Long.MIN_VALUE;
 
     private GridNav.Cost baseCost(Mode mode) {
         double bps = 5.3 * speedMul; // 每秒幾格
