@@ -39,6 +39,14 @@ public final class AudioConfig {
     public final List<Random> randoms = new ArrayList<>();
     public final List<String> problems = new ArrayList<>();
 
+    /** 「還沒播過」：夠小，但相減不會溢位（不能用 Long.MIN_VALUE，now − MIN_VALUE 會變成負的）。 */
+    public static final long NEVER = -1_000_000_000L;
+
+    /** 循環的環境音該不該重播：沒播過，或上次播到現在滿 loopTicks。 */
+    public static boolean due(long now, long lastStart, long loopTicks) {
+        return now - lastStart >= loopTicks;
+    }
+
     public boolean isEmpty() {
         return global == null && tunnel == null && zones.isEmpty() && randoms.isEmpty() && powerOn == null && powerOff == null;
     }

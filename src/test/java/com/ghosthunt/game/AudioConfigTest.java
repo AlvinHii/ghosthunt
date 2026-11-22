@@ -57,4 +57,18 @@ class AudioConfigTest {
         assertEquals(3, c.problems.size());
         assertTrue(c.isEmpty());
     }
+
+    // ---- 環境音什麼時候重播（以前用 Long.MIN_VALUE 當「沒播過」，相減溢位，全場和區域環境音從來沒播過） ----
+
+    @Test
+    void neverPlayed_isDueImmediately() {
+        org.junit.jupiter.api.Assertions.assertTrue(AudioConfig.due(0, AudioConfig.NEVER, 600));
+        org.junit.jupiter.api.Assertions.assertTrue(AudioConfig.due(123_456, AudioConfig.NEVER, 600));
+    }
+
+    @Test
+    void replaysEveryLoop() {
+        org.junit.jupiter.api.Assertions.assertFalse(AudioConfig.due(1000 + 599, 1000, 600));
+        org.junit.jupiter.api.Assertions.assertTrue(AudioConfig.due(1000 + 600, 1000, 600));
+    }
 }

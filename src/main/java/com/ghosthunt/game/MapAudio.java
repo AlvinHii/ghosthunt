@@ -25,7 +25,7 @@ final class MapAudio {
 
     private static final class State {
         AudioConfig.Track zone;
-        long zoneStart = Long.MIN_VALUE, globalStart = Long.MIN_VALUE;
+        long zoneStart = AudioConfig.NEVER, globalStart = AudioConfig.NEVER;
     }
 
     private MapAudio(Match m, AudioConfig c) {
@@ -61,7 +61,7 @@ final class MapAudio {
         Layout L = m.b.layout;
         for (Player p : m.world.getPlayers()) {
             State st = states.computeIfAbsent(p.getUniqueId(), k -> new State());
-            if (c.global != null && m.tick - st.globalStart >= loop) {
+            if (c.global != null && AudioConfig.due(m.tick, st.globalStart, loop)) {
                 play(p, c.global, 1f);
                 st.globalStart = m.tick;
             }
@@ -73,9 +73,9 @@ final class MapAudio {
             if (!Objects.equals(z, st.zone)) {
                 if (st.zone != null) p.stopSound(st.zone.sound(), SoundCategory.AMBIENT);
                 st.zone = z;
-                st.zoneStart = Long.MIN_VALUE;
+                st.zoneStart = AudioConfig.NEVER;
             }
-            if (z != null && m.tick - st.zoneStart >= loop) {
+            if (z != null && AudioConfig.due(m.tick, st.zoneStart, loop)) {
                 play(p, z, 1f);
                 st.zoneStart = m.tick;
             }
