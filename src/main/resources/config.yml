@@ -271,7 +271,7 @@ test-mode:                     # /gh start ai test [難度] [個性] [數量]：
 
 audio:                         # 地圖音效（地圖檔的 [sounds]）
   default-ambient: ghosthunt:ambient.default   # 地圖沒有自己的全場環境音時播的恐怖白噪音（空白 = 不播）
-  default-ambient-volume: 1.0
+  default-ambient-volume: 0.5    # 檔案已經放大過；太大聲會蓋掉遠處的心跳
   default-ambient-loop: 30     # 白噪音檔案幾秒（每這麼多秒重播一次）
 
 resource-pack:                 # 地圖音效的資源包（插件自己開一個小網頁伺服器送給玩家，進伺服器時會問要不要裝）

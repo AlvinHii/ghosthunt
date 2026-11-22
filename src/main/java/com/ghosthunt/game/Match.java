@@ -799,7 +799,8 @@ public final class Match {
 
     private void playStage(Survivor sv, Player p) {
         sv.heartStageStart = tick;
-        p.playSound(p.getLocation(), heartStageSounds.get(sv.heartStage - 1), org.bukkit.SoundCategory.MASTER, heartStageVolume, 1f);
+        // 跟著玩家播（音檔是單聲道：播在固定位置的話，走離那裡 16 格以上就聽不到了）
+        p.playSound(p, heartStageSounds.get(sv.heartStage - 1), org.bukkit.SoundCategory.MASTER, heartStageVolume, 1f);
     }
 
     /** 停掉正在播的那段心跳（被抓、熄燈、遊戲結束、鬼離太遠）。 */

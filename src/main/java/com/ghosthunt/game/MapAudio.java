@@ -110,6 +110,6 @@ final class MapAudio {
     }
 
     private static void play(Player p, AudioConfig.Track t, float pitch) {
-        p.playSound(p.getLocation(), t.sound(), SoundCategory.AMBIENT, t.volume(), pitch);
+        p.playSound(p, t.sound(), SoundCategory.AMBIENT, t.volume(), pitch); // 跟著玩家播：單聲道的音檔走遠也不會變小聲
     }
 }
