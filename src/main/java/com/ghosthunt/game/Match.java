@@ -59,6 +59,9 @@ public final class Match {
         double boostValue;
         double appliedBoost;
         long lastHeartbeat;
+        /** 心跳用的鬼距離（沿路），每半秒更新一次。 */
+        double heartDist = Double.POSITIVE_INFINITY;
+        long heartDistTick = -1_000;
         Location lastSample;
         long stillSince;
         boolean inHole;
@@ -167,6 +170,12 @@ public final class Match {
     private Match(Plugin plugin, Building b, World world, GameSettings s, GhostType type, UUID ghostId, String ghostName,
                   List<Player> survivorPlayers, Runnable onEnd) {
         this.plugin = plugin;
+        var hc = plugin.getConfig();
+        this.heart = new com.ghosthunt.game.ai.Heartbeat(hc.getDouble("heartbeat.range", 32), hc.getDouble("heartbeat.min-bpm", 55),
+                hc.getDouble("heartbeat.max-bpm", 150), hc.getDouble("heartbeat.min-volume", 0.3),
+                hc.getDouble("heartbeat.max-volume", 1.0), hc.getDouble("heartbeat.close-pitch", 1.15));
+        this.heartSound = hc.getString("heartbeat.sound", "minecraft:entity.warden.heartbeat");
+        this.heartPath = !"straight".equalsIgnoreCase(hc.getString("heartbeat.distance", "path"));
         this.b = b;
         this.world = world;
         this.s = s;
@@ -723,13 +732,34 @@ public final class Match {
             return;
         }
         if (!p.getWorld().equals(g.getWorld())) return;
-        double d = p.getLocation().distance(g.getLocation());
-        if (d > 32) return;
-        int interval = (int) (8 + (d / 32.0) * 32);
-        if (tick - sv.lastHeartbeat < interval) return;
+        if (tick - sv.heartDistTick >= 10) {
+            sv.heartDistTick = tick;
+            sv.heartDist = heartDistance(p.getLocation(), g.getLocation());
+        }
+        double d = sv.heartDist;
+        int interval = heart.intervalTicks(d);
+        if (interval < 0 || tick - sv.lastHeartbeat < interval) return;
         sv.lastHeartbeat = tick;
-        float vol = (float) Math.max(0.3, 1.0 - d / 40.0);
-        p.playSound(p.getLocation(), Sound.ENTITY_WARDEN_HEARTBEAT, vol, 1f);
+        p.playSound(p.getLocation(), heartSound, org.bukkit.SoundCategory.MASTER, (float) heart.volume(d), (float) heart.pitch(d));
+    }
+
+    private final com.ghosthunt.game.ai.Heartbeat heart;
+    private final String heartSound;
+    private final boolean heartPath;
+
+    /**
+     * 心跳的距離：AI 局用鬼的尋路圖算「鬼走過來要走的路」（不分樓層，沿樓梯；地洞每條邊 +2）；
+     * 真人鬼的局、尋路圖還沒建好、不在圖上時用直線距離。
+     */
+    private double heartDistance(Location p, Location g) {
+        double straight = p.distance(g);
+        if (!heartPath || aiGhost == null || aiGhost.navMap() == null || straight > heart.range()) return straight;
+        NavMap nav = aiGhost.navMap();
+        int a = nav.nearest(g, 3), b = nav.nearest(p, 3);
+        if (a < 0 || b < 0) return straight;
+        com.ghosthunt.game.ai.SoundField.Heard h = com.ghosthunt.game.ai.SoundField.hear(nav.nav, a, b, heart.range(),
+                e -> e.kind() == com.ghosthunt.game.ai.GridNav.Kind.HATCH ? 2 : 0, 0);
+        return h == null ? Double.POSITIVE_INFINITY : h.distance();
     }
 
     private void trackStillness(Survivor sv, Player p) {

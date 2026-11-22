@@ -2441,8 +2441,12 @@ final class AiGhost {
 
     // ---- 腳步聲 ----
 
+    /** 鬼的腳步聲（ai-ghost.footsteps，預設關：靠逃生者的心跳判斷距離）。 */
+    private Boolean footstepSounds;
+
     private void footsteps() {
-        if (m.tick % 7 != 0) return;
+        if (footstepSounds == null) footstepSounds = m.plugin.getConfig().getBoolean("ai-ghost.footsteps", false);
+        if (!footstepSounds || m.tick % 7 != 0) return;
         Location here = mob.getLocation();
         if (lastStepLoc != null && lastStepLoc.getWorld().equals(here.getWorld()) && lastStepLoc.distance(here) > 0.6) {
             Block below = here.clone().add(0, -0.2, 0).getBlock();

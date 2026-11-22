@@ -70,6 +70,7 @@ movement:
 ai-ghost:                      # PvE 的 AI 鬼（/gh start ai [easy|normal|hard]）
   difficulty: normal           # 預設難度（presets 底下的值會蓋掉下面的同名設定）
   mob: HUSK                    # 用哪種怪物當身體（要跟玩家差不多高：過得了門、鑽不過蹲伏小洞）
+  footsteps: false             # 鬼的腳步聲（關掉：只靠逃生者的心跳判斷鬼多近）
   base-speed: 0.45             # 基本速度（怪物的速度數值；約等於玩家跑步每秒 5.6 格）；依人數的加成、揮拳減速跟真人鬼一樣
   chase-speed: 1.0             # 看到人追的時候的速度倍率
   search-speed: 0.9            # 去聽到聲音、感應到的房間、追丟後找人、去弄壞大門
@@ -157,6 +158,16 @@ ai-ghost:                      # PvE 的 AI 鬼（/gh start ai [easy|normal|hard
       particles: 400
       intercept-chance: 1.0      # 困難：每次追人都算要不要繞前堵
       tactical-approach: 1       # 困難：從視線外摸過去
+
+heartbeat:                     # 逃生者的心跳（鬼越近越快、越大聲、音調越高；夢魘熄燈時改成低語）
+  sound: minecraft:entity.warden.heartbeat   # 音效（之後換成資源包的心跳，例如 ghosthunt:heartbeat）
+  distance: path               # path = 鬼走過來要走的路（隔牆要繞遠路就不會狂跳；AI 局才有，真人鬼的局用直線）、straight = 直線距離
+  range: 32                    # 幾格內有心跳
+  min-bpm: 55                  # 範圍邊緣每分鐘幾下
+  max-bpm: 150                 # 貼臉時每分鐘幾下
+  min-volume: 0.3
+  max-volume: 1.0
+  close-pitch: 1.15            # 貼臉時的音調（邊緣是 1.0）
 
 survivor:
   dash-duration: 1.5           # 緊急衝刺（F 鍵）持續時間
