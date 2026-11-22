@@ -25,6 +25,10 @@ public final class Items {
     public static final String SPEED = "speed";
     public static final String FLASHLIGHT = "flashlight";
     public static final String SCANNER = "scanner";
+    public static final String FUSE = "fuse";
+    public static final String ROOF_KEY = "roof_key";
+    public static final String COIN = "coin";
+    public static final String MEDKIT = "medkit";
     /** 門禁卡：keycard_1、keycard_2。 */
     public static final String KEYCARD = "keycard_";
 
@@ -92,6 +96,14 @@ public final class Items {
                     "右鍵開關：照亮前方，電量有限", "照到夢魘會打斷牠的追蹤，但也可能讓鬼看到你");
             case SCANNER -> make(Material.COMPASS, SCANNER, "掃描器", NamedTextColor.BLUE,
                     "右鍵：顯示最近的門禁卡（電源沒開時是電源開關）方向", "使用時會發出聲音");
+            case FUSE -> make(Material.GLOWSTONE_DUST, FUSE, "保險絲", NamedTextColor.GOLD,
+                    "裝到卸貨區貨梯旁的配電盤（要 2 個）", "裝的時候很大聲");
+            case ROOF_KEY -> make(Material.TRIPWIRE_HOOK, ROOF_KEY, "屋頂鑰匙", NamedTextColor.AQUA,
+                    "右鍵上鎖的鐵門打開它", "停機坪在屋頂");
+            case COIN -> make(Material.GOLD_NUGGET, COIN, "硬幣", NamedTextColor.YELLOW,
+                    "右鍵自動販賣機：隨機掉一個道具");
+            case MEDKIT -> make(Material.RED_DYE, MEDKIT, "急救包", NamedTextColor.RED,
+                    "被鬼打到時自動用掉：打倒 3 秒，不進監獄");
             default -> null;
         };
     }
@@ -111,6 +123,10 @@ public final class Items {
             case SPEED -> "加速藥水";
             case FLASHLIGHT -> "手電筒";
             case SCANNER -> "掃描器";
+            case FUSE -> "保險絲";
+            case ROOF_KEY -> "屋頂鑰匙";
+            case COIN -> "硬幣";
+            case MEDKIT -> "急救包";
             default -> id;
         };
     }

@@ -105,6 +105,13 @@ public final class GameListener implements Listener {
         m.onSwapHand(e.getPlayer());
     }
 
+    /** 看監視器時不能蹲下跳出攝影機（要按聊天窗的［離開］）。 */
+    @EventHandler
+    public void onStopSpectating(com.destroystokyo.paper.event.player.PlayerStopSpectatingEntityEvent e) {
+        Match m = running();
+        if (m != null && m.side != null && m.side.isViewing(e.getPlayer())) e.setCancelled(true);
+    }
+
     @EventHandler(priority = EventPriority.LOW)
     public void onInteract(PlayerInteractEvent e) {
         Match m = running();
@@ -129,6 +136,10 @@ public final class GameListener implements Listener {
 
         // 場景互動優先：木桶、總電源拉桿、讀卡機
         if (a == Action.RIGHT_CLICK_BLOCK && clicked != null) {
+            if (m.side != null && m.side.onClick(p, clicked)) { // v2 地圖的支線（貨梯、監視器、販賣機……）
+                e.setCancelled(true);
+                return;
+            }
             if (m.obj.isContainer(clicked)) {
                 e.setCancelled(true);
                 if (!m.isGhost(p)) m.obj.onContainer(p, clicked);

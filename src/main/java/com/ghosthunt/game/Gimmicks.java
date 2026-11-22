@@ -152,7 +152,7 @@ final class Gimmicks {
             Vector flat = new Vector(to.getX(), 0, to.getZ()).normalize();
             if (Math.toDegrees(Math.acos(Math.max(-1, Math.min(1, flat.dot(dir))))) > cartAngle) return false;
         }
-        var hit = from.getWorld().rayTraceBlocks(from, to.clone().normalize(), to.length(), FluidCollisionMode.NEVER, true);
+        var hit = from.getWorld().rayTraceBlocks(from, to.clone().normalize(), to.length(), FluidCollisionMode.NEVER, true, bl -> bl.getType() != org.bukkit.Material.BARRIER);
         return hit == null || hit.getHitBlock() == null;
     }
 

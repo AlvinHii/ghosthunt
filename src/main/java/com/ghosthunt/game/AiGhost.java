@@ -197,6 +197,7 @@ final class AiGhost {
         this.picker = new TargetPicker(0.6, 20, 6.0, 6.0);
         this.director = new SenseDirector(c.senseQuiet(), c.senseGap(), c.pressureLimit(), c.calmTime());
         this.stuck = new StuckTracker(Math.max(20, c.stuckTime()), 1.0);
+        this.crouchDarkSight = m.plugin.getConfig().getDouble("ai-ghost.crouch-dark-sight", 8);
         var cfg = m.plugin.getConfig();
         this.utility = !"rules".equalsIgnoreCase(cfg.getString("ai-ghost.brain", "utility"));
         this.learn = cfg.getBoolean("ai-ghost.learn", true) && !m.testMode(); // 測試局不寫學習記憶
@@ -740,9 +741,11 @@ final class AiGhost {
 
     /** 逃生者在尋路圖上的成本：小洞正常走、放了障礙物的門口過不去、卡住的門自己拆得開。 */
     private GridNav.Cost escaperCost() {
-        return EscaperCost.of(i -> m.isDoorJammed(nav.doors.get(i)), i -> m.barricadeIndexBarricaded(i),
+        GridNav.Cost base = EscaperCost.of(i -> m.isDoorJammed(nav.doors.get(i)), i -> m.barricadeIndexBarricaded(i),
                 i -> knownHatches.contains(i) && knownHatches.contains(i ^ 1), // 鬼只知道自己看過兩端的地洞
                 m.o.jamDoor() / 20.0 * c.escaperSpeed(), 2 * c.escaperSpeed());
+        // 上鎖的門、還沒打開的鐵捲門：逃生者也過不去（推理時不往那裡猜）
+        return e -> e.kind() == GridNav.Kind.DOOR && m.isDoorLocked(nav.doors.get(e.ref())) ? Double.POSITIVE_INFINITY : base.extra(e);
     }
 
     private boolean doorClosed(int d) {
@@ -761,7 +764,7 @@ final class AiGhost {
             Location eye = mob.getEyeLocation(), to = l.clone().add(0, 1, 0);
             org.bukkit.util.Vector dir = to.toVector().subtract(eye.toVector());
             if (dir.length() < 0.01) return true;
-            var hit = eye.getWorld().rayTraceBlocks(eye, dir.normalize(), dir.length(), FluidCollisionMode.NEVER, true);
+            var hit = eye.getWorld().rayTraceBlocks(eye, dir.normalize(), dir.length(), FluidCollisionMode.NEVER, true, bl -> bl.getType() != org.bukkit.Material.BARRIER);
             return hit == null || hit.getHitBlock() == null;
         }
         if (d > (m.obj.powerOn() ? c.sightRange() : c.sightRangeDark())) return false;
@@ -1288,15 +1291,22 @@ final class AiGhost {
         List<LivingEntity> out = new ArrayList<>();
         for (Player p : m.freeSurvivors()) if (!m.aiIgnores(p.getUniqueId())) out.add(p); // 測試模式被抓過的人：無視
         out.addAll(m.dummies.alive());
+        if (m.side != null) out.addAll(m.side.cameraBodies()); // 看監視器的人留在原地的身體
         return out;
     }
 
     /** 看得到 e 嗎：距離、視野角（身邊幾格不分方向）、三條視線（眼睛、胸口、腳）任一條沒被擋。 */
+    /** 停電、暗的地方蹲著的人：看得到的距離最多這麼遠（ai-ghost.crouch-dark-sight）。 */
+    private final double crouchDarkSight;
+
     private boolean canSee(LivingEntity e) {
         if (m.tick < blindUntil || !e.getWorld().equals(mob.getWorld())) return false;
         Location me = mob.getEyeLocation();
         double d = e.getLocation().distance(mob.getLocation());
-        double range = m.obj.powerOn() ? c.sightRange() : c.sightRangeDark();
+        // 修好配電箱的區域照有電算；暗的地方蹲著的人更難看到（crouch-dark-sight）
+        boolean lit = m.obj.powerOn() || (m.side != null && m.side.litAt(e.getLocation()));
+        double range = lit ? c.sightRange() : c.sightRangeDark();
+        if (!lit && e instanceof Player sp && sp.isSneaking()) range = Math.min(range, crouchDarkSight);
         if (d > range) return false;
         if (d > c.nearAware() && !inFront(e.getLocation(), c.fovDegrees())) return false;
         // 溫泉蒸氣：鬼在煙裡或人在煙裡都看不到（貼臉 2 格內除外）
@@ -1306,7 +1316,7 @@ final class AiGhost {
             Vector dir = to.toVector().subtract(me.toVector());
             double len = dir.length();
             if (len < 0.01) return true;
-            var hit = me.getWorld().rayTraceBlocks(me, dir.normalize(), len, FluidCollisionMode.NEVER, true);
+            var hit = me.getWorld().rayTraceBlocks(me, dir.normalize(), len, FluidCollisionMode.NEVER, true, bl -> bl.getType() != org.bukkit.Material.BARRIER);
             if (hit == null || hit.getHitBlock() == null) return true;
         }
         return false;
@@ -1461,7 +1471,7 @@ final class AiGhost {
             if (!t.getWorld().equals(mob.getWorld()) || t.distance(mob.getLocation()) > 16) continue;
             Location me = mob.getEyeLocation();
             Vector dir = t.toVector().subtract(me.toVector());
-            var hit = me.getWorld().rayTraceBlocks(me, dir.clone().normalize(), dir.length(), FluidCollisionMode.NEVER, true);
+            var hit = me.getWorld().rayTraceBlocks(me, dir.clone().normalize(), dir.length(), FluidCollisionMode.NEVER, true, bl -> bl.getType() != org.bukkit.Material.BARRIER);
             if (hit == null || hit.getHitBlock() == null) knownHatches.add(i);
         }
     }
@@ -1505,6 +1515,16 @@ final class AiGhost {
             if (secs < gs.remaining / 20.0) {
                 gates.add(pt(m.loc(gs.g.reader())));
                 gateSlack = Math.min(gateSlack, (gs.remaining / 20.0 - secs) / Math.max(1, gs.remaining / 20.0));
+            }
+        }
+        // 倒數中的貨梯跟大門一樣：趕得上就去弄壞（站 4 秒，倒數回到滿，一次）
+        Location elev = m.side == null ? null : m.side.elevatorTarget();
+        if (elev != null) {
+            double secs = travelSeconds(elev) + m.o.ghostSabotage() / 20.0;
+            double left = m.side.elevatorTicksLeft() / 20.0;
+            if (secs < left) {
+                gates.add(pt(elev));
+                gateSlack = Math.min(gateSlack, (left - secs) / Math.max(1, left));
             }
         }
         int jailed = 0;
@@ -1552,6 +1572,7 @@ final class AiGhost {
         if (inReach) {
             mob.swingMainHand();
             if (t instanceof Player p) m.ghostHit(p);
+            else if (m.side != null && m.side.hitBody(t)) forget(t.getUniqueId()); // 打到看監視器的人的身體 = 抓到那個人
             else {
                 m.ghostSwing();
                 catches++;
@@ -1625,6 +1646,14 @@ final class AiGhost {
             }
             case SABOTAGE_GATE -> {
                 Location reader = toLoc(g.target());
+                Location elevT = m.side == null ? null : m.side.elevatorTarget();
+                if (elevT != null && elevT.distance(reader) < 1) {
+                    if (reader.distance(here) <= 2.5) {
+                        stopMoving();
+                        m.side.ghostSabotageElevator(mob);
+                    } else navigate(reader, mode);
+                    return;
+                }
                 if (reader.distance(here) <= 2.5) {
                     for (Objectives.GateState gs : m.obj.runningUnsabotagedGates()) {
                         if (m.loc(gs.g.reader()).distance(reader) < 0.5) {
@@ -1856,7 +1885,7 @@ final class AiGhost {
             if (d < min || d > max) continue;
             Location eye = l.clone().add(0, 1.6, 0), cage = jail.clone().add(0, targetHeight, 0);
             Vector dir = cage.toVector().subtract(eye.toVector());
-            var hit = eye.getWorld().rayTraceBlocks(eye, dir.clone().normalize(), dir.length(), FluidCollisionMode.NEVER, true);
+            var hit = eye.getWorld().rayTraceBlocks(eye, dir.clone().normalize(), dir.length(), FluidCollisionMode.NEVER, true, bl -> bl.getType() != org.bukkit.Material.BARRIER);
             if (hit == null || hit.getHitBlock() == null) {
                 cands.add(l);
                 candNodes.add(i);
@@ -1946,6 +1975,7 @@ final class AiGhost {
             // 學會「鑽地洞」：有地洞出入口的區常去看
             if (hatchRoomBonus > 0 && hatchRooms.contains(r.id())) w *= 1 + hatchRoomBonus;
             Location l = m.loc(room.center());
+            if (m.side != null) w *= m.side.patrolBias(l); // 有人在推進的支線附近（貨梯、下水道、停機坪）常去看
             for (Map.Entry<Location, Long> b : badTargets.entrySet())
                 if (b.getValue() > m.tick && b.getKey().getWorld().equals(l.getWorld()) && b.getKey().distance(l) < 4) w = 0;
             return w;
@@ -2025,7 +2055,8 @@ final class AiGhost {
         double bps = 5.3 * speedMul; // 每秒幾格
         return e -> switch (e.kind()) {
             case WALK, STAIR -> 0;
-            case DOOR -> m.isDoorJammed(nav.doors.get(e.ref())) ? m.o.breakJam() / 20.0 * bps / 2 : 0.15;
+            case DOOR -> m.isDoorLocked(nav.doors.get(e.ref())) ? Double.POSITIVE_INFINITY // 上鎖的門、關著的鐵捲門：鬼打不開
+                    : m.isDoorJammed(nav.doors.get(e.ref())) ? m.o.breakJam() / 20.0 * bps / 2 : 0.15;
             case BARRICADE -> m.barricadeIndexBarricaded(e.ref()) ? m.s.breakBarricade() / 20.0 * bps / 2 : 0;
             case HOLE -> m.isHoleWidened(e.ref()) ? 0
                     : mode == Mode.CALM ? Double.POSITIVE_INFINITY
@@ -2366,7 +2397,7 @@ final class AiGhost {
             if (!(bl.getBlockData() instanceof Door d) || d.isOpen()) continue;
             if (nav.loc(id).distance(mob.getLocation()) > 2.2) continue;
             Pos lower = new Pos(bl.getX(), bl.getY(), bl.getZ());
-            if (m.isDoorJammed(lower)) continue;
+            if (m.isDoorJammed(lower) || m.isDoorLocked(lower)) continue;
             m.setDoorOpenPublic(lower, true);
             ghostChangedDoorsNear(lower, 1);
             m.world.playSound(bl.getLocation(), Sound.BLOCK_WOODEN_DOOR_OPEN, 1f, 0.9f);

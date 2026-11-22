@@ -87,6 +87,9 @@ final class Interactions {
     /** 做這件事的聲音有多重要：刷卡、授權、開／修電源是高；其他（翻木桶……）是低。 */
     private static int noiseLevel(String key) {
         if (key.startsWith("gate:") || key.startsWith("authorize:") || key.equals("power")) return Match.NOISE_HIGH;
+        // 支線：裝保險絲、呼叫貨梯、輸入下水道密碼、開鐵捲門很大聲；修配電箱、投幣、拉備用電源中等
+        if (key.equals("fuse") || key.equals("elev") || key.equals("sewer") || key.startsWith("shutter:")) return Match.NOISE_HIGH;
+        if (key.startsWith("breaker:") || key.startsWith("vend:") || key.startsWith("backup:")) return Match.NOISE_MID;
         return Match.NOISE_LOW;
     }
 

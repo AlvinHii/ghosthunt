@@ -37,7 +37,7 @@ map:
   max-dead-ends-per-floor: 2   # 生成後檢查：每層最多幾條死路
 
 pve:                           # PvE 小地圖（/gh build pve）：2～3 個逃生者對抗 AI 鬼
-  map: mall                    # 固定地圖（plugins/GhostHunt/pve-maps/名字.txt，格式見 docs/PvE地圖格式.md）；random = 用下面的外型隨機產生
+  map: mall2                   # 固定地圖（plugins/GhostHunt/pve-maps/名字.txt，格式見 docs/PvE地圖格式.md）；random = 用下面的外型隨機產生
   reroll-each-match: true      # 固定地圖每局開始前重蓋一次：大門、保全室、木桶重新隨機
   ghost-room: false            # false = 不用鬼房：逃生者隨機分散出生，鬼出生在離所有人最遠的地方，開局就放出來（馬上可以抓）
   spawn-spread: 15             # 不用鬼房時，逃生者彼此至少隔幾格出生
@@ -95,6 +95,7 @@ ai-ghost:                      # PvE 的 AI 鬼（/gh start ai [easy|normal|hard
   sense-gap: 45                # 兩次感應至少隔多久
   big-map-nodes: 8000          # 尋路圖超過這麼多格算大地圖（mall 約 9000、mall_m 約 7500）
   big-map-sense-scale: 0.67    # 大地圖的感應間隔乘這個（普通 45→30 秒、困難 30→20 秒、簡單 75→50 秒）
+  crouch-dark-sight: 8         # 停電、暗的地方蹲著的人：鬼最多看得到幾格（站著照平常的 sight-range-dark）
   pressure-limit: 60           # 壓力值：近距離看得到人時每秒 +1，到這個值（連續緊追太久）進入冷靜期
   calm-time: 30                # 冷靜期（也包括剛抓到人之後）：不感應、巡邏偏向遠的地方
   guard-jail-chance: 0.5       # 有人被關時去守監獄的機率
@@ -270,6 +271,29 @@ match:
   time-limit: 1020             # 17 分鐘強制結束
   record-stats: true           # 每局結束把數據寫進記錄檔
   # 不分勝負：場上沒有能自由行動的逃生者時立刻結束，只顯示每個人的結果
+
+side:                          # v2 地圖（mall2）的支線任務和額外的逃生路線（docs/支線任務候選.md）；地圖沒有這些東西就不會出現
+  extra-routes: [1, 2]         # 大門以外，每局隨機另外開放幾條逃生路線（最少, 最多；從貨梯、直升機、下水道挑）
+  fuse-install: 4              # 貨梯：裝一個保險絲要站幾秒（要 2 個，很大聲）
+  elevator-call: 3             # 貨梯：呼叫要站幾秒
+  elevator-countdown: 30       # 貨梯：呼叫後幾秒到（要有人站在貨梯廂裡才倒數）；鬼可以弄壞一次（倒數回到滿）
+  radio-call: 5                # 直升機：用無線電呼叫要站幾秒（全圖聽得到，鬼一定會來）
+  heli-hold: 60                # 直升機：要守停機坪幾秒（停機坪上有人時才計時）
+  heli-noise-every: 10         # 直升機：等待期間每幾秒一次全圖聽得到的聲音
+  notes: 3                     # 下水道：密碼紙條幾張（每張一位數）
+  sewer-code: 5                # 下水道：輸入密碼要站幾秒（很大聲）
+  pa-uses: 2                   # 廣播：一局幾次
+  pa-operate: 3                # 廣播：操作要站幾秒
+  pa-duration: 10              # 廣播：喇叭響幾秒（AI 不管多遠都聽得到）
+  vending-time: 2              # 販賣機：投幣要站幾秒
+  coins: [3, 4, 5]             # 木桶裡的硬幣數量（依人數 3／4／5）
+  medkits: [1, 1, 2]           # 急救包數量（依人數）
+  medkit-down: 3               # 急救包：被打倒幾秒
+  breaker-repair: 4            # 區域配電箱：修要站幾秒（修好那一區停電也亮）
+  shutter-open: 3              # 鐵捲門：按開關要站幾秒（很大聲；打開後一直開著，鬼也能走）
+  backup-power-hold: 3         # 雙人備用電源：兩根拉桿各站幾秒（兩邊要在 3 秒內都拉完）
+  camera-notice-cooldown: 10   # 監視器：被鬼發現有人在看之後，幾秒內不會再通知
+  rules: true                  # 每局隨機一條「今晚的規則」
 
 test-mode:                     # /gh start ai test [難度] [個性] [數量]：你當逃生者，被抓一次立刻重生、之後 AI 鬼無視你
   dummies: 3                   # 鬼出來時自動生幾個假逃生者（指令後面加數字可以改）

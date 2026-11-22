@@ -148,7 +148,7 @@ final class ItemUse {
     private void moveLight(Player p) {
         Location eye = p.getEyeLocation();
         Vector dir = eye.getDirection();
-        RayTraceResult hit = p.getWorld().rayTraceBlocks(eye, dir, o.flashRange(), FluidCollisionMode.NEVER, true);
+        RayTraceResult hit = p.getWorld().rayTraceBlocks(eye, dir, o.flashRange(), FluidCollisionMode.NEVER, true, bl -> bl.getType() != org.bukkit.Material.BARRIER);
         Location spot = hit != null ? hit.getHitPosition().toLocation(p.getWorld()).subtract(dir.clone().multiply(0.6))
                 : eye.clone().add(dir.clone().multiply(o.flashRange() * 0.7));
         Pos target = new Pos(spot.getBlockX(), spot.getBlockY(), spot.getBlockZ());

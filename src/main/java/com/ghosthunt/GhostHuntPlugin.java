@@ -79,7 +79,7 @@ public final class GhostHuntPlugin extends JavaPlugin {
     public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command,
                              @NotNull String label, @NotNull String[] args) {
         String sub = args.length == 0 ? "info" : args[0].toLowerCase(Locale.ROOT);
-        if (!sub.equals("info") && !sender.hasPermission("ghosthunt.admin")) {
+        if (!sub.equals("info") && !sub.equals("cam") && !sub.equals("pa") && !sender.hasPermission("ghosthunt.admin")) {
             msg(sender, "沒有權限。", NamedTextColor.RED);
             return true;
         }
@@ -122,6 +122,19 @@ public final class GhostHuntPlugin extends JavaPlugin {
                 }
                 match.spawnDummies(n);
                 msg(sender, "生出 " + n + " 個假逃生者。", NamedTextColor.GREEN);
+            }
+            case "sidetest" -> {
+                // 測試用：直接把每個支線做一遍
+                if (match == null || match.sideTest().isEmpty()) {
+                    msg(sender, "要先開一局 mall2 這種有支線的地圖。", NamedTextColor.RED);
+                    break;
+                }
+                for (String line : match.sideTest()) msg(sender, "[支線測試] " + line, NamedTextColor.AQUA);
+            }
+            case "cam", "pa" -> {
+                // 監視器、廣播（聊天窗點的按鈕；玩家可以用）
+                if (!(sender instanceof Player p) || match == null || args.length < 2) break;
+                match.sideCommand(p, sub, args[1]);
             }
             case "aimemory" -> {
                 // /gh aimemory reset [地圖|all]：清掉 AI 鬼學到的東西

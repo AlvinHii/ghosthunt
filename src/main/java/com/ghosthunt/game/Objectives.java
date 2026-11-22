@@ -165,6 +165,7 @@ final class Objectives {
             int n = GameSettings.bySurvivors(e.getValue(), m.survivors.size());
             for (int i = 0; i < n; i++) loot.add(e.getKey());
         }
+        if (m.side != null && m.side.noScanners()) loot.removeIf(Items.SCANNER::equals);
         Collections.shuffle(loot, m.rnd);
         List<Pos> free = new ArrayList<>();
         for (Pos p : all) if (!content.containsKey(p)) free.add(p);
@@ -172,6 +173,18 @@ final class Objectives {
         for (String it : loot) {
             if (i >= free.size()) break;
             content.put(free.get(i++), it);
+        }
+        // 支線的東西（保險絲、屋頂鑰匙、硬幣、急救包）放在剩下的空木桶；屋頂鑰匙的箱子鎖起來
+        if (m.side != null) {
+            List<Pos> empty = new ArrayList<>();
+            for (Pos p : all) if (!content.containsKey(p)) empty.add(p);
+            int k = 0;
+            for (String it : m.side.extraLoot()) {
+                if (k >= empty.size()) break;
+                Pos p = empty.get(k++);
+                content.put(p, it);
+                if (Items.ROOF_KEY.equals(it)) lock(p);
+            }
         }
         // 誘餌上鎖箱：挑有道具的箱子鎖起來，「上鎖」不等於「卡在這裡」
         int decoys = 0;
@@ -286,6 +299,11 @@ final class Objectives {
     }
 
     private long powerOnTick;
+
+    /** 支線（雙人備用電源）直接通電。 */
+    void forcePowerOn(String message) {
+        if (!powerOn) setPower(true, message);
+    }
 
     private void setPower(boolean on, String message) {
         powerOn = on;

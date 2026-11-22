@@ -1244,6 +1244,7 @@ final class FixedMapGenerator {
                         Pos p = at(f, x, i, z);
                         map.set(p, d);
                         decor.put(p, mat);
+                        if (c == 'm') b.vendingCells.add(p); // 自動販賣機：支線（投硬幣）
                     }
                     if (fu.light() && fu.stack().size() < fh - 1) {
                         Pos lp = at(f, x, fu.stack().size(), z);

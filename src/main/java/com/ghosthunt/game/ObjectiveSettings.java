@@ -67,6 +67,8 @@ record ObjectiveSettings(
     }
 
     int maxOf(String itemId) {
+        if (Items.FUSE.equals(itemId)) return 2;
+        if (Items.COIN.equals(itemId)) return 3;
         return Items.BARRICADE.equals(itemId) ? maxBarricades : maxCarry;
     }
 }

@@ -99,6 +99,8 @@ public final class Match {
     static final int NOISE_LOW = 0, NOISE_MID = 1, NOISE_HIGH = 2;
     /** 地圖變了（障礙物、卡門、打大洞口、撬開地洞）就加一，AI 鬼看到就重新找路。 */
     long mapVersion;
+    /** v2 地圖的支線（沒有的地圖是 null）。 */
+    SideQuests side;
     /** 測試用的假逃生者（/gh dummy）。 */
     final TestDummies dummies = new TestDummies(this);
 
@@ -216,6 +218,7 @@ public final class Match {
         this.obj = new Objectives(this);
         this.items = new ItemUse(this);
         this.audio = MapAudio.create(this);
+        this.side = SideQuests.present(b) ? new SideQuests(this) : null;
         this.gimmicks = Gimmicks.create(this);
     }
 
@@ -244,6 +247,7 @@ public final class Match {
 
     public void start() {
         resetBuilding();
+        if (side != null) side.setup(); // 先決定今晚的路線（木桶要放保險絲、鑰匙……）
         obj.setup();
         labelPowerRoom(true);
         stats.put("seed", b.seed);
@@ -300,6 +304,7 @@ public final class Match {
             if (p == null) continue;
             preparePlayer(p);
             p.getInventory().setItem(0, Items.barricade(1));
+            if (side != null && side.rule.equals("smoke")) p.getInventory().addItem(Items.of(Items.SMOKE));
             if (aiSpawns != null && !aiSpawns.isEmpty()) p.teleport(aiSpawns.get(i++ % aiSpawns.size()));
             else p.teleport(loc(spawns.get(i++ % spawns.size())));
             sv.lastSample = p.getLocation();
@@ -593,6 +598,7 @@ public final class Match {
         escapes();
         if (nightmare != null) nightmare.tick(g);
         if (audio != null && tick % 20 == 0) audio.tick();
+        if (side != null) side.tick();
         if (gimmicks != null) gimmicks.tick();
         if (tick % 10 == 0 && g instanceof Player gp) ghostHud(gp);
         if (tick % 200 == 0) refreshSurvivorFog();
@@ -646,6 +652,11 @@ public final class Match {
         obj.dropCards(victim, victim.getLocation());
         stats.merge("captures", 1, (a, c) -> (Integer) a + (Integer) c);
         stat("firstCaptureAt", tick / 20, false);
+        if (side != null && side.tryMedkit(victim)) {
+            sv.captures--;
+            sv.protectedUntil = tick + 60; // 打倒 3 秒（不能再被抓）
+            return;
+        }
         if (aiGhost != null) aiGhost.onCatch(victim.getUniqueId());
         victim.removePotionEffect(PotionEffectType.GLOWING);
         world.playSound(victim.getLocation(), Sound.ENTITY_PLAYER_HURT, 2f, 0.6f);
@@ -1372,6 +1383,42 @@ public final class Match {
 
     // ---- 逃出 ----
 
+    /** 從大門以外的路線逃出去（貨梯、直升機、下水道）。 */
+    void escapeVia(Player p, String message, Location cardsAt) {
+        Survivor sv = survivors.get(p.getUniqueId());
+        if (sv == null || sv.status != Status.FREE) return;
+        sv.status = Status.ESCAPED;
+        acts.cancel(sv.id, null);
+        if (aiGhost != null) aiGhost.forget(sv.id);
+        obj.dropCards(p, cardsAt);
+        p.removePotionEffect(PotionEffectType.GLOWING);
+        p.setGameMode(GameMode.SPECTATOR);
+        p.showTitle(Title.title(Component.text("逃出去了！", NamedTextColor.GREEN), Component.text("可以觀戰剩下的人", NamedTextColor.GRAY)));
+        broadcast(p.getName() + " " + message, NamedTextColor.GREEN);
+        stat("firstEscapeAt", tick / 20, false);
+    }
+
+    private List<String> sideTestResult;
+
+    /** /gh sidetest：第一次呼叫時真的做一遍，之後回傳同一份結果。 */
+    public List<String> sideTest() {
+        if (side == null) return List.of();
+        if (sideTestResult == null) sideTestResult = side.selfTest();
+        return sideTestResult;
+    }
+
+    /** /gh cam、/gh pa（聊天窗的按鈕）。 */
+    public void sideCommand(Player p, String sub, String arg) {
+        if (side == null) return;
+        if (sub.equals("cam")) side.camCommand(p, arg);
+        else side.paCommand(p, arg);
+    }
+
+    /** 上鎖的門、還沒打開的鐵捲門：誰都過不去（AI 找路當成不能走）。 */
+    boolean isDoorLocked(Pos lower) {
+        return side != null && side.isLocked(lower);
+    }
+
     private void escapes() {
         for (Survivor sv : survivors.values()) {
             if (sv.status != Status.FREE) continue;
@@ -1412,6 +1459,10 @@ public final class Match {
         if (task != null) task.cancel();
         if (nightmare != null) nightmare.stop();
         if (audio != null) audio.stop();
+        if (side != null) {
+            side.cleanup();
+            stats.putAll(side.stats());
+        }
         for (Survivor sv : survivors.values()) stopHeartbeat(sv, Bukkit.getPlayer(sv.id));
         labelPowerRoom(false);
         if (aiGhost != null) {
@@ -1658,7 +1709,7 @@ public final class Match {
         for (Pos p : b.lights) {
             Block bl = block(p);
             Levelled d = (Levelled) Bukkit.createBlockData(Material.LIGHT);
-            d.setLevel(level);
+            d.setLevel(side != null && side.litLight(p) ? Math.max(level, o.normalLight()) : level); // 修好配電箱的區域停電也亮
             bl.setBlockData(d, false);
         }
     }

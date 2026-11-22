@@ -119,6 +119,8 @@ public final class Building {
     public final List<Shutter> shutters = new ArrayList<>();
     /** U：上鎖的門（鐵門，下半那格），要屋頂鑰匙。 */
     public final List<Pos> lockedDoors = new ArrayList<>();
+    /** 自動販賣機（家具 m）的方塊：投硬幣換道具。 */
+    public final java.util.Set<Pos> vendingCells = new java.util.HashSet<>();
     /** 家具的裝飾方塊（書架、櫃子、按鈕、拉桿、椅背活板門……）：逃生者、鬼右鍵沒有反應。 */
     public final java.util.Set<Pos> decor = new java.util.HashSet<>();
     /** 家具正面的物品展示框（蓋完方塊以後才生成；固定、不能拿、不能打掉）。 */
