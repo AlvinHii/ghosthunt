@@ -164,7 +164,17 @@ public final class Match {
     /** persona：hound／ambusher／watcher／standard／auto（null 用 config 的 ai-ghost.persona）。 */
     public static Match pve(Plugin plugin, Building b, World world, GameSettings s, List<Player> survivors, Runnable onEnd,
                             String difficulty, String persona) {
+        return pve(plugin, b, world, s, survivors, onEnd, difficulty, persona, -1);
+    }
+
+    /**
+     * testDummies ≥ 0：測試模式。玩家照常當逃生者，第一次被抓立刻重生、之後 AI 鬼完全無視他（看不到、聽不到、不感應），
+     * 鬼放出來時自動生 testDummies 個假逃生者；這一局不寫 AI 的學習記憶。
+     */
+    public static Match pve(Plugin plugin, Building b, World world, GameSettings s, List<Player> survivors, Runnable onEnd,
+                            String difficulty, String persona, int testDummies) {
         Match m = new Match(plugin, b, world, s, GhostType.BASIC, UUID.randomUUID(), "電腦", survivors, onEnd);
+        m.testDummies = testDummies;
         m.aiGhost = new AiGhost(m, difficulty != null ? AiGhostSettings.from(plugin.getConfig(), difficulty) : s.ai());
         m.aiGhost.usePersona(persona);
         return m;
@@ -560,6 +570,10 @@ public final class Match {
                 Title.Times.times(Duration.ZERO, Duration.ofSeconds(2), Duration.ofMillis(500))));
         if (nightmare != null) nightmare.onRelease();
         obj.onRelease();
+        if (testMode() && aiGhost != null && testDummies > 0) {
+            dummies.spawn(testDummies);
+            broadcast("［測試］生了 " + testDummies + " 個假逃生者。", NamedTextColor.GRAY);
+        }
     }
 
     // ---- 抓人 ----
@@ -591,6 +605,16 @@ public final class Match {
         if (aiGhost != null) aiGhost.onCatch(victim.getUniqueId());
         victim.removePotionEffect(PotionEffectType.GLOWING);
         world.playSound(victim.getLocation(), Sound.ENTITY_PLAYER_HURT, 2f, 0.6f);
+        if (testMode()) {
+            // 測試模式：不關監獄，立刻在出生點重生；之後 AI 鬼完全無視他，可以在旁邊看它追假逃生者
+            aiIgnored.add(victim.getUniqueId());
+            List<Pos> sp = pickSpawns();
+            if (!sp.isEmpty()) victim.teleport(loc(sp.get(0)));
+            victim.showTitle(Title.title(Component.text("被抓了（測試模式）", NamedTextColor.YELLOW),
+                    Component.text("已重生，之後鬼會無視你", NamedTextColor.GRAY)));
+            broadcast("［測試］" + victim.getName() + " 被抓了：已重生，之後 AI 鬼無視他。", NamedTextColor.GRAY);
+            return;
+        }
         if (sv.captures >= s.maxCaptures()) {
             sv.status = Status.ELIMINATED;
             victim.setGameMode(GameMode.SPECTATOR);
@@ -1479,6 +1503,29 @@ public final class Match {
 
     public boolean isAi() {
         return aiGhost != null;
+    }
+
+    // ---- 測試模式 ----
+
+    /** ≥ 0：測試模式（放鬼時自動生這麼多假逃生者）；-1：一般局。 */
+    int testDummies = -1;
+    /** 測試模式裡被抓過一次的玩家：AI 鬼之後完全無視。 */
+    final java.util.Set<UUID> aiIgnored = new java.util.HashSet<>();
+
+    public boolean testMode() {
+        return testDummies >= 0;
+    }
+
+    /** AI 鬼要不要無視這個人（看、聽、感應、做事的聲音都不算）。 */
+    boolean aiIgnores(UUID id) {
+        return aiIgnored.contains(id);
+    }
+
+    /** 這群人做事的聲音：全部都被無視時不發聲音。 */
+    boolean aiIgnoresAll(java.util.Collection<UUID> ids) {
+        if (ids.isEmpty() || aiIgnored.isEmpty()) return false;
+        for (UUID id : ids) if (!aiIgnored.contains(id)) return false;
+        return true;
     }
 
     public void spawnDummies(int n) {

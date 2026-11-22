@@ -199,7 +199,7 @@ final class AiGhost {
         this.stuck = new StuckTracker(Math.max(20, c.stuckTime()), 1.0);
         var cfg = m.plugin.getConfig();
         this.utility = !"rules".equalsIgnoreCase(cfg.getString("ai-ghost.brain", "utility"));
-        this.learn = cfg.getBoolean("ai-ghost.learn", true);
+        this.learn = cfg.getBoolean("ai-ghost.learn", true) && !m.testMode(); // 測試局不寫學習記憶
         this.learnFromDummies = cfg.getBoolean("ai-ghost.learn-from-dummies", false);
         this.memoryDecay = cfg.getDouble("ai-ghost.memory-decay", 0.85);
         this.memoryName = m.b.mapName != null ? m.b.mapName : "building";
@@ -1277,7 +1277,8 @@ final class AiGhost {
 
     /** 自由的逃生者（玩家）＋假逃生者。 */
     private List<LivingEntity> targets() {
-        List<LivingEntity> out = new ArrayList<>(m.freeSurvivors());
+        List<LivingEntity> out = new ArrayList<>();
+        for (Player p : m.freeSurvivors()) if (!m.aiIgnores(p.getUniqueId())) out.add(p); // 測試模式被抓過的人：無視
         out.addAll(m.dummies.alive());
         return out;
     }

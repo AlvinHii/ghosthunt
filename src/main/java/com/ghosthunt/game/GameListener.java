@@ -163,7 +163,7 @@ public final class GameListener implements Listener {
                 return;
             }
             // 逃生者照常開關門：AI 鬼聽得到（hear-door 格內）
-            if (org.bukkit.Tag.DOORS.isTagged(clicked.getType()) && m.aiGhost != null && m.isFreeSurvivor(p))
+            if (org.bukkit.Tag.DOORS.isTagged(clicked.getType()) && m.aiGhost != null && m.isFreeSurvivor(p) && !m.aiIgnores(p.getUniqueId()))
                 m.aiGhost.hearDoor(clicked.getLocation());
             Boolean hatch = m.onHatch(p, clicked);
             if (hatch != null) {

@@ -80,7 +80,7 @@ final class Interactions {
         a.who.put(p.getUniqueId(), p.getLocation());
         byKey.put(key, a);
         byPlayer.put(p.getUniqueId(), a);
-        if (noisy) m.noise(at, noiseLevel(key));
+        if (noisy && !m.aiIgnores(p.getUniqueId())) m.noise(at, noiseLevel(key));
         return a;
     }
 
@@ -145,7 +145,7 @@ final class Interactions {
             double rate = a.coop && a.who.size() >= 2 ? m.o.coopMultiplier() : 1.0;
             a.progress += rate;
             a.onTick.run();
-            if (a.noisy && m.tick % 20 == 0) m.noise(a.at, noiseLevel(a.key));
+            if (a.noisy && m.tick % 20 == 0 && !m.aiIgnoresAll(a.who.keySet())) m.noise(a.at, noiseLevel(a.key));
             Component bar = Component.text(a.label + " " + Match.bar((int) a.progress, a.needed)
                     + (a.who.size() >= 2 ? "（" + a.who.size() + " 人）" : ""), NamedTextColor.YELLOW);
             for (UUID id : a.who.keySet()) {

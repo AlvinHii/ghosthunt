@@ -202,9 +202,12 @@ public final class GhostHuntPlugin extends JavaPlugin {
         if (args.length >= 2 && args[1].equalsIgnoreCase("ai")) {
             boolean solo = false;
             String difficulty = null, persona = null;
+            int testDummies = -1;
             for (int i = 2; i < args.length; i++) {
                 String a = args[i].toLowerCase(Locale.ROOT);
                 if (a.equals("solo")) solo = true;
+                else if (a.equals("test")) testDummies = Math.max(0, getConfig().getInt("test-mode.dummies", 3));
+                else if (testDummies >= 0 && a.matches("\\d+")) testDummies = Math.min(10, Integer.parseInt(a));
                 else if (a.equals("easy") || a.equals("normal") || a.equals("hard")) difficulty = a;
                 else if (a.equals("hound") || a.equals("ambusher") || a.equals("watcher") || a.equals("standard") || a.equals("auto")) persona = a;
             }
@@ -220,7 +223,10 @@ public final class GhostHuntPlugin extends JavaPlugin {
             }
             World world = ArenaWorld.getOrCreate(BuildingSettings.from(getConfig()).worldName());
             match = com.ghosthunt.game.Match.pve(this, building, world, com.ghosthunt.game.GameSettings.from(getConfig()),
-                    solo ? List.of() : players, () -> match = null, difficulty, persona);
+                    solo ? List.of() : players, () -> match = null, difficulty, persona, testDummies);
+            if (testDummies >= 0)
+                msg(sender, "測試模式：你照常當逃生者，被抓一次會立刻重生、之後 AI 鬼無視你；鬼出來時自動生 " + testDummies
+                        + " 個假逃生者。這局不寫 AI 的學習記憶。", NamedTextColor.AQUA);
             match.start();
             if (!building.pve) msg(sender, "提醒：這是大樓，不是 PvE 小地圖（/gh build pve）。", NamedTextColor.YELLOW);
             return;

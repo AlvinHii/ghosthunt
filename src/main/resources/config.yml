@@ -266,6 +266,9 @@ match:
   record-stats: true           # 每局結束把數據寫進記錄檔
   # 不分勝負：場上沒有能自由行動的逃生者時立刻結束，只顯示每個人的結果
 
+test-mode:                     # /gh start ai test [難度] [個性] [數量]：你當逃生者，被抓一次立刻重生、之後 AI 鬼無視你
+  dummies: 3                   # 鬼出來時自動生幾個假逃生者（指令後面加數字可以改）
+
 audio:                         # 地圖音效（地圖檔的 [sounds]）
   default-ambient: ghosthunt:ambient.default   # 地圖沒有自己的全場環境音時播的恐怖白噪音（空白 = 不播）
   default-ambient-volume: 1.0

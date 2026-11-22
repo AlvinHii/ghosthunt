@@ -75,7 +75,7 @@ final class ItemUse {
                 scanUntil.put(p.getUniqueId(), m.tick + o.scannerDuration());
                 scanTarget.put(p.getUniqueId(), target);
                 m.world.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, 2f, 1.8f); // 會發出聲音
-                m.noise(p.getLocation());
+                if (!m.aiIgnores(p.getUniqueId())) m.noise(p.getLocation());
                 p.sendActionBar(Component.text("掃描中……跟著藍色光點走", NamedTextColor.BLUE));
             }
             default -> {
