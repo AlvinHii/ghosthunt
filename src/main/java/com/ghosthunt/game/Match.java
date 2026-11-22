@@ -194,7 +194,14 @@ public final class Match {
         if (sd.size() != heartStageSounds.size()) sd = List.of(32.0, 20.0, 12.0, 6.0).subList(0, Math.min(4, heartStageSounds.size()));
         this.heartStageDist = sd.stream().mapToDouble(Double::doubleValue).toArray();
         this.heartStageLoop = (int) Math.round(hc.getDouble("heartbeat.stage-loop", 24) * 20);
-        this.heartStageVolume = (float) hc.getDouble("heartbeat.stage-volume", 1.0);
+        this.heartStageVolume = (float) hc.getDouble("heartbeat.stage-volume", 0.6);
+        org.bukkit.SoundCategory cat = org.bukkit.SoundCategory.PLAYERS;
+        try {
+            cat = org.bukkit.SoundCategory.valueOf(hc.getString("heartbeat.category", "players").toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException ignored) {
+            // 寫錯就用「玩家」
+        }
+        this.heartCategory = cat;
         this.b = b;
         this.world = world;
         this.s = s;
@@ -810,7 +817,7 @@ public final class Match {
         int interval = heart.intervalTicks(d);
         if (interval < 0 || tick - sv.lastHeartbeat < interval) return;
         sv.lastHeartbeat = tick;
-        p.playSound(p.getLocation(), heartSound, org.bukkit.SoundCategory.MASTER, (float) heart.volume(d), (float) heart.pitch(d));
+        p.playSound(p.getLocation(), heartSound, heartCategory, (float) heart.volume(d), (float) heart.pitch(d));
     }
 
     private final com.ghosthunt.game.ai.Heartbeat heart;
@@ -822,17 +829,19 @@ public final class Match {
     private void playStage(Survivor sv, Player p) {
         sv.heartStageStart = tick;
         // 跟著玩家播（音檔是單聲道：播在固定位置的話，走離那裡 16 格以上就聽不到了）
-        p.playSound(p, heartStageSounds.get(sv.heartStage - 1), org.bukkit.SoundCategory.MASTER, heartStageVolume, 1f);
+        p.playSound(p, heartStageSounds.get(sv.heartStage - 1), heartCategory, heartStageVolume, 1f);
     }
 
     /** 停掉正在播的那段心跳（被抓、熄燈、遊戲結束、鬼離太遠）。 */
     void stopHeartbeat(Survivor sv, Player p) {
         if (sv.heartStage > 0 && !heartStageSounds.isEmpty() && p != null)
-            p.stopSound(heartStageSounds.get(sv.heartStage - 1), org.bukkit.SoundCategory.MASTER);
+            p.stopSound(heartStageSounds.get(sv.heartStage - 1), heartCategory);
         sv.heartStage = 0;
     }
     private final String heartSound;
     private final boolean heartPath;
+    /** 心跳走哪個音量滑桿（預設「玩家」：每個人可以在音效設定裡自己調，不影響其他聲音）。 */
+    private final org.bukkit.SoundCategory heartCategory;
 
     /**
      * 心跳的距離：AI 局用鬼的尋路圖算「鬼走過來要走的路」（不分樓層，沿樓梯；地洞每條邊 +2）；
