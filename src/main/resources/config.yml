@@ -37,8 +37,10 @@ map:
   max-dead-ends-per-floor: 2   # 生成後檢查：每層最多幾條死路
 
 pve:                           # PvE 小地圖（/gh build pve）：2～3 個逃生者對抗 AI 鬼
-  map: mall_m                  # 固定地圖（plugins/GhostHunt/pve-maps/名字.txt，格式見 docs/PvE地圖格式.md）；random = 用下面的外型隨機產生
+  map: mall                    # 固定地圖（plugins/GhostHunt/pve-maps/名字.txt，格式見 docs/PvE地圖格式.md）；random = 用下面的外型隨機產生
   reroll-each-match: true      # 固定地圖每局開始前重蓋一次：大門、保全室、木桶重新隨機
+  ghost-room: false            # false = 不用鬼房：逃生者隨機分散出生，鬼出生在離所有人最遠的地方，開局就放出來（馬上可以抓）
+  spawn-spread: 15             # 不用鬼房時，逃生者彼此至少隔幾格出生
   shape:                       # 外型（同 map.shape；一格 map.cell-size）
     - ".####."
     - "######"

@@ -257,7 +257,21 @@ public final class Match {
             // PvE：在鬼房生出 AI 鬼，鬼的 UUID 換成牠的
             holdChunks(plugin, true); // 玩家走遠時 AI 鬼也照樣會動
             allowMonsters(true);
-            org.bukkit.entity.Mob mob = aiGhost.spawn(loc(b.ghostRoomCenter));
+            Location ghostAt = loc(b.ghostRoomCenter);
+            if (noGhostRoom()) {
+                // 沒有鬼房：逃生者隨機分散出生，鬼出生在離所有人最遠的地方，開局就放出來（馬上可以抓）
+                aiGhost.prepareNav();
+                int extra = testMode() ? Math.max(0, testDummies) : 0; // 測試模式的假逃生者也一起隨機分散
+                List<Location> all = aiGhost.randomSpawns(survivors.size() + extra, plugin.getConfig().getDouble("pve.spawn-spread", 15));
+                aiSpawns = all.subList(0, Math.min(survivors.size(), all.size()));
+                if (extra > 0 && all.size() > survivors.size()) {
+                    dummies.spawnAt(all.subList(survivors.size(), all.size()));
+                    dummiesSpawned = true;
+                }
+                Location far = aiGhost.farthestFrom(all);
+                if (far != null) ghostAt = far;
+            }
+            org.bukkit.entity.Mob mob = aiGhost.spawn(ghostAt);
             ghost = mob.getUniqueId();
             g = mob;
             stats.put("mode", "pve");
@@ -286,7 +300,8 @@ public final class Match {
             if (p == null) continue;
             preparePlayer(p);
             p.getInventory().setItem(0, Items.barricade(1));
-            p.teleport(loc(spawns.get(i++ % spawns.size())));
+            if (aiSpawns != null && !aiSpawns.isEmpty()) p.teleport(aiSpawns.get(i++ % aiSpawns.size()));
+            else p.teleport(loc(spawns.get(i++ % spawns.size())));
             sv.lastSample = p.getLocation();
             p.showTitle(Title.title(Component.text("你是逃生者", NamedTextColor.GREEN),
                     Component.text((aiGhost != null ? "鬼是電腦（AI）" : "鬼是 " + ghostName + "（" + type.label + "）") + "｜按 F 衝刺",
@@ -545,7 +560,7 @@ public final class Match {
             end(aiGhost != null ? "AI 鬼不見了（被其他插件或世界設定刪掉？）" : "鬼離開了");
             return;
         }
-        if (!released && tick >= s.releaseDelay()) release();
+        if (!released && tick >= releaseTicks()) release();
         applyFatigue(g);
 
         for (Survivor sv : survivors.values()) {
@@ -599,7 +614,7 @@ public final class Match {
                 Title.Times.times(Duration.ZERO, Duration.ofSeconds(2), Duration.ofMillis(500))));
         if (nightmare != null) nightmare.onRelease();
         obj.onRelease();
-        if (testMode() && aiGhost != null && testDummies > 0) {
+        if (testMode() && aiGhost != null && testDummies > 0 && !dummiesSpawned) {
             dummies.spawn(testDummies);
             broadcast("［測試］生了 " + testDummies + " 個假逃生者。", NamedTextColor.GRAY);
         }
@@ -1303,7 +1318,7 @@ public final class Match {
             return;
         }
         String text;
-        if (!released) text = "放出倒數：" + ((s.releaseDelay() - tick) / 20 + 1) + " 秒";
+        if (!released) text = "放出倒數：" + ((releaseTicks() - tick) / 20 + 1) + " 秒";
         else if (tick < fatigueUntil) text = "攻擊後疲勞……";
         else text = (nightmare != null ? nightmare.hud() + "｜" : "") + obj.ghostHud(g);
         g.sendActionBar(Component.text(text, NamedTextColor.DARK_PURPLE));
@@ -1544,6 +1559,21 @@ public final class Match {
     int testDummies = -1;
     /** 測試模式裡被抓過一次的玩家：AI 鬼之後完全無視。 */
     final java.util.Set<UUID> aiIgnored = new java.util.HashSet<>();
+
+    /** PvE 不用鬼房（config pve.ghost-room: false）：隨機出生、鬼在最遠的地方、開局就放。 */
+    boolean noGhostRoom() {
+        return aiGhost != null && !plugin.getConfig().getBoolean("pve.ghost-room", false);
+    }
+
+    private boolean dummiesSpawned;
+
+    /** 沒有鬼房時逃生者的出生點（開局算好）。 */
+    private List<Location> aiSpawns;
+
+    /** 幾 tick 後放鬼：沒有鬼房是 0（開局就放）。 */
+    int releaseTicks() {
+        return noGhostRoom() ? 0 : s.releaseDelay();
+    }
 
     public boolean testMode() {
         return testDummies >= 0;

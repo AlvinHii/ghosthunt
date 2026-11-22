@@ -855,6 +855,7 @@ final class AiGhost {
             mob.getPathfinder().stopPathfinding();
             return;
         }
+        if (lastContactTick < 0) lastContactTick = m.tick; // 放鬼的那一刻開始算「多久沒接觸」
         if (climbUntil >= 0) {
             climbTick();
             return;
@@ -886,7 +887,7 @@ final class AiGhost {
         }
         rooms = new RoomScores(infos, 1.0, 300);
         buildRegions();
-        if (!mob.getLocation().getBlock().isPassable()) {
+        if (mob != null && !mob.getLocation().getBlock().isPassable()) {
             int id = nav.nearest(mob.getLocation(), 4);
             if (id >= 0) mob.teleport(nav.loc(id));
         }
@@ -2487,6 +2488,70 @@ final class AiGhost {
 
     private void contactStat() {
         if (firstContact < 0) firstContact = m.tick;
+        if (lastContactTick >= 0) longestQuiet = Math.max(longestQuiet, m.tick - lastContactTick);
+        lastContactTick = m.tick;
+    }
+
+    /** 壓迫感的統計：多久沒有接觸（看到、聽到任何人）；放鬼時開始算。 */
+    private long lastContactTick = -1, longestQuiet;
+
+    // ---- 沒有鬼房的開局（第三版之後：鬼出生在離所有人最遠的地方） ----
+
+    /** 開局前先建好尋路圖（要算出生點）。 */
+    void prepareNav() {
+        if (nav == null) buildNav();
+    }
+
+    /** 逃生者的隨機出生點：尋路圖上的一般格子，離監獄 10 格以上、彼此至少 minEach 格（找不到就放寬）。 */
+    List<Location> randomSpawns(int n, double minEach) {
+        List<Integer> cells = new ArrayList<>();
+        for (int i = 0; i < nav.nav.size(); i++) {
+            if (!nav.isMain(i)) continue;
+            Location l = nav.loc(i);
+            boolean nearJail = false;
+            for (Pos cage : m.b.jailCages.values()) if (m.loc(cage).getWorld().equals(l.getWorld()) && m.loc(cage).distance(l) < 10) nearJail = true;
+            if (!nearJail) cells.add(i);
+        }
+        java.util.Collections.shuffle(cells, m.rnd);
+        for (double min = minEach; min >= 0; min -= 3) {
+            List<Location> out = new ArrayList<>();
+            for (int c0 : cells) {
+                Location l = nav.loc(c0);
+                boolean ok = true;
+                for (Location o : out) if (o.distance(l) < min) ok = false;
+                if (!ok) continue;
+                out.add(l);
+                if (out.size() == n) return out;
+            }
+        }
+        List<Location> out = new ArrayList<>();
+        for (int i = 0; i < Math.min(n, cells.size()); i++) out.add(nav.loc(cells.get(i)));
+        return out;
+    }
+
+    /** 鬼的出生點：離「最近的逃生者」走路最遠的格子（多起點距離場）；沒有逃生者回傳 null。 */
+    Location farthestFrom(List<Location> people) {
+        List<Integer> src = new ArrayList<>();
+        for (Location l : people) {
+            int n = nav.nearest(l, 3);
+            if (n >= 0) src.add(n);
+        }
+        if (src.isEmpty()) return null;
+        DistanceField f = DistanceField.compute(nav.nav, e -> e.kind() == GridNav.Kind.WALK || e.kind() == GridNav.Kind.STAIR
+                || e.kind() == GridNav.Kind.DOOR ? 0 : Double.POSITIVE_INFINITY, 1.0, src.stream().mapToInt(Integer::intValue).toArray());
+        int best = -1;
+        double bd = -1;
+        for (int i = 0; i < nav.nav.size(); i++) {
+            if (!nav.isMain(i)) continue;
+            double d = f.seconds(i);
+            if (!Double.isInfinite(d) && d > bd) {
+                bd = d;
+                best = i;
+            }
+        }
+        if (best < 0) return null;
+        m.plugin.getLogger().info("[AI 鬼] 出生點：離最近的逃生者走路 " + Math.round(bd) + " 格");
+        return nav.loc(best);
     }
 
     // ---- 除錯、統計 ----
@@ -2558,6 +2623,8 @@ final class AiGhost {
         stats.put("aiSenses", senses);
         stats.put("aiCatchesWithin30sOfSense", catchesAfterSense);
         stats.put("aiFirstContactSec", firstContact < 0 ? -1 : firstContact / 20);
+        long quietNow = lastContactTick < 0 ? 0 : m.tick - lastContactTick;
+        stats.put("aiLongestQuietSec", Math.max(longestQuiet, quietNow) / 20);
         StringBuilder sb = new StringBuilder();
         for (Map.Entry<Kind, Integer> e : goalTicks.entrySet()) sb.append(sb.isEmpty() ? "" : ",").append(e.getKey()).append(':').append(e.getValue() / 20);
         stats.put("aiGoalSeconds", sb.toString());

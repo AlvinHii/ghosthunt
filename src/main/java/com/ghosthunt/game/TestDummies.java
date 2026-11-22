@@ -56,8 +56,14 @@ final class TestDummies {
         List<Pos> tiles = new ArrayList<>();
         for (Set<Pos> s : m.b.spawnTiles.values()) tiles.addAll(s);
         if (tiles.isEmpty()) return;
-        for (int i = 0; i < n; i++) {
-            Location at = m.loc(tiles.get(m.rnd.nextInt(tiles.size())));
+        List<Location> at = new ArrayList<>();
+        for (int i = 0; i < n; i++) at.add(m.loc(tiles.get(m.rnd.nextInt(tiles.size()))));
+        spawnAt(at);
+    }
+
+    /** 在指定的位置各生一個假逃生者（沒有鬼房的開局：跟真人一樣隨機分散）。 */
+    void spawnAt(List<Location> spots) {
+        for (Location at : spots) {
             Villager v = at.getWorld().spawn(at, Villager.class, e -> {
                 e.setPersistent(false);
                 e.setInvulnerable(true);
