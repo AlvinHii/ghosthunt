@@ -46,6 +46,26 @@ public final class GhostHuntPlugin extends JavaPlugin {
         if (FogExperiment.install(this)) {
             getLogger().warning("霧的資料包已寫入或更新，要重開伺服器一次才會生效。");
         }
+        // 旗標檔關機：plugins/GhostHunt/restart.flag 出現時正常存檔關閉（沒有人在線上才關；檔案內容寫 force 就不管有沒有人）。
+        // 給「伺服器跑在沒辦法打 stop 的地方」時用（2026-11-23 使用者同意）。
+        getServer().getScheduler().runTaskTimer(this, () -> {
+            java.io.File flag = new java.io.File(getDataFolder(), "restart.flag");
+            if (!flag.exists()) return;
+            boolean force = false;
+            try {
+                force = java.nio.file.Files.readString(flag.toPath()).trim().equalsIgnoreCase("force");
+            } catch (java.io.IOException ignored) {
+                // 讀不到就當一般旗標
+            }
+            if (!force && !getServer().getOnlinePlayers().isEmpty()) {
+                if (getServer().getCurrentTick() % 1200 == 0)
+                    getLogger().info("看到 restart.flag，但還有 " + getServer().getOnlinePlayers().size() + " 人在線上，等沒人再關");
+                return;
+            }
+            if (!flag.delete()) getLogger().warning("restart.flag 刪不掉");
+            getLogger().info("看到 restart.flag：正常存檔關閉伺服器");
+            getServer().shutdown();
+        }, 100L, 40L);
         getLogger().info("GhostHunt enabled");
     }
 
