@@ -194,7 +194,7 @@ public final class Match {
         if (sd.size() != heartStageSounds.size()) sd = List.of(32.0, 20.0, 12.0, 6.0).subList(0, Math.min(4, heartStageSounds.size()));
         this.heartStageDist = sd.stream().mapToDouble(Double::doubleValue).toArray();
         this.heartStageLoop = (int) Math.round(hc.getDouble("heartbeat.stage-loop", 24) * 20);
-        this.heartStageVolume = (float) hc.getDouble("heartbeat.stage-volume", 0.6);
+        this.heartStageVolume = (float) hc.getDouble("heartbeat.stage-volume", 1.0);
         org.bukkit.SoundCategory cat = org.bukkit.SoundCategory.PLAYERS;
         try {
             cat = org.bukkit.SoundCategory.valueOf(hc.getString("heartbeat.category", "players").toUpperCase(java.util.Locale.ROOT));

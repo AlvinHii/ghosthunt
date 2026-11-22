@@ -175,7 +175,7 @@ heartbeat:                     # 逃生者的心跳（鬼越近越快、越大�
     - ghosthunt:heartbeat.4    # 130（就在旁邊）
   stage-distances: [32, 20, 12, 6]   # 鬼的沿路距離 ≤ 這些格數就換到那一段（退遠時多 2 格才換回去，不會一直切）
   stage-loop: 24               # 每段音檔幾秒（同一段每這麼多秒重播一次）
-  stage-volume: 0.6            # 太大聲會蓋過講話；每個人也可以自己調遊戲裡的「玩家」音量
+  stage-volume: 1.0            # 最大 1.0（再大只會傳更遠、不會更大聲）；太大聲的人可以自己調遊戲裡的「玩家」音量
   category: players            # 心跳走哪個音量滑桿：players（玩家）／master（主音量）／ambient（環境）……
 
 survivor:
