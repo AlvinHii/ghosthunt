@@ -114,6 +114,8 @@ ai-ghost:                      # PvE 的 AI 鬼（/gh start ai [easy|normal|hard
   guard-reader-cap: 40         # 有人授權後守大門讀卡機，每次最多幾秒（之後走開一半的時間再回來；0 = 不守）
   cut-power-advantage: 15      # 關電源的時機：他們走回電源的平均秒數 − 鬼走過去的秒數 ≥ 這個值才去關
   cut-power-max-wait: 90       # 電源開了這麼多秒以後不管時機，直接去關
+  tactical-approach: 0         # 戰術尋路（1 = 開）：去「做事的聲音」那裡時避開那裡看得到的格子，從視線外摸過去（預設只有困難開）
+  sneak-penalty: 3             # 戰術尋路時，對方看得到的格子每格多算幾格距離
   brain: utility               # 大腦：utility（第三版：打分數＋個性）或 rules（第二版的固定優先順序）
   persona: auto                # 個性：auto（用記憶裡的勝率自動選，Thompson sampling）、hound、ambusher、watcher、standard；開局指令可以指定
   learn: true                  # 學習（plugins/GhostHunt/ai-memory/<地圖>.yml）：被哪招甩掉、熱點、路線、個性勝率。/gh aimemory reset 清掉
@@ -154,6 +156,7 @@ ai-ghost:                      # PvE 的 AI 鬼（/gh start ai [easy|normal|hard
       check-hideout-base: 0.6
       particles: 400
       intercept-chance: 1.0      # 困難：每次追人都算要不要繞前堵
+      tactical-approach: 1       # 困難：從視線外摸過去
 
 survivor:
   dash-duration: 1.5           # 緊急衝刺（F 鍵）持續時間

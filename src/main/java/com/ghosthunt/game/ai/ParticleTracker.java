@@ -40,6 +40,18 @@ public final class ParticleTracker {
     /** 每顆粒子上一步超支的成本（走很貴的邊時，下一步要先扣掉）。 */
     private double[] debt = new double[0];
     private long seedTick;
+    /** 隨機那幾步的偏好（格子 → 權重，預設全部 1）：以前常看到人走的路線、熱點。 */
+    private Bias bias;
+
+    /** 從 from 走到相鄰的 to 的偏好權重（1 = 平常）。 */
+    public interface Bias {
+        double weight(int from, int to);
+    }
+
+    /** 設定隨機步的偏好（null = 平均）。只影響隨機的那部分，不影響「往離鬼遠」「往目標」。 */
+    public void setBias(Bias bias) {
+        this.bias = bias;
+    }
 
     public ParticleTracker(GridNav nav, GridNav.Cost escaperCost, Config cfg, RandomGenerator rnd) {
         this.nav = nav;
@@ -132,7 +144,14 @@ public final class ParticleTracker {
             }
             return best;
         }
-        return ok.get(rnd.nextInt(ok.size()));
+        if (bias == null) return ok.get(rnd.nextInt(ok.size()));
+        double sum = 0;
+        double[] w = new double[ok.size()];
+        for (int i = 0; i < w.length; i++) sum += w[i] = Math.max(0, bias.weight(cur, ok.get(i)));
+        if (sum <= 0) return ok.get(rnd.nextInt(ok.size()));
+        double x = rnd.nextDouble() * sum;
+        for (int i = 0; i < w.length; i++) if ((x -= w[i]) <= 0) return ok.get(i);
+        return ok.get(ok.size() - 1);
     }
 
     /** 鬼看得到的格子裡的粒子全部刪掉。 */

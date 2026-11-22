@@ -123,6 +123,25 @@ public final class GhostBrain {
 
     public record Scored(Kind kind, double score) {}
 
+    /**
+     * 企劃第 16 項表格裡其他的考量（都是 0～1；NEUTRAL = 不影響，行為跟沒給一樣）：
+     * noiseLevel 聲音等級（0 低～1 高；NaN = 不用）、noiseDistance 聲音多遠（格；NaN = 不用）、particleConcentration 粒子集中程度、
+     * gateSlack 弄壞大門的餘裕（剩下時間的比例，越少越急）、jailGuarded／readerGuarded 已經守了多久（÷ 上限）、
+     * jailApproach 有人可能正在靠近監獄（粒子、聲音）、cutPowerValue 關電源的價值。
+     */
+    public record Factors(double noiseLevel, double noiseDistance, double particleConcentration, double gateSlack,
+                          double jailGuarded, double jailApproach, double readerGuarded, double cutPowerValue) {
+        public static final Factors NEUTRAL = new Factors(Double.NaN, Double.NaN, 1, 0, 0, 1, 0, 1);
+
+        public Factors withNoise(double level, double distance) {
+            return new Factors(level, distance, particleConcentration, gateSlack, jailGuarded, jailApproach, readerGuarded, cutPowerValue);
+        }
+
+        public Factors withReaderGuarded(double v) {
+            return new Factors(noiseLevel, noiseDistance, particleConcentration, gateSlack, jailGuarded, jailApproach, v, cutPowerValue);
+        }
+    }
+
     /** 相鄰兩級的基本分差幾倍；考量都在 0.5～1，所以標準個性的順序跟第二版一樣，只有「差不多」的情況才會被個性改變。 */
     private static final double TIER = 2.0;
     private static final double STICKY = 1.15;
@@ -139,13 +158,17 @@ public final class GhostBrain {
      * @param pickBest 困難：選最高分；否則從「最高分 90% 以內」的目標裡照分數加權隨機選
      */
     public Goal decideUtility(Situation s, Weights w, boolean pickBest) {
+        return decideUtility(s, w, pickBest, Factors.NEUTRAL);
+    }
+
+    public Goal decideUtility(Situation s, Weights w, boolean pickBest, Factors f) {
         int n = rules.size();
         List<Scored> scored = new java.util.ArrayList<>();
         java.util.Map<Kind, Rule> valid = new java.util.EnumMap<>(Kind.class);
         for (int i = 0; i < n; i++) {
             Rule r = rules.get(i);
             if (!r.when().test(s)) continue;
-            double score = Math.pow(TIER, n - 1 - i) * consideration(r.kind(), s) * w.of(r.kind());
+            double score = Math.pow(TIER, n - 1 - i) * consideration(r.kind(), s, f) * w.of(r.kind());
             if (r.kind() == current) score *= STICKY;
             scored.add(new Scored(r.kind(), score));
             valid.put(r.kind(), r);
@@ -185,14 +208,33 @@ public final class GhostBrain {
         return lastScores;
     }
 
-    /** 考量（0.5～1）：追 = 越近越高；找最後看到的位置、聲音 = 越新越高；其他照硬條件（1）。 */
-    private double consideration(Kind k, Situation s) {
-        return switch (k) {
+    /**
+     * 考量（相乘後夾在 0.5～1，所以不會掉到下一級以下）：追 = 越近越高；找最後位置 = 越新、粒子越集中越高；
+     * 聲音 = 越新、等級越高、越近越高；弄壞大門 = 餘裕越少越急；守監獄 = 守越久越低、有人靠近越高；守讀卡機 = 守越久越低；
+     * 關電源 = 價值越高越高。
+     */
+    private double consideration(Kind k, Situation s, Factors f) {
+        double v = switch (k) {
             case CHASE -> 1 - 0.5 * Math.min(1, s.seen().distance() / 24.0);
-            case SEARCH_LAST_SEEN -> 1 - 0.5 * Math.min(1, (s.tick() - s.lastSeenTick()) / (double) Math.max(1, cfg.searchTicks()));
-            case INVESTIGATE_NOISE -> 1 - 0.5 * Math.min(1, (s.tick() - s.noiseTick()) / (double) Math.max(1, cfg.noiseMemoryTicks()));
+            case SEARCH_LAST_SEEN -> (1 - 0.5 * Math.min(1, (s.tick() - s.lastSeenTick()) / (double) Math.max(1, cfg.searchTicks())))
+                    * (0.75 + 0.25 * clamp01(f.particleConcentration()));
+            case INVESTIGATE_NOISE -> {
+                double x = 1 - 0.5 * Math.min(1, (s.tick() - s.noiseTick()) / (double) Math.max(1, cfg.noiseMemoryTicks()));
+                if (!Double.isNaN(f.noiseLevel())) x *= 0.75 + 0.25 * clamp01(f.noiseLevel());
+                if (!Double.isNaN(f.noiseDistance())) x *= 1 - 0.25 * Math.min(1, f.noiseDistance() / 32.0);
+                yield x;
+            }
+            case SABOTAGE_GATE -> 0.75 + 0.25 * (1 - clamp01(f.gateSlack()));
+            case GUARD_JAIL -> (1 - 0.5 * clamp01(f.jailGuarded())) * (0.75 + 0.25 * clamp01(f.jailApproach()));
+            case GUARD_READER -> 1 - 0.5 * clamp01(f.readerGuarded());
+            case CUT_POWER -> 0.5 + 0.5 * clamp01(f.cutPowerValue());
             default -> 1;
         };
+        return Math.max(0.5, Math.min(1, v));
+    }
+
+    private static double clamp01(double v) {
+        return Double.isNaN(v) ? 1 : Math.max(0, Math.min(1, v));
     }
 
     private static Point nearest(Point from, List<Point> ps) {

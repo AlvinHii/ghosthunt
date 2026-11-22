@@ -181,4 +181,29 @@ class ParticleTrackerTest {
         }
         assertArrayEquals(a.positions(), b.positions());
     }
+
+    @Test
+    void bias_pullsRandomSteps() {
+        // 十字路口往東、往西都一樣遠；偏好東邊（路線、熱點）時，隨機的那幾步大多往東
+        GridNav g = TestGrids.grid("...........");
+        ParticleTracker t = new ParticleTracker(g, FREE, new ParticleTracker.Config(400, 1.0, 0, 0, 3, 1, 10_000), new Random(9));
+        int mid = TestGrids.id(g, 5, 0);
+        t.setBias((from, v) -> g.x(v) > g.x(from) ? 9.0 : 1.0);
+        t.seed(mid, 0);
+        t.step(1.0, null, null);
+        int east = 0;
+        for (int v : t.positions()) if (g.x(v) > 5) east++;
+        assertTrue(east > 300, "往東 " + east);
+    }
+
+    @Test
+    void noBias_isEven() {
+        GridNav g = TestGrids.grid("...........");
+        ParticleTracker t = new ParticleTracker(g, FREE, new ParticleTracker.Config(400, 1.0, 0, 0, 3, 1, 10_000), new Random(9));
+        t.seed(TestGrids.id(g, 5, 0), 0);
+        t.step(1.0, null, null);
+        int east = 0;
+        for (int v : t.positions()) if (g.x(v) > 5) east++;
+        assertTrue(east > 140 && east < 260, "往東 " + east);
+    }
 }

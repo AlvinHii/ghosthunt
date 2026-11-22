@@ -138,4 +138,73 @@ public final class Chokepoints {
     public int size() {
         return adj.size();
     }
+
+    /**
+     * 最小割（企劃第 12 項第三點）：要守哪幾個交界，才能把目標區跟「離它 minDistance 區以上的地方」切開。
+     * 每個交界容量 1 跑最大流（Edmonds–Karp），割取在靠目標那一側（守的是目標旁邊的門口）。回傳 {a, b} 交界；沒有遠處的區回傳空的。
+     */
+    public List<int[]> minCut(int target, int minDistance) {
+        int n = adj.size();
+        List<int[]> out = new ArrayList<>();
+        if (target < 0 || target >= n) return out;
+        int[] dist = new int[n];
+        Arrays.fill(dist, -1);
+        ArrayDeque<Integer> q = new ArrayDeque<>();
+        dist[target] = 0;
+        q.add(target);
+        while (!q.isEmpty()) {
+            int v = q.poll();
+            for (int w : adj.get(v)) if (dist[w] < 0) {
+                dist[w] = dist[v] + 1;
+                q.add(w);
+            }
+        }
+        int src = n; // 超級起點：連到所有遠處的區
+        int[][] cap = new int[n + 1][n + 1];
+        boolean any = false;
+        for (int v = 0; v < n; v++) {
+            for (int w : adj.get(v)) cap[v][w] = 1;
+            if (dist[v] >= minDistance) {
+                cap[src][v] = n + 1;
+                any = true;
+            }
+        }
+        if (!any) return out;
+        int[] prev = new int[n + 1];
+        while (true) {
+            Arrays.fill(prev, -1);
+            prev[src] = src;
+            q.clear();
+            q.add(src);
+            while (!q.isEmpty() && prev[target] < 0) {
+                int v = q.poll();
+                for (int w = 0; w <= n; w++) if (prev[w] < 0 && cap[v][w] > 0) {
+                    prev[w] = v;
+                    q.add(w);
+                }
+            }
+            if (prev[target] < 0) break;
+            for (int w = target; w != src; w = prev[w]) {
+                cap[prev[w]][w]--;
+                cap[w][prev[w]]++;
+            }
+        }
+        // 剩餘圖裡「還走得到目標」的區（反向找）；割 = 外面 → 裡面的交界
+        boolean[] in = new boolean[n + 1];
+        in[target] = true;
+        q.clear();
+        q.add(target);
+        while (!q.isEmpty()) {
+            int v = q.poll();
+            for (int u = 0; u <= n; u++) if (!in[u] && cap[u][v] > 0) {
+                in[u] = true;
+                q.add(u);
+            }
+        }
+        for (int u = 0; u < n; u++) {
+            if (in[u]) continue;
+            for (int v : adj.get(u)) if (in[v]) out.add(new int[]{u, v});
+        }
+        return out;
+    }
 }

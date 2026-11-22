@@ -608,9 +608,14 @@ final class AiGhost {
 
     void tick() {
         long t0 = System.nanoTime();
+        boolean hadNav = nav != null;
         tickInner();
-        tickTime.add(System.nanoTime() - t0);
+        // 建尋路圖（每局一次）另外記，不算進每 tick 的時間
+        if (!hadNav && nav != null) navBuildMs = (System.nanoTime() - t0) / 1_000_000;
+        else tickTime.add(System.nanoTime() - t0);
     }
+
+    private long navBuildMs = -1;
 
     // ---- 計時（stats.log：AI 在主執行緒花多少時間）----
 
@@ -707,6 +712,27 @@ final class AiGhost {
     }
 
     private ParticleTracker newTracker() {
+        ParticleTracker t = createTracker();
+        if (learn) t.setBias(this::particleBias);
+        return t;
+    }
+
+    /**
+     * 粒子隨機那幾步的偏好（第三版第 20、22 項）：跨區時乘「以前看過從這區走到那區」的機率 × 相鄰區數（平均 1）；
+     * 熱點（常看到人的格子）最多 ×1.5。
+     */
+    private double particleBias(int from, int to) {
+        double w = 1 + 0.5 * Math.min(1, memory.heat.at(nav.nav.x(to), nav.nav.y(to), nav.nav.z(to)) / 5);
+        if (regions == null || nodeRoom == null) return w;
+        int a = nodeRoom[from], b = nodeRoom[to];
+        if (a < 0 || b < 0 || a == b) return w;
+        List<String> opts = new ArrayList<>();
+        for (int nb : regions.neighbors(a)) opts.add(regionKey(nb));
+        if (opts.isEmpty()) return w;
+        return w * memory.routes.probability(regionKey(a), regionKey(b), opts) * opts.size();
+    }
+
+    private ParticleTracker createTracker() {
         return new ParticleTracker(nav.nav, escaperCost(),
                 new ParticleTracker.Config(c.particles(), c.escaperSpeed(), c.particleFlee(), c.particleGoal(), c.particleSigma(),
                         c.particleMin(), Math.round(c.particleMaxAge() * persona.particleAgeMul())), m.rnd);
@@ -820,11 +846,15 @@ final class AiGhost {
 
     private void tickInner() {
         if (mob == null || !mob.isValid()) return;
+        // 尋路圖、區域圖、可見性表在放鬼之前就建好（鬼房關著的時候），放出來的那一刻不會卡一下
+        if (nav == null) {
+            buildNav();
+            return;
+        }
         if (!m.released) {
             mob.getPathfinder().stopPathfinding();
             return;
         }
-        if (nav == null) buildNav();
         if (climbUntil >= 0) {
             climbTick();
             return;
@@ -1058,14 +1088,18 @@ final class AiGhost {
         }
         if (path.size() < 12) return; // 離目標太近：來不及繞過去
         // 路上的區域交界：優先選咽喉區的入口，至少離起點 10 格
+        // 分數 = 咽喉區 1 分 ＋ 以前常看到人走這個交界（第 22 項，最多 1 分）；同分選前面的
         int door = -1, fallback = -1;
+        double doorScore = 0;
         for (int i = 10; i < path.size(); i++) {
             int a = nodeRoom[path.get(i - 1)], b = nodeRoom[path.get(i)];
             if (a < 0 || b < 0 || a == b) continue;
             if (fallback < 0) fallback = i;
-            if (chokeRoom(b) || chokeRoom(a)) {
+            double sc = (chokeRoom(b) || chokeRoom(a) ? 1 : 0)
+                    + (learn ? Math.min(1, memory.routes.count(regionKey(a), regionKey(b)) / 3) : 0);
+            if (sc > doorScore) {
+                doorScore = sc;
                 door = i;
-                break;
             }
         }
         if (door < 0) door = fallback >= 0 ? fallback : Math.min(path.size() - 1, 15);
@@ -1178,7 +1212,15 @@ final class AiGhost {
             int n = known == null ? -1 : nav.nearest(known, 3);
             secs[i] = n < 0 ? Double.POSITIVE_INFINITY : leverField.seconds(n);
         }
-        return cutWorth = AbilityTiming.shouldCutPower(secs, travelSeconds(stand), c.cutPowerAdvantage());
+        double ghostSecs = travelSeconds(stand);
+        double avg = AbilityTiming.UNKNOWN_SECONDS;
+        if (secs.length > 0) {
+            double sum = 0;
+            for (double v : secs) sum += Double.isInfinite(v) ? AbilityTiming.UNKNOWN_SECONDS : v;
+            avg = sum / secs.length;
+        }
+        lastCutAdvantage = avg - ghostSecs;
+        return cutWorth = AbilityTiming.shouldCutPower(secs, ghostSecs, c.cutPowerAdvantage());
     }
 
     /** 鬼知道的某人位置：30 秒內看到的位置，或追蹤粒子最密的地方；不知道回傳 null。 */
@@ -1214,7 +1256,7 @@ final class AiGhost {
         updateAmbush();
         Goal prev = goal;
         GhostBrain.Situation sit = situation(seen);
-        goal = utility ? brain.decideUtility(sit, persona.weights(), "hard".equals(c.difficulty())) : brain.decide(sit);
+        goal = utility ? brain.decideUtility(sit, persona.weights(), "hard".equals(c.difficulty()), factors()) : brain.decide(sit);
         updateLearning();
         switch (goal.kind()) {
             case ATTACK, CHASE, SEARCH_LAST_SEEN, INVESTIGATE_NOISE, GO_SENSED -> endAmbush(); // 聽到聲音、看到人就結束埋伏
@@ -1415,14 +1457,46 @@ final class AiGhost {
         }
     }
 
+    private double gateSlack = 1, lastCutAdvantage = Double.NaN;
+
+    /** Utility 的其他考量（第三版第 16 項）：只用鬼知道的東西。 */
+    private GhostBrain.Factors factors() {
+        Location here = mob.getLocation();
+        double nl = noise == null ? Double.NaN : noiseLevel / 2.0;
+        double nd = noise == null || !noise.getWorld().equals(here.getWorld()) ? Double.NaN : noise.distance(here);
+        // 粒子集中程度：中位數那顆粒子 4 格內的比例（越集中越值得照粒子找）
+        double conc = 1;
+        ParticleTracker tr = lastSeenId == null ? null : trackers.get(lastSeenId);
+        if (tr != null && tr.alive() > 0) {
+            int[] pos = tr.positions();
+            Location mid = nav.loc(pos[pos.length / 2]);
+            conc = Math.min(1, tr.shareNear(mid.getX(), mid.getY(), mid.getZ(), 4) * 2);
+        }
+        double jailGuarded = guard ? Math.max(0, 1 - (guardUntil - m.tick) / (double) Math.max(1, c.guardCap())) : 0;
+        // 有人可能正在靠近監獄：監獄 15 格內最近有聲音 → 1；粒子在監獄 12 格內的比例 ×2；都沒有 → 0.5
+        double approach = 0.5;
+        Location jail = m.obj.jailNearestTo(here);
+        if (jail != null) {
+            if (noise != null && m.tick - noiseTick <= 200 && noise.getWorld().equals(jail.getWorld()) && noise.distance(jail) <= 15) approach = 1;
+            else for (ParticleTracker t : trackers.values()) approach = Math.max(approach, Math.min(1, 2 * t.shareNear(jail.getX(), jail.getY(), jail.getZ(), 12)));
+        }
+        double readerGuarded = readerGuardStart < 0 ? 0 : (m.tick - readerGuardStart) / (double) Math.max(1, c.guardReaderCap());
+        double cutValue = Double.isNaN(lastCutAdvantage) ? 1 : lastCutAdvantage / Math.max(1, 2 * c.cutPowerAdvantage());
+        return new GhostBrain.Factors(nl, nd, conc, gateSlack, jailGuarded, approach, readerGuarded, cutValue);
+    }
+
     private GhostBrain.Situation situation(LivingEntity seen) {
         GhostBrain.Seen s = seen == null ? null
                 : new GhostBrain.Seen(seen.getUniqueId(), pt(seen.getLocation()), seen.getLocation().distance(mob.getLocation()));
         List<Point> gates = new ArrayList<>();
+        gateSlack = 1;
         for (Objectives.GateState gs : m.obj.runningUnsabotagedGates()) {
             // 趕得上才去：走過去的時間＋弄壞 4 秒 ＜ 剩下的倒數
             double secs = travelSeconds(m.loc(gs.g.reader())) + m.o.ghostSabotage() / 20.0;
-            if (secs < gs.remaining / 20.0) gates.add(pt(m.loc(gs.g.reader())));
+            if (secs < gs.remaining / 20.0) {
+                gates.add(pt(m.loc(gs.g.reader())));
+                gateSlack = Math.min(gateSlack, (gs.remaining / 20.0 - secs) / Math.max(1, gs.remaining / 20.0));
+            }
         }
         int jailed = 0;
         for (Match.Survivor sv : m.survivors.values()) if (sv.status == Match.Status.JAILED) jailed++;
@@ -1512,7 +1586,14 @@ final class AiGhost {
                 if (noise.distance(here) < 2.5) {
                     noise = null;
                     if (!hideoutCheck(here, noiseTick, c.checkHideoutNoiseChance())) startLook();
-                } else navigate(noise, mode);
+                } else {
+                    // 困難：做事的聲音（中、高等級）→ 對方還沒發現鬼，從視線外摸過去
+                    boolean sneak = c.tacticalApproach() && noiseLevel >= Match.NOISE_MID && nav != null;
+                    sneakFrom = sneak ? nav.nearest(noise, 3) : -1;
+                    if (sneak && sneakFrom >= 0 && (rawGoal < 0 || nav.loc(rawGoal).distance(noise) > 2)) sneaks++;
+                    navigate(noise, mode);
+                    sneakFrom = -1;
+                }
             }
             case GO_SENSED -> {
                 if (sensed.distance(here) < 2.5) {
@@ -1754,6 +1835,7 @@ final class AiGhost {
     private Location pickWatchSpot(Location jail, double min, double max, double targetHeight) {
         if (nav == null) return null;
         List<Location> cands = new ArrayList<>();
+        List<Integer> candNodes = new ArrayList<>();
         for (int i = 0; i < nav.nav.size(); i++) {
             if (!nav.isMain(i)) continue;
             Location l = nav.loc(i);
@@ -1763,9 +1845,48 @@ final class AiGhost {
             Location eye = l.clone().add(0, 1.6, 0), cage = jail.clone().add(0, targetHeight, 0);
             Vector dir = cage.toVector().subtract(eye.toVector());
             var hit = eye.getWorld().rayTraceBlocks(eye, dir.clone().normalize(), dir.length(), FluidCollisionMode.NEVER, true);
-            if (hit == null || hit.getHitBlock() == null) cands.add(l);
+            if (hit == null || hit.getHitBlock() == null) {
+                cands.add(l);
+                candNodes.add(i);
+            }
         }
-        return cands.isEmpty() ? null : cands.get(m.rnd.nextInt(cands.size()));
+        if (cands.isEmpty()) return null;
+        // 最小割（第 12 項）：優先選看得到最多「切斷用的門口」的格子
+        List<Integer> doors = cutDoors(jail);
+        if (!doors.isEmpty() && vis != null) {
+            int best = 0;
+            List<Location> top = new ArrayList<>();
+            for (int k = 0; k < cands.size(); k++) {
+                int seen = 0;
+                for (int dn : doors) if (visFrom(candNodes.get(k), dn)) seen++;
+                if (seen > best) {
+                    best = seen;
+                    top.clear();
+                }
+                if (seen == best && seen > 0) top.add(cands.get(k));
+            }
+            if (!top.isEmpty()) {
+                cutWatchSpots++;
+                return top.get(m.rnd.nextInt(top.size()));
+            }
+        }
+        return cands.get(m.rnd.nextInt(cands.size()));
+    }
+
+    private int cutWatchSpots;
+    private final Map<Integer, List<Integer>> cutDoorCache = new HashMap<>();
+
+    /** 目標所在的區：最小割的那幾個交界，取靠目標那一側的門口格子。 */
+    private List<Integer> cutDoors(Location target) {
+        if (regions == null) return List.of();
+        int t = roomAt(target);
+        if (t < 0) return List.of();
+        return cutDoorCache.computeIfAbsent(t, k -> {
+            List<Integer> out = new ArrayList<>();
+            for (int[] e : regions.minCut(k, 3))
+                for (int[] ex : regionExits.getOrDefault(e[1], List.of())) if (ex[1] == e[0]) out.add(ex[2]);
+            return out;
+        });
     }
 
     // ---- 巡邏 ----
@@ -1876,6 +1997,22 @@ final class AiGhost {
 
     /** 這一段的成本：卡住的門 2.5 秒、障礙物 3.5 秒、蹲伏小洞 4 秒（只在追人、搜尋時用）、地洞（只在追人、搜尋時、而且知道兩端）。 */
     private GridNav.Cost costFor(Mode mode) {
+        GridNav.Cost base = baseCost(mode);
+        final int from = sneakFrom;
+        if (from < 0 || vis == null) return base;
+        // 戰術尋路（第三版第 4 項）：聲音那裡的人看得到的格子多算 sneak-penalty 格，從背後、視線外摸過去
+        double pen = c.sneakPenalty();
+        return e -> {
+            double x = base.extra(e);
+            return Double.isInfinite(x) ? x : x + (visFrom(from, e.to()) ? pen : 0);
+        };
+    }
+
+    /** 去聲音的地方時，從這一格（聲音）看得到的格子要避開；-1 = 不用。 */
+    private int sneakFrom = -1;
+    private int sneaks;
+
+    private GridNav.Cost baseCost(Mode mode) {
         double bps = 5.3 * speedMul; // 每秒幾格
         return e -> switch (e.kind()) {
             case WALK, STAIR -> 0;
@@ -2427,6 +2564,9 @@ final class AiGhost {
         stats.put("aiPathMsAvg", pathTime.avgMs());
         stats.put("aiPathMsMax", pathTime.maxMs());
         stats.put("aiFieldMsAvg", fieldTime.avgMs());
+        stats.put("aiNavBuildMs", navBuildMs);
+        stats.put("aiSneaks", sneaks);
+        stats.put("aiCutWatchSpots", cutWatchSpots);
         stats.put("aiIntercepts", intercepts + "/" + interceptPredicted + "/" + interceptTries);
         stats.put("aiAmbushes", ambushes);
         stats.put("aiReaderGuards", readerGuards);

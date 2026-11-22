@@ -13,6 +13,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class GhostBrainTest {
 
@@ -298,5 +299,45 @@ class GhostBrainTest {
         assertEquals(Kind.INVESTIGATE_NOISE, top.get(0).kind());
         assertEquals(Kind.CUT_POWER, top.get(1).kind());
         assertEquals(Kind.PATROL, top.get(top.size() - 1).kind());
+    }
+
+    // ---- Utility 的其他考量（Factors；沒給 = 中性，跟上面一樣） ----
+
+    private static double scoreOf(GhostBrain b, Kind k) {
+        for (GhostBrain.Scored sc : b.lastScores()) if (sc.kind() == k) return sc.score();
+        return -1;
+    }
+
+    @Test
+    void factors_guardReaderFadesWithTime() {
+        Situation s = calm(null, new Point(7, 65, 7), false);
+        GhostBrain a = new GhostBrain(new GhostBrain.Config(2.5, 200, 200, 0.5), new Random(1));
+        a.decideUtility(s, GhostBrain.Weights.STANDARD, true, GhostBrain.Factors.NEUTRAL.withReaderGuarded(0));
+        GhostBrain b = new GhostBrain(new GhostBrain.Config(2.5, 200, 200, 0.5), new Random(1));
+        b.decideUtility(s, GhostBrain.Weights.STANDARD, true, GhostBrain.Factors.NEUTRAL.withReaderGuarded(0.9));
+        assertTrue(scoreOf(b, Kind.GUARD_READER) < scoreOf(a, Kind.GUARD_READER));
+        assertEquals(Kind.GUARD_READER, b.lastScores().get(0).kind()); // 還是比巡邏高（考量最低 0.5）
+    }
+
+    @Test
+    void factors_quietFarNoise_scoresLower() {
+        Situation s = new Situation(NOW, false, null, null, -1_000_000, new Point(8, 65, -3), NOW - 50, null,
+                false, false, false, false, List.of(), false, null, HERE);
+        GhostBrain loud = new GhostBrain(new GhostBrain.Config(2.5, 200, 200, 0.5), new Random(1));
+        loud.decideUtility(s, GhostBrain.Weights.STANDARD, true, GhostBrain.Factors.NEUTRAL.withNoise(1, 5));
+        GhostBrain quiet = new GhostBrain(new GhostBrain.Config(2.5, 200, 200, 0.5), new Random(1));
+        quiet.decideUtility(s, GhostBrain.Weights.STANDARD, true, GhostBrain.Factors.NEUTRAL.withNoise(0, 30));
+        assertTrue(scoreOf(quiet, Kind.INVESTIGATE_NOISE) < scoreOf(loud, Kind.INVESTIGATE_NOISE));
+    }
+
+    @Test
+    void factors_neutral_sameAsNoFactors() {
+        for (Situation s : v2Cases()) {
+            GhostBrain a = new GhostBrain(new GhostBrain.Config(2.5, 200, 200, 0.5), new Random(1));
+            GhostBrain b = new GhostBrain(new GhostBrain.Config(2.5, 200, 200, 0.5), new Random(1));
+            assertEquals(a.decideUtility(s, GhostBrain.Weights.STANDARD, true).kind(),
+                    b.decideUtility(s, GhostBrain.Weights.STANDARD, true, GhostBrain.Factors.NEUTRAL).kind());
+            assertEquals(a.lastScores(), b.lastScores());
+        }
     }
 }
