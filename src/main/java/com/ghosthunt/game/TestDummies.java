@@ -91,10 +91,10 @@ final class TestDummies {
             if (m.tick >= nextWander.getOrDefault(id, 0L) || !v.getPathfinder().hasPath()) {
                 nextWander.put(id, m.tick + 100 + m.rnd.nextInt(100));
                 if (m.rnd.nextInt(4) == 0) {
-                    // 停下來「做事」4 秒：發出聲音（像翻木桶）
+                    // 停下來「做事」4 秒：發出聲音（大多像翻木桶；四次有一次像開電源、刷卡，中等級，測試戰術尋路用）
                     v.getPathfinder().stopPathfinding();
                     busyUntil.put(id, m.tick + 80);
-                    m.noise(v.getLocation(), Match.NOISE_LOW);
+                    m.noise(v.getLocation(), m.rnd.nextInt(4) == 0 ? Match.NOISE_MID : Match.NOISE_LOW);
                     continue;
                 }
                 Location to = randomNode(v.getLocation(), 6, 18, nav);
