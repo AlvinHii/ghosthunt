@@ -62,7 +62,9 @@ final class ResourcePackHost implements Listener {
         int port = cfg.getInt("resource-pack.port", 8164);
         String custom = cfg.getString("resource-pack.url", "");
         boolean self = custom == null || custom.isBlank();
-        String url = self ? "http://" + cfg.getString("resource-pack.host", "localhost") + ":" + port + "/ghosthunt-pack.zip" : custom;
+        // host 可以自己帶 port（例如 playit.gg 的隧道 xxx.gl.at.ply.gg:12345：外面的 port 跟本機的 8164 不一樣）
+        String host = cfg.getString("resource-pack.host", "localhost").trim();
+        String url = self ? "http://" + (host.contains(":") ? host : host + ":" + port) + "/ghosthunt-pack.zip" : custom;
         try {
             ResourcePackHost h = new ResourcePackHost(plugin, data, url, cfg.getBoolean("resource-pack.required", false));
             if (self) {
