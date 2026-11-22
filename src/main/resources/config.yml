@@ -76,7 +76,7 @@ ai-ghost:                      # PvE 的 AI 鬼（/gh start ai [easy|normal|hard
   base-speed: 0.45             # 基本速度（怪物的速度數值；約等於玩家跑步每秒 5.6 格）；依人數的加成、揮拳減速跟真人鬼一樣
   chase-speed: 1.0             # 看到人追的時候的速度倍率
   search-speed: 0.9            # 去聽到聲音、感應到的房間、追丟後找人、去弄壞大門
-  patrol-speed: 0.75           # 巡邏、守監獄、去關電源（約等於走路）
+  patrol-speed: 0.9            # 巡邏、守監獄、去關電源（2026-11-23 從 0.75 調高：大地圖上才有壓迫感；不會超過追人的速度）
   sight-range: 24              # 看得到人的距離（視線沒被擋；對方的眼睛、胸口、腳任一點看得到就算）
   sight-range-dark: 14         # 停電時看得到的距離
   fov: 120                     # 視野角度（度）：只看得到前方
@@ -93,6 +93,8 @@ ai-ghost:                      # PvE 的 AI 鬼（/gh start ai [easy|normal|hard
   hear-door: 12                # 聽得到多遠的開關門聲
   sense-quiet: 45              # 多久沒看到、沒聽到任何人才「感應」一次最近的人在哪一間房（被盯上的人聽到心跳加快）
   sense-gap: 45                # 兩次感應至少隔多久
+  big-map-nodes: 8000          # 尋路圖超過這麼多格算大地圖（mall 約 9000、mall_m 約 7500）
+  big-map-sense-scale: 0.67    # 大地圖的感應間隔乘這個（普通 45→30 秒、困難 30→20 秒、簡單 75→50 秒）
   pressure-limit: 60           # 壓力值：近距離看得到人時每秒 +1，到這個值（連續緊追太久）進入冷靜期
   calm-time: 30                # 冷靜期（也包括剛抓到人之後）：不感應、巡邏偏向遠的地方
   guard-jail-chance: 0.5       # 有人被關時去守監獄的機率

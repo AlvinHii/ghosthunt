@@ -83,7 +83,7 @@ final class AiGhost {
     private final AiGhostSettings c;
     private final GhostBrain brain;
     private final TargetPicker picker;
-    private final SenseDirector director;
+    private SenseDirector director;
     private RoomScores rooms;
     private final List<Building.Room> roomList = new ArrayList<>();
     private final StuckTracker stuck;
@@ -887,6 +887,13 @@ final class AiGhost {
         }
         rooms = new RoomScores(infos, 1.0, 300);
         buildRegions();
+        // 大地圖：太久沒接觸的感應提早（壓迫感；2026-11-23 使用者同意）
+        var cfg = m.plugin.getConfig();
+        if (nav.nav.size() >= cfg.getInt("ai-ghost.big-map-nodes", 8000)) {
+            double k = cfg.getDouble("ai-ghost.big-map-sense-scale", 0.67);
+            director = new SenseDirector((int) Math.round(c.senseQuiet() * k), (int) Math.round(c.senseGap() * k), c.pressureLimit(), c.calmTime());
+            m.plugin.getLogger().info("[AI 鬼] 大地圖（" + nav.nav.size() + " 格）：感應間隔 ×" + k + " → " + Math.round(c.senseQuiet() * k / 20.0) + " 秒");
+        }
         if (mob != null && !mob.getLocation().getBlock().isPassable()) {
             int id = nav.nearest(mob.getLocation(), 4);
             if (id >= 0) mob.teleport(nav.loc(id));

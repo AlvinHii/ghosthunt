@@ -52,7 +52,7 @@ record AiGhostSettings(
                 d(c, p, "check-hideout-base", d(c, p, "check-hideout-chance", 0.4)), d(c, p, "check-hideout-noise-chance", 0.2), d(c, p, "follow-tunnel-chance", 0.5),
                 t(c, p, "stuck-time", 2), t(c, p, "power-cut-delay", 20),
                 t(c, p, "flash-time", 1.0), t(c, p, "flash-blind", 1.5), t(c, p, "flash-immune", 12),
-                d(c, p, "chase-speed", 1.0), d(c, p, "search-speed", 0.9), d(c, p, "patrol-speed", 0.75),
+                d(c, p, "chase-speed", 1.0), d(c, p, "search-speed", 0.9), d(c, p, "patrol-speed", 0.9),
                 (int) d(c, p, "particles", 200), d(c, p, "particle-flee", 0.6), d(c, p, "particle-goal", 0.25),
                 d(c, p, "particle-sigma", 3), (int) d(c, p, "particle-min", 10), t(c, p, "particle-max-age", 40),
                 d(c, p, "escaper-speed", 5.6),
