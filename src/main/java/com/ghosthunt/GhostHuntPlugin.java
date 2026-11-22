@@ -556,6 +556,14 @@ public final class GhostHuntPlugin extends JavaPlugin {
     }
 
     /** 告示牌的字要等方塊放好才寫得上去。 */
+    /** 告示牌每一行的顏色（螢光字）：保全室紅、授權說明黃、電源金，其他白。 */
+    public static NamedTextColor signLineColor(String line) {
+        if (line.contains("保全室")) return NamedTextColor.RED;
+        if (line.contains("授權")) return NamedTextColor.YELLOW;
+        if (line.startsWith("⚡")) return NamedTextColor.GOLD;
+        return NamedTextColor.WHITE;
+    }
+
     private static int writeSigns(World world, Building b) {
         int n = 0;
         for (java.util.Map.Entry<Pos, String[]> e : b.signs.entrySet()) {
@@ -564,7 +572,8 @@ public final class GhostHuntPlugin extends JavaPlugin {
             org.bukkit.block.sign.SignSide side = sign.getSide(org.bukkit.block.sign.Side.FRONT);
             String[] lines = e.getValue();
             int off = lines.length >= 4 ? 0 : 1; // 三行以內從第二行開始寫（看起來置中）
-            for (int i = 0; i < lines.length && i + off < 4; i++) side.line(i + off, Component.text(lines[i]));
+            for (int i = 0; i < lines.length && i + off < 4; i++) side.line(i + off, Component.text(lines[i], signLineColor(lines[i])));
+            side.setGlowingText(true); // 螢光字（像用了螢光墨囊），暗的地方也看得到
             sign.setWaxed(true); // 不能編輯
             sign.update(true, false);
             n++;

@@ -229,8 +229,8 @@ public final class Match {
             String[] show = {"", "", "", ""};
             for (int i = 0; i < lines.length && i + off < 4; i++) show[i + off] = lines[i];
             if (on) show[Math.min(3, lines.length + off)] = "⚡ 電源";
-            for (int i = 0; i < 4; i++)
-                side.line(i, Component.text(show[i], show[i].startsWith("⚡") ? NamedTextColor.GOLD : NamedTextColor.BLACK));
+            for (int i = 0; i < 4; i++) side.line(i, Component.text(show[i], com.ghosthunt.GhostHuntPlugin.signLineColor(show[i])));
+            side.setGlowingText(true);
             sign.update(true, false);
         }
     }
