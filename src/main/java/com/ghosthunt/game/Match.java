@@ -62,6 +62,9 @@ public final class Match {
         /** 心跳用的鬼距離（沿路），每半秒更新一次。 */
         double heartDist = Double.POSITIVE_INFINITY;
         long heartDistTick = -1_000;
+        /** 4 段心跳：現在播第幾段（0 = 沒有）、這段什麼時候開始播。 */
+        int heartStage;
+        long heartStageStart;
         Location lastSample;
         long stillSince;
         boolean inHole;
@@ -176,6 +179,12 @@ public final class Match {
                 hc.getDouble("heartbeat.max-volume", 1.0), hc.getDouble("heartbeat.close-pitch", 1.15));
         this.heartSound = hc.getString("heartbeat.sound", "minecraft:entity.warden.heartbeat");
         this.heartPath = !"straight".equalsIgnoreCase(hc.getString("heartbeat.distance", "path"));
+        this.heartStageSounds = hc.getStringList("heartbeat.stage-sounds");
+        List<Double> sd = hc.getDoubleList("heartbeat.stage-distances");
+        if (sd.size() != heartStageSounds.size()) sd = List.of(32.0, 20.0, 12.0, 6.0).subList(0, Math.min(4, heartStageSounds.size()));
+        this.heartStageDist = sd.stream().mapToDouble(Double::doubleValue).toArray();
+        this.heartStageLoop = (int) Math.round(hc.getDouble("heartbeat.stage-loop", 24) * 20);
+        this.heartStageVolume = (float) hc.getDouble("heartbeat.stage-volume", 1.0);
         this.b = b;
         this.world = world;
         this.s = s;
@@ -506,6 +515,7 @@ public final class Match {
             applyBoost(sv, p);
             if (sv.status != Status.FREE) {
                 if (sv.inHole) setHoleSpeed(sv, p, false);
+                stopHeartbeat(sv, p);
                 continue;
             }
             heartbeat(sv, p, g);
@@ -728,15 +738,29 @@ public final class Match {
 
     private void heartbeat(Survivor sv, Player p, LivingEntity g) {
         if (nightmare != null && nightmare.active) {
+            stopHeartbeat(sv, p);
             nightmare.whisper(sv, p, g);
             return;
         }
-        if (!p.getWorld().equals(g.getWorld())) return;
+        if (!p.getWorld().equals(g.getWorld())) {
+            stopHeartbeat(sv, p);
+            return;
+        }
         if (tick - sv.heartDistTick >= 10) {
             sv.heartDistTick = tick;
             sv.heartDist = heartDistance(p.getLocation(), g.getLocation());
         }
         double d = sv.heartDist;
+        if (!heartStageSounds.isEmpty()) {
+            // 4 段心跳音檔（每段是固定速度的循環）：依距離切換，同一段每 stage-loop 秒重播
+            int st = com.ghosthunt.game.ai.Heartbeat.stage(d, heartStageDist, sv.heartStage, 2);
+            if (st != sv.heartStage) {
+                stopHeartbeat(sv, p);
+                sv.heartStage = st;
+                if (st > 0) playStage(sv, p);
+            } else if (st > 0 && tick - sv.heartStageStart >= heartStageLoop) playStage(sv, p);
+            return;
+        }
         int interval = heart.intervalTicks(d);
         if (interval < 0 || tick - sv.lastHeartbeat < interval) return;
         sv.lastHeartbeat = tick;
@@ -744,6 +768,22 @@ public final class Match {
     }
 
     private final com.ghosthunt.game.ai.Heartbeat heart;
+    private final List<String> heartStageSounds;
+    private final double[] heartStageDist;
+    private final int heartStageLoop;
+    private final float heartStageVolume;
+
+    private void playStage(Survivor sv, Player p) {
+        sv.heartStageStart = tick;
+        p.playSound(p.getLocation(), heartStageSounds.get(sv.heartStage - 1), org.bukkit.SoundCategory.MASTER, heartStageVolume, 1f);
+    }
+
+    /** 停掉正在播的那段心跳（被抓、熄燈、遊戲結束、鬼離太遠）。 */
+    void stopHeartbeat(Survivor sv, Player p) {
+        if (sv.heartStage > 0 && !heartStageSounds.isEmpty() && p != null)
+            p.stopSound(heartStageSounds.get(sv.heartStage - 1), org.bukkit.SoundCategory.MASTER);
+        sv.heartStage = 0;
+    }
     private final String heartSound;
     private final boolean heartPath;
 
@@ -1301,6 +1341,7 @@ public final class Match {
         if (task != null) task.cancel();
         if (nightmare != null) nightmare.stop();
         if (audio != null) audio.stop();
+        for (Survivor sv : survivors.values()) stopHeartbeat(sv, Bukkit.getPlayer(sv.id));
         if (aiGhost != null) {
             aiGhost.statsInto(stats);
             stats.put("dummyCatches", dummies.caught);

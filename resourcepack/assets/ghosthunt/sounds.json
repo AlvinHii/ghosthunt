@@ -6,5 +6,10 @@
   "hydro.tunnel":     {"subtitle": "通道裡的回聲",   "sounds": [{"name": "ghosthunt:hydro/maintenance_tunnel_ambience", "stream": true}]},
   "hydro.creak":      {"subtitle": "遠處金屬異響",   "sounds": [{"name": "ghosthunt:hydro/distant_metal_creak"}]},
   "hydro.valve":      {"subtitle": "壓力閥洩壓",     "sounds": [{"name": "ghosthunt:hydro/pressure_valve_release"}]},
-  "hydro.relay":      {"subtitle": "繼電器跳動",     "sounds": [{"name": "ghosthunt:hydro/transformer_relay_trip"}]}
+  "hydro.relay":      {"subtitle": "繼電器跳動",     "sounds": [{"name": "ghosthunt:hydro/transformer_relay_trip"}]},
+  "ambient.default":  {"subtitle": "令人不安的低鳴", "sounds": [{"name": "ghosthunt:ambient/default_ambience", "stream": true}]},
+  "heartbeat.1":      {"subtitle": "心跳（遠）",     "sounds": [{"name": "ghosthunt:heartbeat/heartbeat_1", "stream": true}]},
+  "heartbeat.2":      {"subtitle": "心跳（附近）",   "sounds": [{"name": "ghosthunt:heartbeat/heartbeat_2", "stream": true}]},
+  "heartbeat.3":      {"subtitle": "心跳（很近）",   "sounds": [{"name": "ghosthunt:heartbeat/heartbeat_3", "stream": true}]},
+  "heartbeat.4":      {"subtitle": "心跳（就在旁邊）", "sounds": [{"name": "ghosthunt:heartbeat/heartbeat_4", "stream": true}]}
 }

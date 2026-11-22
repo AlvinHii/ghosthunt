@@ -44,4 +44,28 @@ class HeartbeatTest {
             prev = cur;
         }
     }
+
+    // ---- 4 段心跳音檔（依距離切換） ----
+
+    private static final double[] T = {32, 20, 12, 6};
+
+    @Test
+    void stage_byDistance() {
+        assertEquals(0, Heartbeat.stage(40, T, 0, 2));
+        assertEquals(1, Heartbeat.stage(30, T, 0, 2));
+        assertEquals(2, Heartbeat.stage(15, T, 0, 2));
+        assertEquals(3, Heartbeat.stage(8, T, 0, 2));
+        assertEquals(4, Heartbeat.stage(3, T, 0, 2));
+        assertEquals(0, Heartbeat.stage(Double.POSITIVE_INFINITY, T, 3, 2));
+    }
+
+    @Test
+    void stage_hysteresis_noFlicker() {
+        // 在第 3 段（≤12），退到 13 格還是第 3 段；要超過 14 才回第 2 段；靠近時馬上升
+        assertEquals(3, Heartbeat.stage(13, T, 3, 2));
+        assertEquals(2, Heartbeat.stage(14.5, T, 3, 2));
+        assertEquals(4, Heartbeat.stage(5.9, T, 3, 2));
+        assertEquals(1, Heartbeat.stage(33, T, 1, 2)); // 邊緣也一樣
+        assertEquals(0, Heartbeat.stage(34.5, T, 1, 2));
+    }
 }

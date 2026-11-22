@@ -35,4 +35,16 @@ public record Heartbeat(double range, double minBpm, double maxBpm, double minVo
     public double pitch(double d) {
         return 1 + (closePitch - 1) * Math.max(0, closeness(d));
     }
+
+    /**
+     * 4 段心跳音檔用：距離在第幾段（0 = 沒有心跳；thresholds 由遠到近，例如 32, 20, 12, 6，距離 ≤ 第 i 個就是第 i+1 段）。
+     * 靠近時馬上升段；退遠時要超過「目前這段的門檻 + hysteresis」才降段，在邊界附近不會一直切換。
+     */
+    public static int stage(double d, double[] thresholds, int current, double hysteresis) {
+        int raw = 0;
+        for (double t : thresholds) if (d <= t) raw++;
+        if (raw >= current) return raw;
+        if (current > 0 && current <= thresholds.length && d <= thresholds[current - 1] + hysteresis) return current;
+        return raw;
+    }
 }

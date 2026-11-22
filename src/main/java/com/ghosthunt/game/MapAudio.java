@@ -36,9 +36,17 @@ final class MapAudio {
     }
 
     static MapAudio create(Match m) {
-        if (m.b.sounds == null || m.b.sounds.isEmpty()) return null;
-        AudioConfig c = AudioConfig.parse(m.b.sounds);
+        AudioConfig c = m.b.sounds == null || m.b.sounds.isEmpty() ? new AudioConfig() : AudioConfig.parse(m.b.sounds);
         for (String p : c.problems) m.plugin.getLogger().warning("地圖 " + m.b.mapName + "：" + p);
+        // 地圖沒有自己的全場環境音：播預設的恐怖白噪音（config 的 audio.default-ambient）
+        if (c.global == null) {
+            var cfg = m.plugin.getConfig();
+            String snd = cfg.getString("audio.default-ambient", "ghosthunt:ambient.default");
+            if (snd != null && !snd.isBlank()) {
+                c.global = new AudioConfig.Track(snd, (float) cfg.getDouble("audio.default-ambient-volume", 1.0));
+                if (m.b.sounds == null || m.b.sounds.isEmpty()) c.loopSeconds = Math.max(1, cfg.getInt("audio.default-ambient-loop", 30));
+            }
+        }
         return c.isEmpty() ? null : new MapAudio(m, c);
     }
 

@@ -168,6 +168,14 @@ heartbeat:                     # 逃生者的心跳（鬼越近越快、越大�
   min-volume: 0.3
   max-volume: 1.0
   close-pitch: 1.15            # 貼臉時的音調（邊緣是 1.0）
+  stage-sounds:                # 4 段心跳音檔（由遠到近；每段是固定速度的循環）。有填就用這個，空的就用上面的「單一下」心跳
+    - ghosthunt:heartbeat.1    # 60 下／分（遠）
+    - ghosthunt:heartbeat.2    # 75（附近）
+    - ghosthunt:heartbeat.3    # 100（很近）
+    - ghosthunt:heartbeat.4    # 130（就在旁邊）
+  stage-distances: [32, 20, 12, 6]   # 鬼的沿路距離 ≤ 這些格數就換到那一段（退遠時多 2 格才換回去，不會一直切）
+  stage-loop: 24               # 每段音檔幾秒（同一段每這麼多秒重播一次）
+  stage-volume: 1.0
 
 survivor:
   dash-duration: 1.5           # 緊急衝刺（F 鍵）持續時間
@@ -257,6 +265,11 @@ match:
   time-limit: 1020             # 17 分鐘強制結束
   record-stats: true           # 每局結束把數據寫進記錄檔
   # 不分勝負：場上沒有能自由行動的逃生者時立刻結束，只顯示每個人的結果
+
+audio:                         # 地圖音效（地圖檔的 [sounds]）
+  default-ambient: ghosthunt:ambient.default   # 地圖沒有自己的全場環境音時播的恐怖白噪音（空白 = 不播）
+  default-ambient-volume: 1.0
+  default-ambient-loop: 30     # 白噪音檔案幾秒（每這麼多秒重播一次）
 
 resource-pack:                 # 地圖音效的資源包（插件自己開一個小網頁伺服器送給玩家，進伺服器時會問要不要裝）
   enabled: true
