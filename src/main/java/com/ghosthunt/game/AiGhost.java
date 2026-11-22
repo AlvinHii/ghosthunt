@@ -2001,11 +2001,7 @@ final class AiGhost {
         final int from = sneakFrom;
         if (from < 0 || vis == null) return base;
         // 戰術尋路（第三版第 4 項）：聲音那裡的人看得到的格子多算 sneak-penalty 格，從背後、視線外摸過去
-        double pen = c.sneakPenalty();
-        return e -> {
-            double x = base.extra(e);
-            return Double.isInfinite(x) ? x : x + (visFrom(from, e.to()) ? pen : 0);
-        };
+        return com.ghosthunt.game.ai.TacticalCost.wrap(base, v -> visFrom(from, v), c.sneakPenalty());
     }
 
     /** 去聲音的地方時，從這一格（聲音）看得到的格子要避開；-1 = 不用。 */
