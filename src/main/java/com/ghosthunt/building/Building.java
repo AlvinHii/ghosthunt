@@ -86,6 +86,39 @@ public final class Building {
     public record Gadget(Pos trigger, Pos center) {}
     /** 迎賓鈴（右鍵→遠處的聲源響起，吸引鬼）。 */
     public final List<Pos> bells = new ArrayList<>();
+
+    // ---- 支線（v2 地圖的新符號；格子座標都是「那一格地面上一格」的世界座標） ----
+    /** L：貨梯廂的地板格。 */
+    public final List<Pos> elevatorCells = new ArrayList<>();
+    /** F：貨梯的配電盤（下面那格的方塊）。 */
+    public final List<Pos> fusePanels = new ArrayList<>();
+    /** P：停機坪的格子。 */
+    public final List<Pos> helipadCells = new ArrayList<>();
+    /** R：無線電（方塊）。 */
+    public Pos radio;
+    /** X：下水道鐵柵的格子。 */
+    public final List<Pos> sewerCells = new ArrayList<>();
+    /** N：密碼紙條候選（講台）。 */
+    public final List<Pos> noteSpots = new ArrayList<>();
+    /** M：監控室螢幕候選（下面那格的方塊）。 */
+    public final List<Pos> monitors = new ArrayList<>();
+    /** Y：攝影機（眼睛的位置、朝向、名稱）。 */
+    public record Camera(Pos eye, float yaw, String name) {}
+    public final List<Camera> cameras = new ArrayList<>();
+    /** A：廣播台候選。 */
+    public final List<Pos> paDesks = new ArrayList<>();
+    /** Z：區域配電箱（下面那格的方塊）和它管的區域（樓層 × 100000 ＋ 區域編號）。 */
+    public final Map<Pos, Integer> breakers = new HashMap<>();
+    /** 每盞燈在哪個區域（配電箱修好時只亮那一區）。 */
+    public final Map<Pos, Integer> lightRegion = new HashMap<>();
+    /** 每個區域的名稱（告示牌、攝影機、廣播用）和中心。 */
+    public final Map<Integer, String> regionNames = new HashMap<>();
+    public final Map<Integer, Pos> regionCenters = new HashMap<>();
+    /** T＋V：鐵捲門（鐵門，下半那格）和開關（拉桿）。 */
+    public record Shutter(List<Pos> doors, Pos lever) {}
+    public final List<Shutter> shutters = new ArrayList<>();
+    /** U：上鎖的門（鐵門，下半那格），要屋頂鑰匙。 */
+    public final List<Pos> lockedDoors = new ArrayList<>();
     /** 家具的裝飾方塊（書架、櫃子、按鈕、拉桿、椅背活板門……）：逃生者、鬼右鍵沒有反應。 */
     public final java.util.Set<Pos> decor = new java.util.HashSet<>();
     /** 家具正面的物品展示框（蓋完方塊以後才生成；固定、不能拿、不能打掉）。 */

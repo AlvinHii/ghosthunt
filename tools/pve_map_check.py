@@ -13,9 +13,9 @@ from collections import deque, Counter
 sys.stdout.reconfigure(encoding='utf-8')
 
 WALLS = set('#%+')
-OPENINGS = set('DWOIhHG')
+OPENINGS = set('DWOIhHGTU')  # T 鐵捲門、U 上鎖的門（v2 支線）
 ARROWS = {'>': (1, 0), '<': (-1, 0), '^': (0, -1), 'v': (0, 1)}
-MARKERS = set('SKJEQC123456789')
+MARKERS = set('SKJEQC123456789') | set('LFPRXNMYAZV')  # 後面是 v2 地圖的支線符號
 FLOORS = set('.,;') | MARKERS
 FURN_RESERVED = set('h')
 
@@ -118,7 +118,7 @@ def main():
         return c in FLOORS or c in ARROWS
 
     def passable_char(c):  # 走路時過得去（門、開口算）
-        return walkable_char(c) or c in 'DWOG' or c == '='
+        return walkable_char(c) or c in 'DWOGTU' or c == '='  # 鐵捲門、上鎖的門當成打開（連通性）
 
     # ---- 樓梯 ----
     stairs = []  # (f, tiles[(x,z,i)], dir)
@@ -186,7 +186,7 @@ def main():
             return False
         if c == '=':
             return (f, x, z) in stair_top
-        return walkable_char(c) or c in 'DWOG'
+        return walkable_char(c) or c in 'DWOGTU'  # T、U 當成打開（連通性）
 
     def neighbors(node, allow_crawl=False, allow_doors=True):
         f, x, z = node
@@ -256,7 +256,7 @@ def main():
     if not jail:
         E('沒有監獄 J')
     if not ghost:
-        E('沒有鬼房 K')
+        Wn('沒有鬼房 K（PvE 不用鬼房：鬼出生在離所有人最遠的地方）')
     if len({n[0] for n in jail}) > 1:
         E('監獄 J 要在同一層')
     # J 外圍一圈會蓋鐵欄杆：要是地面；再外面一圈要站得到人

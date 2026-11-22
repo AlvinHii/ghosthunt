@@ -51,7 +51,19 @@ deck = smooth_stone
 room-floors = pink_terracotta, light_gray_terracotta, gray_concrete, cracked_stone_bricks, polished_diorite, stripped_spruce_wood, yellow_terracotta, polished_andesite, brown_terracotta, orange_terracotta, quartz_bricks, smooth_sandstone, light_blue_concrete, terracotta, polished_granite, lime_terracotta, white_terracotta, tuff_bricks, mud_bricks, cyan_terracotta, diorite, white_concrete, red_nether_bricks, andesite, purple_terracotta, red_terracotta, stripped_oak_wood, magenta_terracotta, granite, green_terracotta, stripped_birch_wood, cherry_planks
 door = dark_oak
 """
-PRESETS = {'mall': (MALL_FURN, MALL_PAL)}
+MALL2_PAL = """
+wall = smooth_quartz
+outer-wall = gray_concrete
+ceiling = smooth_stone
+hedge = mossy_stone_bricks
+fence = dark_oak_fence
+deck = smooth_stone
+outdoor = andesite, moss_block
+path = polished_blackstone
+room-floors = polished_andesite, smooth_stone, white_concrete, polished_diorite, white_terracotta, stripped_oak_wood, birch_planks, black_concrete, red_terracotta, purple_terracotta, light_gray_terracotta, smooth_quartz, gray_concrete, cyan_terracotta, polished_granite
+door = spruce
+"""
+PRESETS = {'mall': (MALL_FURN, MALL_PAL), 'mall2': (MALL_FURN, MALL2_PAL)}
 
 # 拼之前對模組改的格子：(樓層, 模組, x, y, 新字元)，模組內座標。用來切斷「幾個模組的開口排成一直線」造成的長直線視野。
 EDITS = {
@@ -88,11 +100,11 @@ def parse(path):
     text = open(path, encoding='utf-8').read()
     macro = {}
     for f in ('1F', '2F'):
-        m = re.search(r'## 巨集圖 ' + f + r'\s*\n+```text\n(.*?)```', text, re.S)
+        m = re.search(r'## 巨集圖 ' + f + r'\s*\n+```(?:text)?\n(.*?)```', text, re.S)
         if m:
             macro[f] = [r.split() for r in m.group(1).strip('\n').split('\n')]
     mods = {}
-    for m in re.finditer(r'### (1F|2F) (\S+?)[（(\s]([^\n]*)\n+```text\n(.*?)```', text, re.S):
+    for m in re.finditer(r'### (1F|2F) (\S+?)[（(\s]([^\n]*)\n+```(?:text)?\n(.*?)```', text, re.S):
         rows = m.group(4).split('\n')
         if rows and rows[-1] == '':
             rows.pop()
@@ -185,19 +197,22 @@ def main():
         rows[y] = rows[y][:x] + ch + rows[y][x + 1:]
         print(f'改：{fl} {mod} ({x},{y}) . → {ch}')
     text = open(src, encoding='utf-8').read()
-    name = re.search(r'地圖顯示名稱\*\*：`([^`]+)`', text)
+    name = re.search(r'地圖顯示名稱\*\*：`([^`]+)`', text) or re.search(r'^# ([^（(\n]+)', text, re.M)
+    # 說明：藍圖「## 說明」底下第一段（新版藍圖）；沒有就用舊的購物中心說明
+    dm = re.search(r'## 說明\s*\n+([^\n#][^\n]*)', text)
+    desc = dm.group(1).strip() if dm else '雙層購物中心：中央挑高中庭（鬼的保全隔離亭），四周一圈店鋪，2F 迴廊商街（由模組化藍圖拼成）。'
     log = []
     floors = [f for f in ('1F', '2F') if f in macro]
     grids = {f: assemble(macro, mods, f, log) for f in floors}
-    furn, pal = PRESETS['mall']
+    furn, pal = PRESETS.get(mid, PRESETS['mall'])
     # 藍圖裡有「```furniture」區塊就用它（md 是家具的唯一來源）；沒有才用上面的預設
     fb = re.search(r'```furniture\r?\n(.*?)```', text, re.S)
     if fb:
         furn = fb.group(1)
         print('家具：用藍圖裡的 ```furniture 區塊')
     with open(dst, 'w', encoding='utf-8', newline='\n') as fo:
-        fo.write(f'name: {name.group(1) if name else mid}\ntype: indoor\n')
-        fo.write('description: 雙層購物中心：中央挑高中庭（鬼的保全隔離亭），四周一圈店鋪，2F 迴廊商街（由模組化藍圖拼成）。\n')
+        fo.write(f'name: {name.group(1).strip() if name else mid}\ntype: indoor\n')
+        fo.write(f'description: {desc}\n')
         if '--barrels' in opt:
             fo.write(f'barrels: {opt["--barrels"]}\n')
         for f in floors:
@@ -209,9 +224,9 @@ def main():
         fo.write('\n[rooms]\n')
         for f in floors:
             for (x1, z1, x2, z2, tok) in module_rects(macro, f):
-                name = TITLES.get((f, tok))
-                if name:
-                    fo.write(f'{f} {x1},{z1} {x2},{z2} = {name}\n')
+                rname = TITLES.get((f, tok))
+                if rname:
+                    fo.write(f'{f} {x1},{z1} {x2},{z2} = {rname}\n')
     if '--md' in opt:
         with open(opt['--md'], 'w', encoding='utf-8', newline='\n') as fo:
             fo.write(f'# {name.group(1) if name else mid}（拼好的原圖）\n\n| 字母 | 名稱 |\n| --- | --- |\n')

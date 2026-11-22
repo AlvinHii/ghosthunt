@@ -36,7 +36,7 @@ import java.util.Set;
 final class FixedMapGenerator {
 
     private static final int[][] DIRS = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
-    private static final String MARKERS = "SKJEQC";
+    private static final String MARKERS = "SKJEQC" + "LFPRXNMYAZV"; // 後面那串是 v2 地圖的支線符號（見 docs/PvE購物中心v2_藍圖prompt.md）
 
     private final BuildingSettings s;
     private final FixedMap fm;
@@ -193,7 +193,7 @@ final class FixedMapGenerator {
         if (!errors.isEmpty()) return;
         Region ghost = regions.stream().filter(r -> r.ghost).findFirst().orElse(null);
         Region jail = regions.stream().filter(r -> r.jail).findFirst().orElse(null);
-        if (ghost == null) errors.add("沒有鬼房（K）");
+        // 鬼房（K）選填：PvE 不用鬼房（2026-11-23），沒有的話用出生點當備用的「鬼房中心」
         if (jail == null) errors.add("沒有監獄（J）");
         if (!errors.isEmpty()) return;
 
@@ -665,7 +665,7 @@ final class FixedMapGenerator {
             for (int z = 0; z < H; z++) {
                 for (int x = 0; x < W; x++) {
                     char c = at(f, x, z);
-                    if ("DWOIh".indexOf(c) < 0 || done.contains(key(f, x, z))) continue;
+                    if ("DWOIhTU".indexOf(c) < 0 || done.contains(key(f, x, z))) continue;
                     boolean px = passX(f, x, z);
                     if (!px && !(walkSide(f, x, z - 1) && walkSide(f, x, z + 1))) {
                         warnings.add((f + 1) + "F " + c + "（" + x + "," + z + "）兩側不是地面，當成牆");
@@ -737,6 +737,25 @@ final class FixedMapGenerator {
                         }
                         case 'h' -> {
                             for (int[] t : run) crawlHole(f, t[0], t[1], wall);
+                        }
+                        case 'U' -> {
+                            // 上鎖的門：鐵門（手打不開），要屋頂鑰匙
+                            for (int[] t : run) {
+                                placeIronDoor(f, t[0], t[1], px, Door.Hinge.LEFT);
+                                topUp(f, t[0], t[1], 2, wall);
+                                b.lockedDoors.add(at(f, t[0], 0, t[1]));
+                            }
+                        }
+                        case 'T' -> {
+                            // 鐵捲門：兩扇並排的鐵門，平常鎖著，按開關（V）才打開
+                            List<Pos> lowers = new ArrayList<>();
+                            for (int i = 0; i < run.size(); i++) {
+                                int[] t = run.get(i);
+                                placeIronDoor(f, t[0], t[1], px, i % 2 == 0 ? Door.Hinge.LEFT : Door.Hinge.RIGHT);
+                                topUp(f, t[0], t[1], 2, wall);
+                                lowers.add(at(f, t[0], 0, t[1]));
+                            }
+                            shutterRuns.add(lowers);
                         }
                         default -> { }
                     }
@@ -868,6 +887,171 @@ final class FixedMapGenerator {
         reserve(f, x, z, 2);
     }
 
+    /** 鐵門（上鎖的門、鐵捲門）：不算進可以卡的門。 */
+    private void placeIronDoor(int f, int x, int z, boolean px, Door.Hinge hinge) {
+        Pos p = at(f, x, 0, z);
+        for (Bisected.Half half : Bisected.Half.values()) {
+            Door d = (Door) Bukkit.createBlockData(Material.IRON_DOOR);
+            d.setFacing(px ? BlockFace.EAST : BlockFace.SOUTH);
+            d.setHinge(hinge);
+            d.setHalf(half);
+            d.setOpen(false);
+            map.set(half == Bisected.Half.BOTTOM ? p : p.add(0, 1, 0), d);
+        }
+    }
+
+    private final List<List<Pos>> shutterRuns = new ArrayList<>();
+
+    /** 靠牆的方向（往牆那一邊）；沒有牆回傳 null。 */
+    private int[] wallDir(int f, int x, int z) {
+        for (int[] d : DIRS) {
+            char c = at(f, x + d[0], z + d[1]);
+            if (wallChar(c) || c == ' ') return d;
+        }
+        return null;
+    }
+
+    /** v2 地圖的支線物件：照符號放方塊、記到 Building。 */
+    private void sideObjects() {
+        List<int[]> pads = new ArrayList<>();
+        List<Pos> levers = new ArrayList<>();
+        for (int f = 0; f < F; f++) {
+            for (int z = 0; z < H; z++) {
+                for (int x = 0; x < W; x++) {
+                    char c = at(f, x, z);
+                    if ("LFPRXNMYAZV".indexOf(c) < 0) continue;
+                    Pos p = at(f, x, 0, z);
+                    int[] wd = wallDir(f, x, z);
+                    int[] front = wd == null ? new int[]{0, 1} : new int[]{-wd[0], -wd[1]};
+                    Region r = regionAt(f, x, z);
+                    switch (c) {
+                        case 'L' -> {
+                            map.set(at(f, x, -1, z), Material.POLISHED_DEEPSLATE);
+                            b.elevatorCells.add(p);
+                            reserve(f, x, z, 1);
+                        }
+                        case 'F' -> {
+                            map.set(p, Material.IRON_BLOCK);
+                            map.set(p.add(0, 1, 0), Material.REDSTONE_LAMP);
+                            occupied.add(key(f, x, z));
+                            b.fusePanels.add(p);
+                        }
+                        case 'P' -> {
+                            pads.add(new int[]{f, x, z});
+                            b.helipadCells.add(p);
+                            reserve(f, x, z, 0);
+                        }
+                        case 'R' -> {
+                            map.set(p, Material.LODESTONE);
+                            occupied.add(key(f, x, z));
+                            b.radio = p;
+                        }
+                        case 'X' -> {
+                            org.bukkit.block.data.type.TrapDoor td = (org.bukkit.block.data.type.TrapDoor) Bukkit.createBlockData(Material.IRON_TRAPDOOR);
+                            td.setHalf(Bisected.Half.TOP);
+                            td.setOpen(false);
+                            map.set(at(f, x, -1, z), td);
+                            map.set(at(f, x, -2, z), Material.AIR);
+                            map.set(at(f, x, -3, z), Material.MUD_BRICKS);
+                            b.sewerCells.add(p);
+                            reserve(f, x, z, 1);
+                        }
+                        case 'N' -> {
+                            org.bukkit.block.data.type.Lectern lec = (org.bukkit.block.data.type.Lectern) Bukkit.createBlockData(Material.LECTERN);
+                            lec.setFacing(face(front));
+                            map.set(p, lec);
+                            occupied.add(key(f, x, z));
+                            b.noteSpots.add(p);
+                        }
+                        case 'M' -> {
+                            map.set(p, Material.POLISHED_BLACKSTONE);
+                            map.set(p.add(0, 1, 0), Material.BLACK_CONCRETE);
+                            Pos fp = at(f, x + front[0], 1, z + front[1]);
+                            b.decorFrames.add(new Building.DecorFrame(fp, face(front), true, Material.FILLED_MAP));
+                            occupied.add(key(f, x, z));
+                            b.monitors.add(p);
+                        }
+                        case 'Y' -> {
+                            // 攝影機裝在天花板下面一格，朝向這一區的中間
+                            int[] rc = r == null ? new int[]{x, z} : r.center();
+                            double dx = rc[0] - x, dz = rc[1] - z;
+                            float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
+                            org.bukkit.block.data.Directional ob = (org.bukkit.block.data.Directional) Bukkit.createBlockData(Material.OBSERVER);
+                            ob.setFacing(BlockFace.UP);
+                            map.set(at(f, x, fh - 2, z), ob);
+                            String name = r == null ? null : regionName(r);
+                            if (name == null) name = "攝影機 " + (b.cameras.size() + 1);
+                            b.cameras.add(new Building.Camera(at(f, x, fh - 3, z), yaw, name.replace("★", "")));
+                        }
+                        case 'A' -> {
+                            map.set(p, Material.NOTE_BLOCK);
+                            map.set(p.add(0, 1, 0), Material.LIGHTNING_ROD);
+                            occupied.add(key(f, x, z));
+                            b.paDesks.add(p);
+                        }
+                        case 'Z' -> {
+                            map.set(p, Material.IRON_BLOCK);
+                            map.set(p.add(0, 1, 0), Material.IRON_BLOCK);
+                            occupied.add(key(f, x, z));
+                            if (r != null) b.breakers.put(p, f * 100000 + r.id);
+                        }
+                        case 'V' -> {
+                            if (wd == null) {
+                                warnings.add((f + 1) + "F 鐵捲門開關 V（" + x + "," + z + "）旁邊沒有牆，跳過");
+                                continue;
+                            }
+                            org.bukkit.block.data.type.Switch sw = (org.bukkit.block.data.type.Switch) Bukkit.createBlockData(Material.LEVER);
+                            sw.setAttachedFace(org.bukkit.block.data.FaceAttachable.AttachedFace.WALL);
+                            sw.setFacing(face(front));
+                            Pos lp = p.add(0, 1, 0);
+                            map.set(lp, sw);
+                            levers.add(lp);
+                        }
+                        default -> { }
+                    }
+                }
+            }
+        }
+        // 停機坪：黃色，中間一個白色 H
+        if (!pads.isEmpty()) {
+            int minX = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE, minZ = Integer.MAX_VALUE, maxZ = Integer.MIN_VALUE;
+            for (int[] t : pads) {
+                minX = Math.min(minX, t[1]);
+                maxX = Math.max(maxX, t[1]);
+                minZ = Math.min(minZ, t[2]);
+                maxZ = Math.max(maxZ, t[2]);
+            }
+            int w = maxX - minX, h = maxZ - minZ;
+            for (int[] t : pads) {
+                int rx = t[1] - minX, rz = t[2] - minZ;
+                boolean hBar = (rx == 1 || rx == w - 1) && rz >= 1 && rz <= h - 1;
+                boolean hMid = rz == h / 2 && rx >= 1 && rx <= w - 1;
+                map.set(at(t[0], t[1], -1, t[2]), hBar || hMid ? Material.WHITE_CONCRETE : Material.YELLOW_CONCRETE);
+            }
+        }
+        // 鐵捲門配開關：每一段鐵捲門找 4 格內最近的 V
+        for (List<Pos> run : shutterRuns) {
+            Pos best = null;
+            double bd = 5;
+            for (Pos lp : levers) {
+                double d = Math.sqrt(Math.pow(lp.x() - run.get(0).x(), 2) + Math.pow(lp.z() - run.get(0).z(), 2));
+                if (Math.abs(lp.y() - 1 - run.get(0).y()) <= 1 && d < bd) {
+                    bd = d;
+                    best = lp;
+                }
+            }
+            if (best == null) warnings.add("鐵捲門（" + run.get(0) + "）附近找不到開關 V，這扇門會一直鎖著");
+            b.shutters.add(new Building.Shutter(List.copyOf(run), best));
+        }
+        // 區域名稱和中心（攝影機、廣播用）
+        for (Region r : regions) {
+            String name = regionName(r);
+            int[] c0 = r.center();
+            b.regionCenters.put(r.f * 100000 + r.id, at(r.f, c0[0], 0, c0[1]));
+            if (name != null) b.regionNames.put(r.f * 100000 + r.id, name.replace("★", ""));
+        }
+    }
+
     private void placeDoor(int f, int x, int z, boolean px, Door.Hinge hinge, boolean jammable) {
         Pos p = at(f, x, 0, z);
         for (Bisected.Half half : Bisected.Half.values()) {
@@ -937,10 +1121,17 @@ final class FixedMapGenerator {
         }
         int cx = Math.round((float) sx / nJ), cz = Math.round((float) sz / nJ);
         b.jailCages.put(jf, at(jf, cx, 0, cz));
-        // 鬼房
-        int[] gc = ghost.center();
-        b.ghostRoomCenter = at(ghost.f, gc[0], 0, gc[1]);
-        b.ghostRoom = new Building.Cell(ghost.f, 0, 0, RoomType.GHOST_ROOM);
+        // 鬼房（沒有 K 的地圖：用出生點 S 當備用的中心；PvE 實際上鬼出生在離所有人最遠的地方）
+        if (ghost != null) {
+            int[] gc = ghost.center();
+            b.ghostRoomCenter = at(ghost.f, gc[0], 0, gc[1]);
+            b.ghostRoom = new Building.Cell(ghost.f, 0, 0, RoomType.GHOST_ROOM);
+        } else {
+            int[] st = findStart();
+            b.ghostRoomCenter = at(0, st[0], 0, st[1]);
+            b.ghostRoom = new Building.Cell(0, 0, 0, RoomType.GHOST_ROOM);
+        }
+        sideObjects();
         // 地下通道
         int pairs = 0;
         for (Map.Entry<Character, List<int[]>> e : hatch.entrySet()) {
@@ -1070,13 +1261,14 @@ final class FixedMapGenerator {
         for (Map.Entry<Character, FixedMap.Furniture> e : fm.furniture.entrySet()) {
             String top = e.getValue().opt("top");
             if (top == null) continue;
-            Material mat = fm.material(top.split(":")[0], null);
+            String spec = top.contains("[") ? top.substring(0, top.indexOf(']') + 1) : top.split(":")[0];
+            Material mat = fm.material(spec.contains("[") ? spec.substring(0, spec.indexOf('[')) : spec, null);
             if (mat == null) continue;
             for (int[] comp : components(e.getKey())) {
                 int[] dir = facing(comp[0], comp[1], comp[2], e.getKey(), e.getValue());
                 Pos p = at(comp[0], comp[1], height(e.getKey()), comp[2]);
                 if (!map.passable(p)) continue;
-                BlockData d = Bukkit.createBlockData(mat);
+                BlockData d = spec.contains("[") ? Bukkit.createBlockData("minecraft:" + spec) : Bukkit.createBlockData(mat);
                 if (d instanceof org.bukkit.block.data.type.TrapDoor td) {
                     td.setOpen(true);
                     if (dir != null) td.setFacing(face(dir));
@@ -1122,6 +1314,11 @@ final class FixedMapGenerator {
         if (dir == null || !(d instanceof org.bukkit.block.data.Directional dd)) return;
         org.bukkit.block.BlockFace bf = face(dir);
         Material t = d.getMaterial();
+        // 椅子（樓梯方塊）：坐的人面向 dir，所以樓梯的高背在反方向
+        if (d instanceof org.bukkit.block.data.type.Stairs st) {
+            st.setFacing(bf.getOppositeFace());
+            return;
+        }
         boolean turn = t == Material.CHISELED_BOOKSHELF || t == Material.SMOKER || t == Material.BLAST_FURNACE || t == Material.FURNACE;
         if (turn && dd.getFaces().contains(bf)) dd.setFacing(bf);
     }
@@ -1151,6 +1348,21 @@ final class FixedMapGenerator {
     private int[] facing(int f, int x, int z, char c, FixedMap.Furniture fu) {
         String rule = fu.opt("face");
         if (rule == null) return null;
+        switch (rule) { // 固定朝向（例如影城座椅 face=S：一律朝南）
+            case "s" -> {
+                return new int[]{0, 1};
+            }
+            case "n" -> {
+                return new int[]{0, -1};
+            }
+            case "e" -> {
+                return new int[]{1, 0};
+            }
+            case "w" -> {
+                return new int[]{-1, 0};
+            }
+            default -> { }
+        }
         if (rule.equals("table")) {
             for (int[] d : DIRS) {
                 char nb = at(f, x + d[0], z + d[1]);
@@ -1447,6 +1659,7 @@ final class FixedMapGenerator {
                 if (!map.passable(lp) || holes.contains(key(f, t[0], t[1]))) continue;
                 map.set(lp, light());
                 b.lights.add(lp);
+                b.lightRegion.put(lp, f * 100000 + r.id);
                 any = true;
             }
             if (!any && r.indoor) {
@@ -1455,6 +1668,7 @@ final class FixedMapGenerator {
                 if (map.passable(lp)) {
                     map.set(lp, light());
                     b.lights.add(lp);
+                    b.lightRegion.put(lp, f * 100000 + r.id);
                 }
             }
         }
