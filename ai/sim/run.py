@@ -25,8 +25,10 @@ def _init(map_name):
 
 
 def _one(args):
-    seed, diff, n = args
+    seed, diff, n, sets = args
     cfg = load(diff)
+    for k, v in sets.items():
+        cfg['ai'][k] = v
     t = time.time()
     g = play(_W['w'], cfg, seed=seed, survivors=n)
     r = g.result()
@@ -67,14 +69,23 @@ def main():
     ap.add_argument('--workers', type=int, default=max(1, os.cpu_count() - 4))
     ap.add_argument('--replays', type=int, default=0)
     ap.add_argument('--out', default=None)
+    ap.add_argument('--set', action='append', default=[], help='覆寫 ai-ghost 的值，例如 --set capture-mode=jail')
     a = ap.parse_args()
     World(a.map)  # 先建好距離快取
     t = time.time()
-    jobs = [(s, a.difficulty, a.survivors) for s in range(a.games)]
+    sets = {}
+    for kv in a.set:
+        k, v = kv.split('=', 1)
+        try:
+            v = float(v)
+        except ValueError:
+            pass
+        sets[k] = v
+    jobs = [(s, a.difficulty, a.survivors, sets) for s in range(a.games)]
     with mp.Pool(a.workers, initializer=_init, initargs=(a.map,)) as pool:
         results = pool.map(_one, jobs, chunksize=4)
     s = summarize(results, a.survivors)
-    print(f'== {a.map}｜{a.difficulty}｜逃生者 {a.survivors} 人｜規則型鬼 vs 規則型逃生者 ==')
+    print(f'== {a.map}｜{a.difficulty}{" " + str(sets) if sets else ""}｜逃生者 {a.survivors} 人｜規則型鬼 vs 規則型逃生者 ==')
     for k, v in s.items():
         print(f'{k}：{v}')
     print(f'總共 {time.time() - t:.1f} 秒（{a.workers} 個行程）')

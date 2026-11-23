@@ -24,7 +24,7 @@ A_NOISE, A_POWER, A_SABOTAGE, A_JAIL = RMAX, RMAX + 1, RMAX + 2, RMAX + 3
 N_ACTIONS = RMAX + 4
 ACTION_NAMES = {A_NOISE: '去聲音', A_POWER: '關電源', A_SABOTAGE: '弄壞大門', A_JAIL: '守監獄'}
 
-FREE, JAILED, ESCAPED, OUT = 0, 1, 2, 3
+FREE, JAILED, ESCAPED, OUT, DOWN = 0, 1, 2, 3, 4   # DOWN：困難模式的倒地（capture-mode: downed）
 
 # 逃生者的「真人程度」（模擬器的電腦逃生者比真人有效率；之後用真人紀錄校正）
 REALISM = {
@@ -484,6 +484,11 @@ class Game:
             self.stats['eliminated'] += 1
             self.reward += 0.5
             self.log('逃生者%d 被淘汰' % s.i)
+        elif self.ai.get('capture-mode') == 'downed':
+            s.state = DOWN
+            s.bleed = float(self.ai.get('down-bleed', 60))
+            s.revive = 0.0
+            self.log('逃生者%d 倒地（第 %d 次）' % (s.i, s.captures))
         else:
             s.state = JAILED
             s.pos = None
@@ -500,7 +505,7 @@ class Game:
         m[A_NOISE] = self.noise is not None and not self.noise_handled and self.t - self.noise[1] <= 20
         m[A_POWER] = self.power and not self.power_cut and self.t - self.power_on_at >= self.ai['power-cut-delay']
         m[A_SABOTAGE] = any(g['counting'] >= 0 and not g['sabotaged'] for g in self.gates)
-        m[A_JAIL] = any(s.state == JAILED for s in self.sv) and bool(self.w.jails)
+        m[A_JAIL] = (any(s.state == JAILED for s in self.sv) and bool(self.w.jails)) or any(s.state == DOWN for s in self.sv)
         return m
 
     def decide(self, a):
@@ -517,7 +522,11 @@ class Game:
             gs = [g for g in self.gates if g['counting'] >= 0 and not g['sabotaged']]
             target = min(gs, key=lambda g: self.d(self.g, g['reader']))['reader'] if gs else self.g
         else:
-            target = w.jails[0]['stand'] if w.jails else self.g
+            down = [s for s in self.sv if s.state == DOWN]
+            if down:
+                target = min(down, key=lambda s: self.d(self.g, s.pos)).pos  # 守倒地的人（拿來當誘餌）
+            else:
+                target = w.jails[0]['stand'] if w.jails else self.g
         self.g_goal = (a, target, None)
         self.g_goal_since = self.t
         self.need_decision = False
@@ -550,7 +559,7 @@ class Game:
         gl[0] = self.t / self.c['match']['time-limit']
         gl[1] = self.power
         gl[2] = len(self.free()) / 3
-        gl[3] = sum(s.state == JAILED for s in self.sv) / 3
+        gl[3] = sum(s.state in (JAILED, DOWN) for s in self.sv) / 3
         gl[4] = sum(s.state == ESCAPED for s in self.sv) / 3
         m = self.mask()
         gl[5:9] = m[RMAX:RMAX + 4]
@@ -688,6 +697,12 @@ class Game:
         for g in self.gates:
             if g['open']:
                 return ('escape', g['exit'], g)
+        # 扶倒地的隊友：最近的一個人去（倒地的位置就是目標，站旁邊就會扶）
+        down = [o for o in self.sv if o.state == DOWN]
+        if down:
+            d0 = min(down, key=lambda o: self.d(s.pos, o.pos))
+            if all(self.d(s.pos, d0.pos) <= self.d(o.pos, d0.pos) + 5 for o in others):
+                return ('revive', d0.pos, d0)
         # 救人：最近的一個人去
         jailed = [o for o in self.sv if o.state == JAILED]
         if jailed and w.jails:
@@ -815,7 +830,29 @@ class Game:
         self.reward -= 0.3
 
     def _rescues(self):
-        pass
+        """倒地：流血倒數（鬼在旁邊時暫停）、隊友站旁邊扶。"""
+        ai = self.ai
+        for s in self.sv:
+            if s.state != DOWN:
+                continue
+            if self.eu(self.g, s.pos) > ai.get('down-camp-radius', 8):
+                s.bleed -= DT
+            helpers = [o for o in self.free() if self.eu(o.pos, s.pos) <= ai.get('revive-radius', 2.0)]
+            s.revive = s.revive + DT if helpers else max(0.0, s.revive - 2 * DT)
+            if s.revive >= ai.get('revive-time', 4):
+                s.state = FREE
+                s.protect_until = self.t + self.c['jail']['rescue-protection']
+                s.boost_until = self.t + self.c['jail']['rescue-speed-boost']
+                self.stats['rescues'] += 1
+                self.log('逃生者%d 扶起逃生者%d' % (helpers[0].i, s.i))
+                self.need_decision = True
+            elif s.bleed <= 0:
+                s.state = OUT
+                s.pos = None
+                self.stats['eliminated'] += 1
+                self.reward += 0.5
+                self.log('逃生者%d 流血淘汰' % s.i)
+                self.need_decision = True
 
     def _gates(self):
         for g in self.gates:
@@ -846,7 +883,7 @@ class Game:
             't': round(self.t, 2),
             'g': p(self.g), 'gt': None if self.g_target is None else self.g_target.i,
             'goal': None if self.g_goal is None else [int(self.g_goal[0]), p(self.g_goal[1])],
-            's': [[p(s.pos) if not s.hidden else p(s.hidden[1]), s.state, bool(s.hidden), len(s.cards),
+            's': [[p(s.pos) if s.pos is not None and not s.hidden else (p(s.hidden[1]) if s.hidden else None), s.state, bool(s.hidden), len(s.cards),
                    None if not s.task else s.task[0]] for s in self.sv],
             'power': self.power,
             'gates': [[g['counting'], g['open']] for g in self.gates],
