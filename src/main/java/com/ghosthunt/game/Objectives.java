@@ -403,6 +403,11 @@ final class Objectives {
         return lever == null ? null : m.loc(lever);
     }
 
+    /** 總電源開過了沒（開局沒電的困難模式：第一次開之前連緊急照明都沒有）。 */
+    boolean everOn() {
+        return everOn;
+    }
+
     boolean powerOn() {
         return powerOn;
     }

@@ -45,7 +45,7 @@ import java.util.UUID;
  */
 public final class Match {
 
-    public enum Status { FREE, JAILED, ELIMINATED, ESCAPED }
+    public enum Status { FREE, JAILED, ELIMINATED, ESCAPED, DOWNED }
 
     public static final class Survivor {
         final UUID id;
@@ -57,6 +57,9 @@ public final class Match {
         String escapedHow;
         long protectedUntil;
         int jailFloor = -1;
+        /** 倒地（capture-mode: downed）：還剩幾 tick 流完血、被扶的進度。 */
+        int downBleed;
+        int reviveProgress;
         long dashReadyAt;
         long boostUntil;
         double boostValue;
@@ -92,6 +95,7 @@ public final class Match {
     static final NamespacedKey FATIGUE_KEY = new NamespacedKey("ghosthunt", "fatigue");
     static final NamespacedKey HOLE_SNEAK_KEY = new NamespacedKey("ghosthunt", "hole_sneak");
     static final NamespacedKey HOLE_SPEED_KEY = new NamespacedKey("ghosthunt", "hole_speed");
+    static final NamespacedKey DOWN_KEY = new NamespacedKey("ghosthunt", "down");
 
     final Plugin plugin;
     final Building b;
@@ -337,7 +341,8 @@ public final class Match {
             g = gp;
             stats.put("mode", "pvp");
         }
-        if (Imp.enabled(this)) for (int k = 0; k < Math.max(1, plugin.getConfig().getInt("imp.count", 3)); k++) imps.add(new Imp(this, k));
+        int impCount = (int) aiRuleD("imp-count", plugin.getConfig().getInt("imp.count", 3)); // 困難 4 隻（ai-ghost.presets.hard.imp-count）
+        if (Imp.enabled(this)) for (int k = 0; k < Math.max(1, impCount); k++) imps.add(new Imp(this, k));
         double bonus = GameSettings.bySurvivors(s.ghostSpeedBySurvivors(), survivors.size());
         ghostBonus = bonus;
         g.getAttribute(Attribute.MOVEMENT_SPEED).addTransientModifier(
@@ -517,7 +522,9 @@ public final class Match {
                 "操作：右鍵木桶／拉桿／讀卡機 → 站著不動等進度條｜F 衝刺｜蹲下鑽牆上的小洞（鬼過不去）",
                 "障礙物：拿著右鍵門口的黃色地毯｜門口旁邊的深色木頭櫃子：右鍵推倒擋住門口｜蹲下右鍵門：卡門（每扇一次）",
                 "1F 地上的活板門通到地下通道（爬梯子下去），可以鑽到很遠的另一個房間；鬼要先撬開才能下去",
-                "被抓會關進監獄，隊友站在籠子旁邊就能救｜第 " + s.maxCaptures() + " 次被抓淘汰",
+                downedMode()
+                        ? "被抓會原地倒地：隊友站在旁邊 " + (int) aiRuleD("revive-time", 4) + " 秒扶起來；流血 " + (int) aiRuleD("down-bleed", 60) + " 秒沒人扶就淘汰（鬼在旁邊時暫停）｜第 " + s.maxCaptures() + " 次被抓淘汰"
+                        : "被抓會關進監獄，隊友站在籠子旁邊就能救｜第 " + s.maxCaptures() + " 次被抓淘汰",
                 "注意：翻箱子、開電源會發出聲音，附近的鬼會知道方向",
                 aiGhost != null ? "這局的鬼是電腦（" + aiGhost.settings().difficulty() + "）：只看得到前方、聽得到腳步和開門聲（蹲著走沒聲音）；"
                         + "太久找不到人時會感應最近的人在哪一間房（被盯上時你會聽到心跳加快）；手電筒照它的臉 1 秒，它會暫時看不到人" : ""};
@@ -552,7 +559,38 @@ public final class Match {
         sp.removeModifier(BOOST_KEY);
         sp.removeModifier(FATIGUE_KEY);
         sp.removeModifier(HOLE_SPEED_KEY);
+        sp.removeModifier(DOWN_KEY);
         p.getAttribute(Attribute.SNEAKING_SPEED).removeModifier(HOLE_SNEAK_KEY);
+        if (p.getPose() == org.bukkit.entity.Pose.SWIMMING) p.setPose(org.bukkit.entity.Pose.STANDING, false);
+    }
+
+    // ---- AI 難度專屬的規則（ai-ghost.presets.<難度>.<key>，沒有再看 ai-ghost.<key>；真人鬼的局沒有）----
+
+    private Object aiRuleRaw(String key) {
+        if (aiGhost == null) return null;
+        org.bukkit.configuration.file.FileConfiguration c = plugin.getConfig();
+        String p = "ai-ghost.presets." + aiGhost.settings().difficulty() + "." + key;
+        if (c.contains(p)) return c.get(p);
+        return c.get("ai-ghost." + key);
+    }
+
+    String aiRule(String key, String def) {
+        Object v = aiRuleRaw(key);
+        return v == null ? def : String.valueOf(v);
+    }
+
+    double aiRuleD(String key, double def) {
+        return aiRuleRaw(key) instanceof Number n ? n.doubleValue() : def;
+    }
+
+    /** 被抓原地倒地、隊友扶起來（取代關監獄）。2026-11-24 使用者決定：困難用。 */
+    boolean downedMode() {
+        return "downed".equalsIgnoreCase(aiRule("capture-mode", "jail"));
+    }
+
+    /** 開局連緊急照明都沒有（亮度 0），第一次開總電源以後才回到平常的停電亮度。 */
+    boolean startDark() {
+        return Boolean.parseBoolean(aiRule("start-blackout", "false"));
     }
 
     /** 把上一局留下的東西復原：鬼房封起來、障礙物拿掉、燈恢復、霧恢復。 */
@@ -575,7 +613,7 @@ public final class Match {
                 if (doorSet.contains(o2)) doorPair.put(d, o2);
             }
         }
-        setLights(s.emergencyLight());
+        setLights(startDark() ? 0 : s.emergencyLight());
         applyFog("off"); // 世界本身不放霧（鬼看不到霧），霧只用封包送給逃生者
     }
 
@@ -636,6 +674,7 @@ public final class Match {
             broadcast("15 分鐘了，還沒逃出的人全部發光！", NamedTextColor.RED);
         }
         rescues(g);
+        if (downedMode()) downs(g);
         acts.tick();
         obj.tick(g);
         if (tick % 20 == 0 && hud != null) hud.update();
@@ -725,6 +764,8 @@ public final class Match {
             victim.showTitle(Title.title(Component.text("你被淘汰了", NamedTextColor.DARK_RED),
                     Component.text("可以觀戰剩下的人", NamedTextColor.GRAY)));
             broadcast(victim.getName() + " 第 " + sv.captures + " 次被抓，淘汰！", NamedTextColor.RED);
+        } else if (downedMode()) {
+            down(victim, sv);
         } else {
             int f = farthestJail(g);
             sv.status = Status.JAILED;
@@ -733,6 +774,80 @@ public final class Match {
             victim.showTitle(Title.title(Component.text("被抓了", NamedTextColor.RED),
                     Component.text("關在 " + (f + 1) + "F 監獄，等隊友來救", NamedTextColor.GRAY)));
             broadcast(victim.getName() + " 被抓了，關在 " + (f + 1) + "F 監獄。", NamedTextColor.YELLOW);
+        }
+    }
+
+    // ---- 倒地救援（capture-mode: downed）----
+
+    private void down(Player victim, Survivor sv) {
+        sv.status = Status.DOWNED;
+        sv.downBleed = (int) (aiRuleD("down-bleed", 60) * 20);
+        sv.reviveProgress = 0;
+        victim.setPose(org.bukkit.entity.Pose.SWIMMING, true);
+        AttributeInstance sp = victim.getAttribute(Attribute.MOVEMENT_SPEED);
+        sp.removeModifier(DOWN_KEY);
+        sp.addTransientModifier(new AttributeModifier(DOWN_KEY, -aiRuleD("down-slow", 0.75), AttributeModifier.Operation.MULTIPLY_SCALAR_1));
+        victim.showTitle(Title.title(Component.text("你倒地了", NamedTextColor.RED),
+                Component.text("等隊友來扶（站在你旁邊 " + (int) aiRuleD("revive-time", 4) + " 秒）；流血 " + sv.downBleed / 20 + " 秒", NamedTextColor.GRAY)));
+        broadcast(victim.getName() + " 倒地了！去扶他（站在旁邊 " + (int) aiRuleD("revive-time", 4) + " 秒）。", NamedTextColor.YELLOW);
+    }
+
+    private void standUp(Player p) {
+        if (p == null) return;
+        p.getAttribute(Attribute.MOVEMENT_SPEED).removeModifier(DOWN_KEY);
+        p.setPose(org.bukkit.entity.Pose.STANDING, false);
+    }
+
+    /** 每 tick：流血倒數（鬼在旁邊時暫停，免得守屍）、隊友站旁邊扶。 */
+    private void downs(LivingEntity g) {
+        int need = (int) (aiRuleD("revive-time", 4) * 20);
+        double reach = aiRuleD("revive-radius", 2.0), camp = aiRuleD("down-camp-radius", 8);
+        for (Survivor sv : survivors.values()) {
+            if (sv.status != Status.DOWNED) continue;
+            Player p = Bukkit.getPlayer(sv.id);
+            if (p == null) continue;
+            if (p.getPose() != org.bukkit.entity.Pose.SWIMMING) p.setPose(org.bukkit.entity.Pose.SWIMMING, true);
+            boolean camped = g != null && sameFloor(g.getLocation(), p.getLocation()) && horiz(g.getLocation(), p.getLocation()) <= camp;
+            if (!camped) sv.downBleed--;
+            List<Player> helpers = new ArrayList<>();
+            for (Survivor o : survivors.values()) {
+                if (o.status != Status.FREE) continue;
+                Player op = Bukkit.getPlayer(o.id);
+                if (op != null && sameFloor(op.getLocation(), p.getLocation()) && horiz(op.getLocation(), p.getLocation()) <= reach) helpers.add(op);
+            }
+            if (!helpers.isEmpty()) sv.reviveProgress++;
+            else sv.reviveProgress = Math.max(0, sv.reviveProgress - 2);
+            if (sv.reviveProgress >= need) {
+                sv.status = Status.FREE;
+                sv.reviveProgress = 0;
+                sv.protectedUntil = tick + s.rescueProtection();
+                boost(sv, s.rescueBoostBonus(), s.rescueBoostTime());
+                standUp(p);
+                p.showTitle(Title.title(Component.empty(), Component.text("被扶起來了！快跑", NamedTextColor.GREEN),
+                        Title.Times.times(Duration.ZERO, Duration.ofSeconds(2), Duration.ofMillis(300))));
+                world.playSound(p.getLocation(), Sound.UI_TOAST_CHALLENGE_COMPLETE, 1f, 1.2f);
+                broadcast(helpers.get(0).getName() + " 把 " + p.getName() + " 扶起來了。", NamedTextColor.GREEN);
+                stats.merge("rescues", 1, (a, c) -> (Integer) a + (Integer) c);
+                stats.merge("revives", 1, (a, c) -> (Integer) a + (Integer) c);
+                continue;
+            }
+            if (sv.downBleed <= 0) {
+                sv.status = Status.ELIMINATED;
+                standUp(p);
+                p.setGameMode(GameMode.SPECTATOR);
+                p.showTitle(Title.title(Component.text("你流血過多，淘汰了", NamedTextColor.DARK_RED),
+                        Component.text("可以觀戰剩下的人", NamedTextColor.GRAY)));
+                broadcast(p.getName() + " 沒人扶，淘汰！", NamedTextColor.RED);
+                stats.merge("bledOut", 1, (a, c) -> (Integer) a + (Integer) c);
+                continue;
+            }
+            if (tick % 10 == 0) {
+                Component bar = sv.reviveProgress > 0
+                        ? Component.text("扶起來 " + bar(sv.reviveProgress, need), NamedTextColor.AQUA)
+                        : Component.text("倒地：流血 " + (sv.downBleed + 19) / 20 + " 秒" + (camped ? "（鬼在旁邊，暫停）" : ""), NamedTextColor.RED);
+                p.sendActionBar(bar);
+                helpers.forEach(h -> h.sendActionBar(bar));
+            }
         }
     }
 
@@ -1618,6 +1733,7 @@ public final class Match {
     /** 現在該有的亮度：夢魘熄燈 0、有電正常照明、沒電緊急照明。 */
     int ambientLight() {
         if (nightmare != null && nightmare.active) return 0;
+        if (!obj.powerOn && startDark() && !obj.everOn()) return 0;
         return obj.powerOn ? o.normalLight() : s.emergencyLight();
     }
 
@@ -1638,6 +1754,7 @@ public final class Match {
             stats.putAll(side.stats());
         }
         for (Survivor sv : survivors.values()) stopHeartbeat(sv, Bukkit.getPlayer(sv.id));
+        for (Survivor sv : survivors.values()) if (sv.status == Status.DOWNED) standUp(Bukkit.getPlayer(sv.id));
         if (!imps.isEmpty()) {
             Map<String, Object> sum = new java.util.LinkedHashMap<>();
             for (Imp im : imps) {
@@ -1672,6 +1789,7 @@ public final class Match {
             String st = switch (sv.status) {
                 case FREE -> "還在大樓裡";
                 case JAILED -> "在監獄";
+                case DOWNED -> "倒地";
                 case ELIMINATED -> "被淘汰";
                 case ESCAPED -> "逃出";
             };
@@ -1708,6 +1826,7 @@ public final class Match {
                 }
                 case FREE -> Component.text("… " + sv.name + "：還在大樓裡", NamedTextColor.YELLOW);
                 case JAILED -> Component.text("✘ " + sv.name + "：在監獄", NamedTextColor.RED);
+                case DOWNED -> Component.text("✘ " + sv.name + "：倒地", NamedTextColor.RED);
                 case ELIMINATED -> Component.text("✘ " + sv.name + "：被淘汰", NamedTextColor.DARK_RED);
             };
             body.add(line.append(Component.text("　被抓 " + sv.captures + " 次", NamedTextColor.GRAY)));
@@ -1751,7 +1870,7 @@ public final class Match {
             switch (sv.status) {
                 case ESCAPED -> escaped++;
                 case ELIMINATED -> eliminated++;
-                case JAILED -> jailed++;
+                case JAILED, DOWNED -> jailed++;
                 case FREE -> free++;
             }
         }
@@ -1778,7 +1897,7 @@ public final class Match {
             return;
         }
         Survivor sv = survivors.get(p.getUniqueId());
-        if (sv != null && sv.status == Status.FREE) {
+        if (sv != null && (sv.status == Status.FREE || sv.status == Status.DOWNED)) {
             sv.status = Status.ELIMINATED;
             acts.cancel(sv.id, null);
             if (aiGhost != null) aiGhost.forget(sv.id);

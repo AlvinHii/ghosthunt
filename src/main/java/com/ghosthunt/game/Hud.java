@@ -63,13 +63,13 @@ final class Hud {
         for (Match.Survivor sv : m.survivors.values()) {
             switch (sv.status) {
                 case ESCAPED -> escaped++;
-                case JAILED -> jailed++;
+                case JAILED, DOWNED -> jailed++;
                 case ELIMINATED -> out++;
                 case FREE -> free++;
             }
         }
         lines.add("§r ");
-        lines.add("自由 " + free + "｜監獄 " + jailed);
+        lines.add("自由 " + free + (m.downedMode() ? "｜倒地 " : "｜監獄 ") + jailed);
         lines.add("逃出 " + escaped + "｜淘汰 " + out);
         int score = lines.size();
         for (String l : lines) side.getScore(l).setScore(score--);

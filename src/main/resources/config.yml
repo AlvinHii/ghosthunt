@@ -158,15 +158,23 @@ ai-ghost:                      # PvE 的 AI 鬼（/gh start ai [easy|normal|hard
       particle-goal: 0
       intercept-chance: 0        # 簡單：不繞前堵
     normal: {}
-    hard:
-      reaction: 0.2
-      sight-range: 28
-      sense-quiet: 30
-      whiff-chance: 0.1
+    hard:                        # 2026-11-24 使用者決定：困難加倒地救援、小鬼 4 隻、開局沒電、感知更強（速度不變）
+      reaction: 0.15             # 原本 0.2
+      sight-range: 32            # 原本 28
+      sense-quiet: 24            # 原本 30（大地圖再 ×0.67 → 約 16 秒沒碰到人就感應）
+      whiff-chance: 0.05         # 原本 0.1
       check-hideout-base: 0.6
       particles: 400
       intercept-chance: 1.0      # 困難：每次追人都算要不要繞前堵
       tactical-approach: 1       # 困難：從視線外摸過去
+      capture-mode: downed       # 被抓原地倒地（不關監獄）；jail = 關監獄（其他難度）
+      down-bleed: 60             # 倒地後幾秒沒人扶就淘汰（鬼在旁邊時暫停）
+      revive-time: 4             # 隊友站在旁邊幾秒扶起來
+      revive-radius: 2.0         # 多近算「站在旁邊」
+      down-camp-radius: 8        # 鬼在倒地的人幾格內時流血倒數暫停（不讓鬼守屍守到淘汰）
+      down-slow: 0.75            # 倒地時爬行，速度只剩 25%
+      imp-count: 4               # 小鬼數量（其他難度照 imp.count）
+      start-blackout: true       # 開局連緊急照明都沒有（亮度 0），第一次開總電源以後才回到平常的停電亮度
 
 heartbeat:                     # 逃生者的心跳（鬼越近越快、越大聲、音調越高；夢魘熄燈時改成低語）
   sound: minecraft:entity.warden.heartbeat   # 音效（之後換成資源包的心跳，例如 ghosthunt:heartbeat）
