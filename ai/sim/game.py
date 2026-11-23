@@ -941,7 +941,7 @@ class Game:
                     o.boost_until = self.t + self.c['jail']['rescue-speed-boost']
                     self.stats['rescues'] += 1
                     self.log('逃生者%d 救出逃生者%d' % (s.i, o.i))
-                    self.rescue_events.append({'t': self.t, 'who': {s.i, o.i}})
+                    self.rescue_events.append({'t': self.t, 'who': {s.i, o.i}, 'by': s.i})
             self.need_decision = True
 
     def _objective(self, name):
@@ -965,7 +965,7 @@ class Game:
                 s.boost_until = self.t + self.c['jail']['rescue-speed-boost']
                 self.stats['rescues'] += 1
                 self.log('逃生者%d 扶起逃生者%d' % (helpers[0].i, s.i))
-                self.rescue_events.append({'t': self.t, 'who': {helpers[0].i, s.i}})
+                self.rescue_events.append({'t': self.t, 'who': {helpers[0].i, s.i}, 'by': helpers[0].i})
                 self.need_decision = True
             elif s.bleed <= 0:
                 s.state = OUT
