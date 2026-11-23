@@ -2559,6 +2559,11 @@ final class AiGhost {
         lastContactTick = m.tick;
     }
 
+    /** 多久沒有接觸任何人（tick；小鬼用來決定要不要提早出來）。 */
+    long quietTicks() {
+        return lastContactTick < 0 ? m.tick : m.tick - lastContactTick;
+    }
+
     /** 壓迫感的統計：多久沒有接觸（看到、聽到任何人）；放鬼時開始算。 */
     private long lastContactTick = -1, longestQuiet;
 

@@ -519,6 +519,26 @@ final class Objectives {
         }
     }
 
+    /** 小鬼搶走的道具：藏到附近（12 格內優先）空的木桶裡，翻得到。回傳 false 表示沒地方藏。 */
+    boolean hideItem(Location near, String id) {
+        Pos best = null;
+        double bd = Double.MAX_VALUE;
+        for (Pos c : b.containers) {
+            if (content.get(c) != null || locked.contains(c)) continue;
+            Location l = m.loc(c);
+            if (!l.getWorld().equals(near.getWorld()) || Math.abs(l.getY() - near.getY()) > 3) continue;
+            double d = l.distance(near) + m.rnd.nextDouble() * 6; // 不要每次都最近那個
+            if (d < bd) {
+                bd = d;
+                best = c;
+            }
+        }
+        if (best == null) return false;
+        content.put(best, id);
+        searched.remove(best);
+        return true;
+    }
+
     private Pos containerNear(Location near) {
         int floor = floorOf(new Pos(near.getBlockX(), near.getBlockY(), near.getBlockZ()));
         List<Pos> close = new ArrayList<>(), sameFloor = new ArrayList<>(), any = new ArrayList<>();

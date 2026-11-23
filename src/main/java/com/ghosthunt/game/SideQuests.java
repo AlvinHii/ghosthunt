@@ -678,6 +678,37 @@ final class SideQuests {
         });
     }
 
+    /** 小鬼把修好的配電箱關掉：那一區又暗了，要再修一次。回傳 true 表示有關到。 */
+    boolean breakerOff(Pos z) {
+        if (!repaired.remove(z)) return false;
+        Integer region = b.breakers.get(z);
+        if (region != null) {
+            boolean other = false;
+            for (Pos r : repaired) if (region.equals(b.breakers.get(r))) other = true;
+            if (!other) litRegions.remove(region);
+        }
+        m.refreshLights();
+        m.world.playSound(m.loc(z), Sound.BLOCK_BEACON_DEACTIVATE, 1.2f, 1.2f);
+        m.survivorMessage("有一區的燈熄了……（小鬼把配電箱關掉了）", NamedTextColor.DARK_PURPLE);
+        return true;
+    }
+
+    /** 最近的、修好的配電箱（同一層附近）；沒有回傳 null。 */
+    Pos nearestRepairedBreaker(Location from) {
+        Pos best = null;
+        double bd = 60;
+        for (Pos z : repaired) {
+            Location l = m.loc(z);
+            if (!l.getWorld().equals(from.getWorld())) continue;
+            double d = l.distance(from);
+            if (d < bd) {
+                bd = d;
+                best = z;
+            }
+        }
+        return best;
+    }
+
     /** 鐵捲門整扇捲上去（變成空氣）；尋路、視線把「不是門」當成通的。 */
     private void rollUp(Pos d) {
         unlocked.add(d);

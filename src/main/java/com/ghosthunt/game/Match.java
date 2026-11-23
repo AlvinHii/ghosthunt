@@ -101,6 +101,8 @@ public final class Match {
     long mapVersion;
     /** v2 地圖的支線（沒有的地圖是 null）。 */
     SideQuests side;
+    /** 小鬼（不會抓人，只會干擾）；這局沒有就是 null。 */
+    Imp imp;
     /** 測試用的假逃生者（/gh dummy）。 */
     final TestDummies dummies = new TestDummies(this);
 
@@ -310,6 +312,7 @@ public final class Match {
             g = gp;
             stats.put("mode", "pvp");
         }
+        if (Imp.enabled(this)) imp = new Imp(this);
         double bonus = GameSettings.bySurvivors(s.ghostSpeedBySurvivors(), survivors.size());
         ghostBonus = bonus;
         g.getAttribute(Attribute.MOVEMENT_SPEED).addTransientModifier(
@@ -618,6 +621,7 @@ public final class Match {
         if (nightmare != null) nightmare.tick(g);
         if (audio != null && tick % 20 == 0) audio.tick();
         if (side != null) side.tick();
+        if (imp != null && released) imp.tick();
         if (gimmicks != null) gimmicks.tick();
         if (tick % 10 == 0 && g instanceof Player gp) ghostHud(gp);
         if (tick % 200 == 0) refreshSurvivorFog();
@@ -1396,6 +1400,28 @@ public final class Match {
         ghostArrow(g, speaker);
     }
 
+    /** 小鬼用的尋路圖：AI 局用 AI 鬼的，PvP 用開局建的（沒有鬼房時才有）。 */
+    NavMap navForImp() {
+        return aiGhost != null ? aiGhost.navMap() : pvpNav;
+    }
+
+    /** 小鬼碰到人時的笑聲：沿路傳 range 格，大鬼聽得到（AI 當成高等級聲音；真人鬼有方向箭頭）。 */
+    void impLaugh(Location at, double range) {
+        LivingEntity g = ghostEntity();
+        if (g == null || !released) return;
+        if (aiGhost != null) aiGhost.hearSound(at, NOISE_HIGH, range);
+        else if (g.getWorld().equals(at.getWorld()) && g.getLocation().distance(at) <= range) ghostArrow(g, at);
+    }
+
+    /** /gh imp：測試用，馬上生出小鬼（或顯示它在做什麼）。 */
+    public String impCommand() {
+        if (imp == null) return "這局沒有小鬼（config 的 imp.enabled，PvP 要 imp.pvp）。";
+        if (imp.entity() != null) return imp.debug();
+        NavMap nav = navForImp();
+        if (nav == null) return "尋路圖還沒建好，等一下再試。";
+        return imp.spawn(nav, true) ? "小鬼出來了。" : "找不到地方生小鬼。";
+    }
+
     /** 有人用了某個支線（AI 記住這群人的習慣）。 */
     void noteHabit(String key) {
         if (aiGhost != null) aiGhost.noteHabit(key);
@@ -1496,6 +1522,10 @@ public final class Match {
             stats.putAll(side.stats());
         }
         for (Survivor sv : survivors.values()) stopHeartbeat(sv, Bukkit.getPlayer(sv.id));
+        if (imp != null) {
+            imp.cleanup();
+            stats.putAll(imp.stats());
+        }
         labelPowerRoom(false);
         if (aiGhost != null) {
             aiGhost.statsInto(stats);

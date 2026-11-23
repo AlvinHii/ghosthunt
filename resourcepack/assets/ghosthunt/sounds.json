@@ -11,5 +11,14 @@
   "heartbeat.1":      {"subtitle": "心跳（遠）",     "sounds": [{"name": "ghosthunt:heartbeat/heartbeat_1", "stream": true}]},
   "heartbeat.2":      {"subtitle": "心跳（附近）",   "sounds": [{"name": "ghosthunt:heartbeat/heartbeat_2", "stream": true}]},
   "heartbeat.3":      {"subtitle": "心跳（很近）",   "sounds": [{"name": "ghosthunt:heartbeat/heartbeat_3", "stream": true}]},
-  "heartbeat.4":      {"subtitle": "心跳（就在旁邊）", "sounds": [{"name": "ghosthunt:heartbeat/heartbeat_4", "stream": true}]}
+  "heartbeat.4":      {"subtitle": "心跳（就在旁邊）", "sounds": [{"name": "ghosthunt:heartbeat/heartbeat_4", "stream": true}]},
+  "imp.laugh":         {"subtitle": "小鬼大笑", "sounds": [{"name": "ghosthunt:imp/imp_laugh_1", "attenuation_distance": 32}, {"name": "ghosthunt:imp/imp_laugh_2", "attenuation_distance": 32}, {"name": "ghosthunt:imp/imp_laugh_3", "attenuation_distance": 32}]},
+  "imp.hum":           {"subtitle": "小孩哼歌", "sounds": [{"name": "ghosthunt:imp/imp_hum_1", "attenuation_distance": 12}, {"name": "ghosthunt:imp/imp_hum_2", "attenuation_distance": 12}, {"name": "ghosthunt:imp/imp_hum_3", "attenuation_distance": 12}, {"name": "ghosthunt:imp/imp_hum_4", "attenuation_distance": 12}, {"name": "ghosthunt:imp/imp_hum_5", "attenuation_distance": 12}]},
+  "imp.snicker":       {"subtitle": "小孩偷笑", "sounds": [{"name": "ghosthunt:imp/imp_snicker_1", "attenuation_distance": 10}, {"name": "ghosthunt:imp/imp_snicker_2", "attenuation_distance": 10}, {"name": "ghosthunt:imp/imp_snicker_3", "attenuation_distance": 10}]},
+  "imp.distant_laugh": {"subtitle": "遠處的笑聲", "sounds": [{"name": "ghosthunt:imp/imp_distant_laugh", "attenuation_distance": 32}]},
+  "imp.lights_out":    {"subtitle": "音樂盒", "sounds": [{"name": "ghosthunt:imp/imp_lights_out", "attenuation_distance": 16}]},
+  "imp.arrive":        {"subtitle": "老音樂盒", "sounds": [{"name": "ghosthunt:imp/imp_arrive_1", "stream": true}, {"name": "ghosthunt:imp/imp_arrive_2", "stream": true}]},
+  "imp.broadcast_hijack": {"subtitle": "廣播裡的音樂盒", "sounds": [{"name": "ghosthunt:imp/imp_broadcast_hijack", "attenuation_distance": 40, "stream": true}]},
+  "imp.room_speaker":  {"subtitle": "喇叭裡的音樂盒", "sounds": [{"name": "ghosthunt:imp/imp_room_speaker", "attenuation_distance": 24, "stream": true}]},
+  "imp.music_box_prop": {"subtitle": "音樂盒", "sounds": [{"name": "ghosthunt:imp/imp_music_box_prop", "attenuation_distance": 16, "stream": true}]}
 }

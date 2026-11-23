@@ -151,6 +151,7 @@ public final class GhostHuntPlugin extends JavaPlugin {
                     if (which.equalsIgnoreCase("all") || f.getName().equalsIgnoreCase(which + ".yml")) if (f.delete()) n++;
                 msg(sender, "清掉了 " + n + " 份 AI 鬼記憶（" + which + "）。", NamedTextColor.GREEN);
             }
+            case "imp" -> msg(sender, match == null ? "沒有進行中的遊戲。" : match.impCommand(), NamedTextColor.DARK_PURPLE);
             case "aidebug" -> {
                 if (!(sender instanceof Player p) || match == null || !match.isAi()) {
                     msg(sender, "要在 AI 局裡由玩家使用。", NamedTextColor.RED);
