@@ -561,7 +561,7 @@ public final class Match {
         sp.removeModifier(HOLE_SPEED_KEY);
         sp.removeModifier(DOWN_KEY);
         p.getAttribute(Attribute.SNEAKING_SPEED).removeModifier(HOLE_SNEAK_KEY);
-        if (p.getPose() == org.bukkit.entity.Pose.SWIMMING) p.setPose(org.bukkit.entity.Pose.STANDING, false);
+        if (p.getPose() == org.bukkit.entity.Pose.SWIMMING) setDownPose(p, false);
     }
 
     // ---- AI 難度專屬的規則（ai-ghost.presets.<難度>.<key>，沒有再看 ai-ghost.<key>；真人鬼的局沒有）----
@@ -783,7 +783,7 @@ public final class Match {
         sv.status = Status.DOWNED;
         sv.downBleed = (int) (aiRuleD("down-bleed", 60) * 20);
         sv.reviveProgress = 0;
-        victim.setPose(org.bukkit.entity.Pose.SWIMMING, true);
+        setDownPose(victim, true);
         AttributeInstance sp = victim.getAttribute(Attribute.MOVEMENT_SPEED);
         sp.removeModifier(DOWN_KEY);
         sp.addTransientModifier(new AttributeModifier(DOWN_KEY, -aiRuleD("down-slow", 0.75), AttributeModifier.Operation.MULTIPLY_SCALAR_1));
@@ -795,7 +795,16 @@ public final class Match {
     private void standUp(Player p) {
         if (p == null) return;
         p.getAttribute(Attribute.MOVEMENT_SPEED).removeModifier(DOWN_KEY);
-        p.setPose(org.bukkit.entity.Pose.STANDING, false);
+        setDownPose(p, false);
+    }
+
+    /** 趴下／站起來（Paper 的固定姿勢；失敗也不影響遊戲）。 */
+    private static void setDownPose(Player p, boolean down) {
+        try {
+            p.setPose(down ? org.bukkit.entity.Pose.SWIMMING : org.bukkit.entity.Pose.STANDING, down);
+        } catch (RuntimeException e) {
+            // 有些情況不能設姿勢：照樣用減速表示倒地
+        }
     }
 
     /** 每 tick：流血倒數（鬼在旁邊時暫停，免得守屍）、隊友站旁邊扶。 */
@@ -806,7 +815,7 @@ public final class Match {
             if (sv.status != Status.DOWNED) continue;
             Player p = Bukkit.getPlayer(sv.id);
             if (p == null) continue;
-            if (p.getPose() != org.bukkit.entity.Pose.SWIMMING) p.setPose(org.bukkit.entity.Pose.SWIMMING, true);
+            if (p.getPose() != org.bukkit.entity.Pose.SWIMMING) setDownPose(p, true);
             boolean camped = g != null && sameFloor(g.getLocation(), p.getLocation()) && horiz(g.getLocation(), p.getLocation()) <= camp;
             if (!camped) sv.downBleed--;
             List<Player> helpers = new ArrayList<>();
