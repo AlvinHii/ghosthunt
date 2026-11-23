@@ -149,6 +149,14 @@ class Game:
         self.contrib = [0] * survivors
         self.camp_t = 0.0
         self.camp_away = 0.0
+        # 守監獄的額度：每次有人被關，鬼最多在監獄附近待 guard-cap 秒（跟插件現在的 AI 一樣的設計限制）
+        self.guard_used = 0.0
+        self.jail_regions = set()
+        for j in world.jails:
+            for r in range(world.R):
+                f, x, z = world.pos(int(world.reg_center[r]))
+                if f == j['floor'] and math.hypot(x + 0.5 - j['cx'], z + 0.5 - j['cz']) <= 15:
+                    self.jail_regions.add(r)
         self.rescue_events = []
         self.ghost_regions = set()
         far = np.min(np.stack([np.asarray(w.dist[p]) for p in pts]), axis=0)
@@ -585,6 +593,12 @@ class Game:
         m[A_POWER] = self.power and not self.power_cut and self.t - self.power_on_at >= self.ai['power-cut-delay']
         m[A_SABOTAGE] = any(g['counting'] >= 0 and not g['sabotaged'] for g in self.gates)
         m[A_JAIL] = (any(s.state == JAILED for s in self.sv) and bool(self.w.jails)) or any(s.state == DOWN for s in self.sv)
+        if self.guard_used >= self.ai.get('guard-cap', 45) and any(s.state == JAILED for s in self.sv):
+            m[A_JAIL] = any(s.state == DOWN for s in self.sv)
+            for r in self.jail_regions:
+                m[r] = False
+            if not m[:self.w.R].any():
+                m[:self.w.R] = True
         return m
 
     def decide(self, a):
@@ -978,6 +992,9 @@ class Game:
             m['jailed_t'] += DT
             if near:
                 m['near_jail_t'] += DT
+                self.guard_used += DT
+        else:
+            self.guard_used = 0.0
         down = [s for s in self.sv if s.state == DOWN]
         if down:
             m['down_t'] += DT
