@@ -465,10 +465,6 @@ public final class Lobby implements Listener {
                 height = 2;
                 inWall = true;
             }
-            case "hole" -> {
-                model = "crawl_hole";
-                inWall = true;
-            }
             case "hatch" -> model = "hatch";
             case "sewer" -> model = "sewer_grate";
             case "barricade" -> model = "barricade_mark";
