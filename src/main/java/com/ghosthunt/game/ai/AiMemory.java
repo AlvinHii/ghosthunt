@@ -7,7 +7,7 @@ import java.util.Map;
 
 /**
  * AI 鬼的長期記憶（第三版第 19～22 項），每張地圖一份（plugins/GhostHunt/ai-memory/&lt;地圖&gt;.yml）：
- * 被哪一招甩掉的次數、熱點、路線轉移表、個性拉桿的 Beta 分布。每局結束舊資料 ×decay，舊習慣會慢慢淡掉。
+ * 被哪一招甩掉的次數、這群玩家的習慣（監視器、廣播、常走的逃生路線）、熱點、路線轉移表、個性拉桿的 Beta 分布。每局結束舊資料 ×decay，舊習慣會慢慢淡掉。
  * 純資料：讀寫 yml 由插件那邊用 {@link #toFlat()}／{@link #fromFlat(Map)} 做（key 不含點）。
  */
 public final class AiMemory {
@@ -19,7 +19,23 @@ public final class AiMemory {
     public final Hotspots heat = new Hotspots();
     public final RouteModel routes = new RouteModel();
     public final Map<String, double[]> bandit = new HashMap<>();
+    /** 這群玩家的習慣：用過幾局（monitor 監視器、pa 廣播、elevator／heli／sewer 推進過那條逃生路線）。 */
+    private final Map<String, Double> habits = new HashMap<>();
     private int matches;
+
+    /** 這局有人用了 key（每局每個 key 只記一次，由呼叫的人負責）。 */
+    public void used(String key) {
+        habits.merge(key, 1.0, Double::sum);
+    }
+
+    public double uses(String key) {
+        return habits.getOrDefault(key, 0.0);
+    }
+
+    /** 習慣的加成：沒用過是 0，之後 cap × (1 − 0.5^局數)。 */
+    public double habit(String key, double cap) {
+        return cap * (1 - Math.pow(0.5, uses(key)));
+    }
 
     public void escaped(Trick t) {
         escapes.merge(t, 1.0, Double::sum);
@@ -42,6 +58,7 @@ public final class AiMemory {
     public void endMatch(double f) {
         matches++;
         escapes.replaceAll((k, v) -> v * f);
+        habits.replaceAll((k, v) -> v * f);
         heat.decay(f);
         routes.decay(f);
         for (double[] ab : bandit.values()) {
@@ -54,6 +71,7 @@ public final class AiMemory {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("matches", matches);
         for (Map.Entry<Trick, Double> e : escapes.entrySet()) out.put("tricks." + e.getKey().name().toLowerCase(), round(e.getValue()));
+        for (Map.Entry<String, Double> e : habits.entrySet()) out.put("habits." + e.getKey(), round(e.getValue()));
         for (Map.Entry<String, double[]> e : bandit.entrySet()) {
             out.put("bandit." + e.getKey() + ".alpha", round(e.getValue()[0]));
             out.put("bandit." + e.getKey() + ".beta", round(e.getValue()[1]));
@@ -83,7 +101,8 @@ public final class AiMemory {
                 double[] ab = m.bandit.computeIfAbsent(p[1], x -> new double[]{1, 1});
                 if (p[2].equals("alpha")) ab[0] = v;
                 else if (p[2].equals("beta")) ab[1] = v;
-            } else if (k.startsWith("routes.")) m.routes.load(k.substring(7), v);
+            } else if (k.startsWith("habits.")) m.habits.put(k.substring(7), v);
+            else if (k.startsWith("routes.")) m.routes.load(k.substring(7), v);
             else if (k.startsWith("heat.")) m.heat.load(k.substring(5), v);
         }
         return m;

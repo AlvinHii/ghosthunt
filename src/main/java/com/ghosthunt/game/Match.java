@@ -286,7 +286,25 @@ public final class Match {
             // 鬼自帶夜視：停電、熄燈時也看得清楚（逃生者沒有）
             if (s.ghostNightVision())
                 gp.addPotionEffect(new PotionEffect(PotionEffectType.NIGHT_VISION, PotionEffect.INFINITE_DURATION, 0, false, false));
-            gp.teleport(loc(b.ghostRoomCenter));
+            Location ghostAt = loc(b.ghostRoomCenter);
+            if (noGhostRoom()) {
+                // 沒有鬼房（PvP 也一樣）：逃生者隨機分散出生，鬼出生在離所有人最遠的地方，開局就放出來
+                pvpNav = NavMap.build(this);
+                java.util.Set<Pos> ok = new java.util.HashSet<>();
+                for (java.util.Set<Pos> tiles : b.spawnTiles.values()) ok.addAll(tiles);
+                NavMap nm = pvpNav;
+                java.util.function.IntPredicate allow = ok.isEmpty() ? null : i -> {
+                    int x = nm.nav.x(i), y = nm.nav.y(i), z = nm.nav.z(i);
+                    return ok.contains(new Pos(x, y, z)) || ok.contains(new Pos(x, y - 1, z)) || ok.contains(new Pos(x, y + 1, z));
+                };
+                List<Location> all = Spawns.random(this, pvpNav, survivors.size(), plugin.getConfig().getDouble("pvp.spawn-spread", 15), allow);
+                if (!all.isEmpty()) {
+                    aiSpawns = all;
+                    Location far = Spawns.farthest(this, pvpNav, all);
+                    if (far != null) ghostAt = far;
+                }
+            }
+            gp.teleport(ghostAt);
             if (nightmare != null) gp.getInventory().setItem(0, Items.lightsOut());
             gp.getInventory().setItem(1, Items.moveCard());
             g = gp;
@@ -313,7 +331,7 @@ public final class Match {
                             NamedTextColor.GRAY)));
         }
         if (gp != null) gp.showTitle(Title.title(Component.text("你是" + type.label, NamedTextColor.DARK_RED),
-                Component.text((s.releaseDelay() / 20) + " 秒後放你出去", NamedTextColor.GRAY)));
+                Component.text(noGhostRoom() ? "開局就可以抓人" : (s.releaseDelay() / 20) + " 秒後放你出去", NamedTextColor.GRAY)));
         broadcast("遊戲開始！鬼：" + (aiGhost != null ? "電腦（AI）" : ghostName + "（" + type.label + "）")
                 + "，逃生者 " + survivors.size() + " 人。", NamedTextColor.GOLD);
         briefing(gp);
@@ -476,7 +494,7 @@ public final class Match {
                 aiGhost != null ? "這局的鬼是電腦（" + aiGhost.settings().difficulty() + "）：只看得到前方、聽得到腳步和開門聲（蹲著走沒聲音）；"
                         + "太久找不到人時會感應最近的人在哪一間房（被盯上時你會聽到心跳加快）；手電筒照它的臉 1 秒，它會暫時看不到人" : ""};
         String[] ghostLines = {
-                "【鬼】目標：把逃生者抓進監獄（鬼房 " + s.releaseDelay() / 20 + " 秒後打開）",
+                "【鬼】目標：把逃生者抓進監獄" + (noGhostRoom() ? "（開局就可以抓人；你在離大家最遠的地方）" : "（鬼房 " + s.releaseDelay() / 20 + " 秒後打開）"),
                 "左鍵打到就抓到；每揮一次手（揮空也算）" + s.attackFatigue() / 20.0 + " 秒內幾乎走不動、抓不到人，要看準再揮",
                 "畫面下方的箭頭 = 附近逃生者做事的聲音方向",
                 "右鍵拉桿可以關一次電源；右鍵倒數中的讀卡機可以弄壞大門（每扇一次）",
@@ -520,6 +538,7 @@ public final class Match {
         for (Building.ToppleSpot t : b.toppleSpots)
             for (Map.Entry<Pos, BlockData> e : t.blocks().entrySet()) block(e.getKey()).setBlockData(e.getValue(), false);
         for (Map.Entry<Pos, BlockData> e : b.doorBlocks.entrySet()) block(e.getKey()).setBlockData(e.getValue(), false);
+        for (Map.Entry<Pos, BlockData> e : b.lockBlocks.entrySet()) block(e.getKey()).setBlockData(e.getValue(), false);
         for (Building.Hatch h : b.hatches) block(h.trapdoor()).setBlockData(h.closed(), false);
         java.util.Set<Pos> doorSet = new java.util.HashSet<>(b.doors);
         for (Pos d : b.doors) {
@@ -871,12 +890,12 @@ public final class Match {
 
     /**
      * 心跳的距離：AI 局用鬼的尋路圖算「鬼走過來要走的路」（不分樓層，沿樓梯；地洞每條邊 +2）；
-     * 真人鬼的局、尋路圖還沒建好、不在圖上時用直線距離。
+     * 真人鬼的局用開局建的尋路圖（沒有鬼房時才有）；尋路圖還沒建好、不在圖上時用直線距離。
      */
     private double heartDistance(Location p, Location g) {
         double straight = p.distance(g);
-        if (!heartPath || aiGhost == null || aiGhost.navMap() == null || straight > heart.range()) return straight;
-        NavMap nav = aiGhost.navMap();
+        NavMap nav = aiGhost != null ? aiGhost.navMap() : pvpNav;
+        if (!heartPath || nav == null || straight > heart.range()) return straight;
         int a = nav.nearest(g, 3), b = nav.nearest(p, 3);
         if (a < 0 || b < 0) return straight;
         com.ghosthunt.game.ai.SoundField.Heard h = com.ghosthunt.game.ai.SoundField.hear(nav.nav, a, b, heart.range(),
@@ -1369,6 +1388,19 @@ public final class Match {
         ghostArrow(g, at);
     }
 
+    /** 廣播：喇叭全圖聽得到；AI 有機率改去廣播台（desk）抓操作的人。真人鬼只看到喇叭的方向。 */
+    void broadcastNoise(Location speaker, Location desk) {
+        LivingEntity g = ghostEntity();
+        if (g == null || !released) return;
+        if (aiGhost != null) aiGhost.hearBroadcast(speaker, desk);
+        ghostArrow(g, speaker);
+    }
+
+    /** 有人用了某個支線（AI 記住這群人的習慣）。 */
+    void noteHabit(String key) {
+        if (aiGhost != null) aiGhost.noteHabit(key);
+    }
+
     private void ghostArrow(LivingEntity g, Location at) {
         double target = Math.toDegrees(Math.atan2(-(at.getX() - g.getLocation().getX()), at.getZ() - g.getLocation().getZ()));
         double rel = ((target - g.getLocation().getYaw()) % 360 + 540) % 360 - 180; // -180..180，正的是右邊
@@ -1611,10 +1643,13 @@ public final class Match {
     /** 測試模式裡被抓過一次的玩家：AI 鬼之後完全無視。 */
     final java.util.Set<UUID> aiIgnored = new java.util.HashSet<>();
 
-    /** PvE 不用鬼房（config pve.ghost-room: false）：隨機出生、鬼在最遠的地方、開局就放。 */
+    /** 不用鬼房（config pve.ghost-room／pvp.ghost-room: false）：隨機出生、鬼在最遠的地方、開局就放。 */
     boolean noGhostRoom() {
-        return aiGhost != null && !plugin.getConfig().getBoolean("pve.ghost-room", false);
+        return !plugin.getConfig().getBoolean(aiGhost != null ? "pve.ghost-room" : "pvp.ghost-room", false);
     }
+
+    /** PvP 沒有鬼房時建的尋路圖（算出生點、心跳的走路距離）。 */
+    private NavMap pvpNav;
 
     private boolean dummiesSpawned;
 

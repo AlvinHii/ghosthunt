@@ -34,6 +34,21 @@ class LearningTest {
     }
 
     @Test
+    void habits_growDecayAndRoundTrip() {
+        AiMemory m = new AiMemory();
+        assertEquals(0, m.habit("monitor", 1), 1e-9);
+        m.used("monitor");
+        assertEquals(0.5, m.habit("monitor", 1), 1e-9);
+        m.used("monitor");
+        assertEquals(0.75, m.habit("monitor", 1), 1e-9);
+        m.endMatch(0.5);
+        assertEquals(1.0, m.uses("monitor"), 1e-9);
+        AiMemory back = AiMemory.fromFlat(m.toFlat());
+        assertEquals(1.0, back.uses("monitor"), 1e-9);
+        assertEquals(0, back.uses("sewer"), 1e-9);
+    }
+
+    @Test
     void flat_roundTrip() {
         AiMemory m = new AiMemory();
         m.escaped(AiMemory.Trick.LURE);

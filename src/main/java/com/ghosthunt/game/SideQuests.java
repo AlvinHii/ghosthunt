@@ -373,6 +373,7 @@ final class SideQuests {
                 if (Items.count(p, Items.FUSE) == 0) return;
                 Items.take(p, Items.FUSE);
                 fuses++;
+                m.noteHabit("elevator");
                 m.world.playSound(at, Sound.BLOCK_IRON_TRAPDOOR_CLOSE, 1.5f, 0.8f);
                 m.survivorMessage("貨梯的保險絲裝好 " + fuses + "/2", NamedTextColor.AQUA);
                 if (fuses >= 2) {
@@ -422,6 +423,7 @@ final class SideQuests {
             return;
         }
         unlocked.add(d);
+        m.noteHabit("heli");
         m.setDoorOpenPublic(d, true);
         m.world.playSound(m.loc(d), Sound.BLOCK_IRON_DOOR_OPEN, 1.5f, 0.8f);
         m.mapVersion++;
@@ -466,6 +468,7 @@ final class SideQuests {
             return;
         }
         if (notesTaken.add(pos)) {
+            m.noteHabit("sewer");
             int idx = noteOrder.indexOf(pos) + 1;
             m.survivorMessage(p.getName() + " 找到紙條：密碼第 " + idx + " 位是 " + d + "（" + notesTaken.size() + "/" + noteOrder.size() + "，密碼 " + code() + "）",
                     NamedTextColor.AQUA);
@@ -528,6 +531,7 @@ final class SideQuests {
             ArmorStand eye = spawnEye(i);
             v = new CamView(body, eye, back, i);
             viewers.put(p.getUniqueId(), v);
+            m.noteHabit("monitor");
             p.setGameMode(GameMode.SPECTATOR);
             final ArmorStand target = eye;
             Bukkit.getScheduler().runTaskLater(m.plugin, () -> {
@@ -637,7 +641,8 @@ final class SideQuests {
             paAt = target;
             paUntil = m.tick + ticks("pa-duration", 10);
             paNextSound = m.tick;
-            m.lureNoise(target);
+            m.noteHabit("pa");
+            m.broadcastNoise(target, m.loc(paDesk).add(0.5, 1, 0.5));
             m.survivorMessage("廣播：" + b.regionNames.getOrDefault(key, "那一區") + " 的喇叭響了（剩 " + paUses + " 次）", NamedTextColor.AQUA);
         });
     }
@@ -662,10 +667,8 @@ final class SideQuests {
         Building.Shutter s = b.shutters.get(i);
         m.acts.start(p, "shutter:" + i, "打開鐵捲門", ticks("shutter-open", 3), false, true, m.loc(s.lever()), () -> {
             shuttersOpen.add(i);
-            for (Pos d : s.doors()) {
-                unlocked.add(d);
-                m.setDoorOpenPublic(d, true);
-            }
+            // 鐵捲門整個捲上去（變成空氣）；尋路、視線把「不是門」當成通的
+            for (Pos d : s.doors()) rollUp(d);
             if (m.block(s.lever()).getBlockData() instanceof Switch sw) {
                 sw.setPowered(true);
                 m.block(s.lever()).setBlockData(sw, false);
@@ -673,6 +676,13 @@ final class SideQuests {
             m.world.playSound(m.loc(s.doors().get(0)), Sound.BLOCK_PISTON_EXTEND, 2f, 0.5f);
             m.mapVersion++;
         });
+    }
+
+    /** 鐵捲門整扇捲上去（變成空氣）；尋路、視線把「不是門」當成通的。 */
+    private void rollUp(Pos d) {
+        unlocked.add(d);
+        m.block(d.add(0, 1, 0)).setType(Material.AIR, false);
+        m.block(d).setType(Material.AIR, false);
     }
 
     private void onBackupLever(Player p, int i) {
@@ -874,6 +884,14 @@ final class SideQuests {
         boolean anyUnlocked = false;
         for (Pos d : b.lockedDoors) if (unlocked.contains(d)) anyUnlocked = true;
         if (anyUnlocked && !b.helipadCells.isEmpty() && near(roomCenter, m.loc(b.helipadCells.get(0)), 20)) w *= 3;
+        // 學到這群人的習慣（之前幾局常用監視器、常走某條路線）：今晚有開放的話，還沒有證據就先常去看
+        if (m.aiGhost != null) {
+            double cap = c.getDouble("side.habit-patrol", 2);
+            if (monitor != null && near(roomCenter, m.loc(monitor), 12)) w *= 1 + m.aiGhost.habit("monitor", cap);
+            if (elevatorOpen && !b.fusePanels.isEmpty() && near(roomCenter, m.loc(b.fusePanels.get(0)), 16)) w *= 1 + m.aiGhost.habit("elevator", cap);
+            if (sewerOpen && !b.sewerCells.isEmpty() && near(roomCenter, m.loc(b.sewerCells.get(0)), 16)) w *= 1 + m.aiGhost.habit("sewer", cap);
+            if (heliOpen && !b.helipadCells.isEmpty() && near(roomCenter, m.loc(b.helipadCells.get(0)), 20)) w *= 1 + m.aiGhost.habit("heli", cap);
+        }
         return w;
     }
 
@@ -925,10 +943,7 @@ final class SideQuests {
         int sh = 0;
         for (int i = 0; i < b.shutters.size(); i++) {
             shuttersOpen.add(i);
-            for (Pos d : b.shutters.get(i).doors()) {
-                unlocked.add(d);
-                m.setDoorOpenPublic(d, true);
-            }
+            for (Pos d : b.shutters.get(i).doors()) rollUp(d);
             sh++;
         }
         m.mapVersion++;
@@ -961,7 +976,7 @@ final class SideQuests {
             Map.Entry<Integer, String> e = b.regionNames.entrySet().iterator().next();
             paAt = m.loc(b.regionCenters.get(e.getKey())).add(0.5, 1, 0.5);
             paUntil = m.tick + ticks("pa-duration", 10);
-            m.lureNoise(paAt);
+            m.broadcastNoise(paAt, m.loc(paDesk).add(0.5, 1, 0.5));
             out.add("廣播：" + e.getValue() + "（AI 應該會過去）");
         }
         out.add("監控室：" + (monitor == null ? "沒有" : regionNameAt(monitor)) + "，攝影機 " + b.cameras.size() + " 台；販賣機 " + b.vendingCells.size()

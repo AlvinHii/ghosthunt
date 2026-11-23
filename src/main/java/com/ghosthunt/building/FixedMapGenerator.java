@@ -221,6 +221,12 @@ final class FixedMapGenerator {
             b.doorBlocks.put(p, map.get(p));
             b.doorBlocks.put(p.add(0, 1, 0), map.get(p.add(0, 1, 0)));
         }
+        List<Pos> locks = new ArrayList<>(b.lockedDoors);
+        for (Building.Shutter s : b.shutters) locks.addAll(s.doors());
+        for (Pos p : locks) {
+            b.lockBlocks.put(p, map.get(p));
+            b.lockBlocks.put(p.add(0, 1, 0), map.get(p.add(0, 1, 0)));
+        }
         validate();
         record();
     }
@@ -753,6 +759,7 @@ final class FixedMapGenerator {
                                 int[] t = run.get(i);
                                 placeIronDoor(f, t[0], t[1], px, i % 2 == 0 ? Door.Hinge.LEFT : Door.Hinge.RIGHT);
                                 topUp(f, t[0], t[1], 2, wall);
+                                if (wall == '#') map.set(at(f, t[0], 2, t[1]), Material.IRON_BLOCK); // 門上面的捲軸箱（打開時鐵捲門捲進去）
                                 lowers.add(at(f, t[0], 0, t[1]));
                             }
                             shutterRuns.add(lowers);

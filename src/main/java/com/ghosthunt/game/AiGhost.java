@@ -201,6 +201,7 @@ final class AiGhost {
         var cfg = m.plugin.getConfig();
         this.utility = !"rules".equalsIgnoreCase(cfg.getString("ai-ghost.brain", "utility"));
         this.learn = cfg.getBoolean("ai-ghost.learn", true) && !m.testMode(); // 測試局不寫學習記憶
+        this.paTraceChance = cfg.getDouble("side.pa-trace-chance", 0.3);
         this.learnFromDummies = cfg.getBoolean("ai-ghost.learn-from-dummies", false);
         this.memoryDecay = cfg.getDouble("ai-ghost.memory-decay", 0.85);
         this.memoryName = m.b.mapName != null ? m.b.mapName : "building";
@@ -510,6 +511,34 @@ final class AiGhost {
         windupStart = -1;
         mob.getWorld().playSound(mob.getLocation(), Sound.ENTITY_ENDERMAN_HURT, 1.2f, 0.5f);
         by.sendActionBar(Component.text("照到鬼的臉了！它暫時看不到", NamedTextColor.YELLOW));
+    }
+
+    /**
+     * 廣播（mall2 的廣播台）：全圖聽得到喇叭。有機率不去喇叭、直接去廣播台抓操作的人：
+     * side.pa-trace-chance ＋ 學到「這群人常用廣播」（最多 +0.4）＋ 學到「常被引開」（最多 +0.6），上限 95%。
+     */
+    void hearBroadcast(Location speaker, Location desk) {
+        if (mob == null) return;
+        lastLureTick = m.tick;
+        double toDesk = Math.min(0.95, paTraceChance + habit("pa", 0.4) + learned(AiMemory.Trick.LURE, 0.6));
+        Location go = desk != null && m.rnd.nextDouble() < toDesk ? desk : speaker;
+        if (go == desk) paTraced++;
+        noticed(snapWalkable(jitter(go, c.noiseError()), go), Match.NOISE_HIGH);
+    }
+
+    private final double paTraceChance;
+    private int paTraced;
+    /** 這局已經記過的習慣（每局每種只記一次）。 */
+    private final Set<String> habitsThisMatch = new HashSet<>();
+
+    /** 有人用了某個支線（monitor、pa、elevator、heli、sewer）：記到長期記憶，之後巡邏會先去那裡看。 */
+    void noteHabit(String key) {
+        if (learn && habitsThisMatch.add(key)) memory.used(key);
+    }
+
+    /** 學到的習慣加成（0～cap；測試局、關掉學習時是 0）。 */
+    double habit(String key, double cap) {
+        return learn ? memory.habit(key, cap) : 0;
     }
 
     /** 全圖都聽得到的聲音（迎賓鈴）：不走路徑傳播，位置是「真實位置 ± noise-error」。 */
@@ -2540,56 +2569,14 @@ final class AiGhost {
         if (nav == null) buildNav();
     }
 
-    /** 逃生者的隨機出生點：尋路圖上的一般格子，離監獄 10 格以上、彼此至少 minEach 格（找不到就放寬）。 */
+    /** 逃生者的隨機出生點（見 {@link Spawns#random}）。 */
     List<Location> randomSpawns(int n, double minEach) {
-        List<Integer> cells = new ArrayList<>();
-        for (int i = 0; i < nav.nav.size(); i++) {
-            if (!nav.isMain(i)) continue;
-            Location l = nav.loc(i);
-            boolean nearJail = false;
-            for (Pos cage : m.b.jailCages.values()) if (m.loc(cage).getWorld().equals(l.getWorld()) && m.loc(cage).distance(l) < 10) nearJail = true;
-            if (!nearJail) cells.add(i);
-        }
-        java.util.Collections.shuffle(cells, m.rnd);
-        for (double min = minEach; min >= 0; min -= 3) {
-            List<Location> out = new ArrayList<>();
-            for (int c0 : cells) {
-                Location l = nav.loc(c0);
-                boolean ok = true;
-                for (Location o : out) if (o.distance(l) < min) ok = false;
-                if (!ok) continue;
-                out.add(l);
-                if (out.size() == n) return out;
-            }
-        }
-        List<Location> out = new ArrayList<>();
-        for (int i = 0; i < Math.min(n, cells.size()); i++) out.add(nav.loc(cells.get(i)));
-        return out;
+        return Spawns.random(m, nav, n, minEach, null);
     }
 
-    /** 鬼的出生點：離「最近的逃生者」走路最遠的格子（多起點距離場）；沒有逃生者回傳 null。 */
+    /** 鬼的出生點：離「最近的逃生者」走路最遠的格子（見 {@link Spawns#farthest}）。 */
     Location farthestFrom(List<Location> people) {
-        List<Integer> src = new ArrayList<>();
-        for (Location l : people) {
-            int n = nav.nearest(l, 3);
-            if (n >= 0) src.add(n);
-        }
-        if (src.isEmpty()) return null;
-        DistanceField f = DistanceField.compute(nav.nav, e -> e.kind() == GridNav.Kind.WALK || e.kind() == GridNav.Kind.STAIR
-                || e.kind() == GridNav.Kind.DOOR ? 0 : Double.POSITIVE_INFINITY, 1.0, src.stream().mapToInt(Integer::intValue).toArray());
-        int best = -1;
-        double bd = -1;
-        for (int i = 0; i < nav.nav.size(); i++) {
-            if (!nav.isMain(i)) continue;
-            double d = f.seconds(i);
-            if (!Double.isInfinite(d) && d > bd) {
-                bd = d;
-                best = i;
-            }
-        }
-        if (best < 0) return null;
-        m.plugin.getLogger().info("[AI 鬼] 出生點：離最近的逃生者走路 " + Math.round(bd) + " 格");
-        return nav.loc(best);
+        return Spawns.farthest(m, nav, people);
     }
 
     // ---- 除錯、統計 ----
@@ -2689,5 +2676,6 @@ final class AiGhost {
         for (Map.Entry<AiMemory.Trick, Integer> e : learnedThisMatch.entrySet()) lt.append(lt.isEmpty() ? "" : ",").append(e.getKey()).append(':').append(e.getValue());
         stats.put("aiLearned", lt.isEmpty() ? "-" : lt.toString());
         stats.put("aiMemoryMatches", memory.matches());
+        stats.put("aiPaTraced", paTraced);
     }
 }

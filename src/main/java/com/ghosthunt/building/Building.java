@@ -119,6 +119,8 @@ public final class Building {
     public final List<Shutter> shutters = new ArrayList<>();
     /** U：上鎖的門（鐵門，下半那格），要屋頂鑰匙。 */
     public final List<Pos> lockedDoors = new ArrayList<>();
+    /** 鐵捲門、上鎖的門原本的方塊（開局時放回去：鐵捲門打開會整個捲上去變成空氣）。 */
+    public final Map<Pos, org.bukkit.block.data.BlockData> lockBlocks = new HashMap<>();
     /** 自動販賣機（家具 m）的方塊：投硬幣換道具。 */
     public final java.util.Set<Pos> vendingCells = new java.util.HashSet<>();
     /** 家具的裝飾方塊（書架、櫃子、按鈕、拉桿、椅背活板門……）：逃生者、鬼右鍵沒有反應。 */
