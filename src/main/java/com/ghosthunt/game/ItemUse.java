@@ -89,8 +89,10 @@ final class ItemUse {
     void onSmokeHit(Location at) {
         m.world.spawnParticle(Particle.CAMPFIRE_COSY_SMOKE, at, 80, 1.6, 1.2, 1.6, 0.01);
         m.world.playSound(at, Sound.BLOCK_FIRE_EXTINGUISH, 2f, 0.7f);
-        LivingEntity imp = m.imp == null ? null : m.imp.entity();
-        if (imp != null && imp.getWorld().equals(at.getWorld()) && imp.getLocation().distance(at) <= o.smokeRadius() + 1) m.imp.scare(null, "煙霧彈");
+        for (Imp im : m.imps) {
+            LivingEntity imp = im.entity();
+            if (imp != null && imp.getWorld().equals(at.getWorld()) && imp.getLocation().distance(at) <= o.smokeRadius() + 1) im.scare(null, "煙霧彈");
+        }
         LivingEntity g = m.ghostEntity();
         if (g == null || !g.getWorld().equals(at.getWorld())) return;
         if (g.getLocation().distance(at) <= o.smokeRadius() || g.getEyeLocation().distance(at) <= o.smokeRadius()) {
@@ -123,7 +125,7 @@ final class ItemUse {
             moveLight(p);
             flashNightmare(p, g);
             if (m.aiGhost != null && beamHits(p, g)) m.aiGhost.flashed(p); // 手電筒照 AI 鬼的臉
-            if (m.imp != null && m.imp.entity() != null && beamHits(p, m.imp.entity())) m.imp.scare(p, "手電筒"); // 小鬼怕光
+            for (Imp im : m.imps) if (im.entity() != null && beamHits(p, im.entity())) im.scare(p, "手電筒"); // 小鬼怕光
         }
         // 掃描器：往目標方向冒藍色光點（只有自己看得到）
         var it = scanUntil.entrySet().iterator();

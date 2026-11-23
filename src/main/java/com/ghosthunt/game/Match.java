@@ -101,8 +101,8 @@ public final class Match {
     long mapVersion;
     /** v2 地圖的支線（沒有的地圖是 null）。 */
     SideQuests side;
-    /** 小鬼（不會抓人，只會干擾）；這局沒有就是 null。 */
-    Imp imp;
+    /** 小鬼（不會抓人，只會干擾；imp.count 隻，依序出來）；這局沒有就是空的。 */
+    final List<Imp> imps = new ArrayList<>();
     /** 測試用的假逃生者（/gh dummy）。 */
     final TestDummies dummies = new TestDummies(this);
 
@@ -312,7 +312,7 @@ public final class Match {
             g = gp;
             stats.put("mode", "pvp");
         }
-        if (Imp.enabled(this)) imp = new Imp(this);
+        if (Imp.enabled(this)) for (int k = 0; k < Math.max(1, plugin.getConfig().getInt("imp.count", 3)); k++) imps.add(new Imp(this, k));
         double bonus = GameSettings.bySurvivors(s.ghostSpeedBySurvivors(), survivors.size());
         ghostBonus = bonus;
         g.getAttribute(Attribute.MOVEMENT_SPEED).addTransientModifier(
@@ -621,7 +621,7 @@ public final class Match {
         if (nightmare != null) nightmare.tick(g);
         if (audio != null && tick % 20 == 0) audio.tick();
         if (side != null) side.tick();
-        if (imp != null && released) imp.tick();
+        if (released) for (Imp im : imps) im.tick();
         if (gimmicks != null) gimmicks.tick();
         if (tick % 10 == 0 && g instanceof Player gp) ghostHud(gp);
         if (tick % 200 == 0) refreshSurvivorFog();
@@ -1415,11 +1415,20 @@ public final class Match {
 
     /** /gh imp：測試用，馬上生出小鬼（或顯示它在做什麼）。 */
     public String impCommand() {
-        if (imp == null) return "這局沒有小鬼（config 的 imp.enabled，PvP 要 imp.pvp）。";
-        if (imp.entity() != null) return imp.debug();
+        if (imps.isEmpty()) return "這局沒有小鬼（config 的 imp.enabled，PvP 要 imp.pvp）。";
+        Imp imp = null;
+        for (Imp im : imps) if (im.entity() == null) {
+            imp = im;
+            break;
+        }
+        if (imp == null) {
+            StringBuilder sb = new StringBuilder();
+            for (Imp im : imps) sb.append(sb.length() > 0 ? "｜" : "").append(im.debug());
+            return sb.toString();
+        }
         NavMap nav = navForImp();
         if (nav == null) return "尋路圖還沒建好，等一下再試。";
-        return imp.spawn(nav, true) ? "小鬼出來了。" : "找不到地方生小鬼。";
+        return imp.spawn(nav, true) ? "小鬼出來了（再打一次生下一隻，全部出來後顯示它們在做什麼）。" : "找不到地方生小鬼。";
     }
 
     /** 有人用了某個支線（AI 記住這群人的習慣）。 */
@@ -1522,9 +1531,18 @@ public final class Match {
             stats.putAll(side.stats());
         }
         for (Survivor sv : survivors.values()) stopHeartbeat(sv, Bukkit.getPlayer(sv.id));
-        if (imp != null) {
-            imp.cleanup();
-            stats.putAll(imp.stats());
+        if (!imps.isEmpty()) {
+            Map<String, Object> sum = new java.util.LinkedHashMap<>();
+            for (Imp im : imps) {
+                im.cleanup();
+                for (Map.Entry<String, Object> e : im.stats().entrySet()) {
+                    if (e.getKey().equals("impSpawnedSec")) {
+                        sum.merge("impSpawnedSec", String.valueOf(e.getValue()), (a, b) -> a + "/" + b);
+                    } else sum.merge(e.getKey(), e.getValue(), (a, b) -> ((Number) a).intValue() + ((Number) b).intValue());
+                }
+            }
+            sum.put("impCount", imps.size());
+            stats.putAll(sum);
         }
         labelPowerRoom(false);
         if (aiGhost != null) {

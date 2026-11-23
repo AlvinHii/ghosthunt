@@ -88,7 +88,7 @@ public final class GhostHuntPlugin extends JavaPlugin {
                              @NotNull String label, @NotNull String[] args) {
         String sub = args.length == 0 ? "info" : args[0].toLowerCase(Locale.ROOT);
         boolean playerLobby = sub.equals("lobby") && args.length < 2;
-        if (!sub.equals("info") && !sub.equals("cam") && !sub.equals("pa") && !playerLobby && !sender.hasPermission("ghosthunt.admin")) {
+        if (!sub.equals("info") && !sub.equals("cam") && !sub.equals("pa") && !sub.equals("pack") && !playerLobby && !sender.hasPermission("ghosthunt.admin")) {
             msg(sender, "沒有權限。", NamedTextColor.RED);
             return true;
         }

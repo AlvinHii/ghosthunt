@@ -58,8 +58,12 @@ final class Imp {
     private int touches, interrupts, steals, doorsClosed, breakersOff, scares;
     private long spawnedAt = -1;
 
-    Imp(Match m) {
+    /** 第幾隻（0 開始）：第 n 隻晚 n × imp.stagger 秒出來；只有第一隻放登場音樂盒。 */
+    private final int index;
+
+    Imp(Match m, int index) {
         this.m = m;
+        this.index = index;
         FileConfiguration c = m.plugin.getConfig();
         speed = c.getDouble("imp.speed", 3.2) / 20.0;
         touchRange = c.getDouble("imp.touch-range", 1.3);
@@ -67,8 +71,9 @@ final class Imp {
         seekRange = c.getDouble("imp.seek-range", 48);
         stealChance = c.getDouble("imp.steal-chance", 0.3);
         doorCloseChance = c.getDouble("imp.door-close-chance", 0.5);
-        startAfter = c.getInt("imp.start-after", 150) * 20;
-        minStart = c.getInt("imp.min-start", 60) * 20;
+        int stagger = c.getInt("imp.stagger", 40) * index;
+        startAfter = (c.getInt("imp.start-after", 150) + stagger) * 20;
+        minStart = (c.getInt("imp.min-start", 60) + stagger) * 20;
         quietTrigger = c.getInt("imp.quiet-trigger", 40) * 20;
         touchCooldown = c.getInt("imp.touch-cooldown", 45) * 20;
         scareTicks = c.getInt("imp.scare-time", 20) * 20;
@@ -124,6 +129,7 @@ final class Imp {
         if (body != null) return false;
         List<Location> people = new ArrayList<>();
         for (LivingEntity t : targets(true)) people.add(t.getLocation());
+        for (Imp other : m.imps) if (other != this && other.entity() != null) people.add(other.entity().getLocation()); // 小鬼之間也分開
         double minD = force ? 12 : 25;
         Location at = null;
         for (int tries = 0; tries < 600 && at == null; tries++) {
@@ -152,10 +158,15 @@ final class Imp {
         });
         spawnedAt = m.tick;
         nextHum = m.tick + 200; // 登場音樂盒放完再開始哼歌
-        // 登場：全圖的逃生者都聽得到（在每個人自己身上播，不帶位置）
-        for (Player p : m.survivorPlayers()) p.playSound(p, "ghosthunt:imp.arrive", SoundCategory.HOSTILE, 1f, 1f);
-        m.survivorMessage("……遠處傳來小孩的哼歌聲。小鬼出來了：它不會抓人，但被它碰到會笑得很大聲（手電筒、煙霧彈可以趕走它）", NamedTextColor.DARK_PURPLE);
-        m.plugin.getLogger().info("[小鬼] 出來了：" + at.getBlockX() + "," + at.getBlockY() + "," + at.getBlockZ());
+        if (index == 0) {
+            // 登場：全圖的逃生者都聽得到（在每個人自己身上播，不帶位置）
+            for (Player p : m.survivorPlayers()) p.playSound(p, "ghosthunt:imp.arrive", SoundCategory.HOSTILE, 1f, 1f);
+            m.survivorMessage("……遠處傳來小孩的哼歌聲。小鬼出來了：它不會抓人，但被它碰到會笑得很大聲（手電筒、煙霧彈可以趕走它）", NamedTextColor.DARK_PURPLE);
+        } else {
+            for (Player p : m.survivorPlayers()) p.playSound(p, "ghosthunt:imp.distant_laugh", SoundCategory.HOSTILE, 0.8f, 0.9f);
+            m.survivorMessage("……又有一隻小鬼出來了（第 " + (index + 1) + " 隻）", NamedTextColor.DARK_PURPLE);
+        }
+        m.plugin.getLogger().info("[小鬼 " + (index + 1) + "] 出來了：" + at.getBlockX() + "," + at.getBlockY() + "," + at.getBlockZ());
         return true;
     }
 
@@ -427,9 +438,9 @@ final class Imp {
     }
 
     String debug() {
-        if (body == null) return "小鬼還沒出來";
+        if (body == null) return "小鬼 " + (index + 1) + " 還沒出來";
         Location l = body.getLocation();
-        return "小鬼 " + mode + " @" + l.getBlockX() + "," + l.getBlockY() + "," + l.getBlockZ() + "｜碰 " + touches + "（打斷 " + interrupts + "、搶 " + steals
+        return "小鬼 " + (index + 1) + " " + mode + " @" + l.getBlockX() + "," + l.getBlockY() + "," + l.getBlockZ() + "｜碰 " + touches + "（打斷 " + interrupts + "、搶 " + steals
                 + "）｜關門 " + doorsClosed + "｜關配電箱 " + breakersOff + "｜被嚇跑 " + scares;
     }
 }

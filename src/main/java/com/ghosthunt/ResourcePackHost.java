@@ -106,6 +106,20 @@ final class ResourcePackHost implements Listener {
         send(e.getPlayer());
     }
 
+    /** 資源包裝上了沒：寫進記錄；沒裝上時告訴玩家（小鬼、心跳、環境音都要資源包）。 */
+    @EventHandler
+    public void onStatus(org.bukkit.event.player.PlayerResourcePackStatusEvent e) {
+        var st = e.getStatus();
+        plugin.getLogger().info("資源包狀態：" + e.getPlayer().getName() + " → " + st);
+        switch (st) {
+            case DECLINED -> e.getPlayer().sendMessage(Component.text("你沒有裝資源包：小鬼、心跳、環境音都聽不到。打 /gh pack 可以再裝一次。", NamedTextColor.YELLOW));
+            case FAILED_DOWNLOAD, INVALID_URL, FAILED_RELOAD, DISCARDED ->
+                    e.getPlayer().sendMessage(Component.text("資源包沒裝上（" + st + "）：小鬼、心跳、環境音都聽不到。打 /gh pack 再試一次。", NamedTextColor.RED));
+            case SUCCESSFULLY_LOADED -> e.getPlayer().sendMessage(Component.text("資源包裝好了（小鬼、心跳、環境音）。", NamedTextColor.GRAY));
+            default -> { }
+        }
+    }
+
     void stop() {
         if (server != null) server.stop(0);
     }
