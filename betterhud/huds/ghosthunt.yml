@@ -1,0 +1,35 @@
+# 鬼抓人：心跳暗角（tools/make_vignette.py 產生的，不要手改）
+ghosthunt_heart:
+  layouts:
+    1:
+      name: ghosthunt_heart_1
+      gui:
+        x: 50
+        y: 50
+      pixel:
+        x: 0
+        y: 0
+    2:
+      name: ghosthunt_heart_2
+      gui:
+        x: 50
+        y: 50
+      pixel:
+        x: 0
+        y: 0
+    3:
+      name: ghosthunt_heart_3
+      gui:
+        x: 50
+        y: 50
+      pixel:
+        x: 0
+        y: 0
+    4:
+      name: ghosthunt_heart_4
+      gui:
+        x: 50
+        y: 50
+      pixel:
+        x: 0
+        y: 0

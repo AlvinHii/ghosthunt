@@ -35,6 +35,10 @@ final class ResourcePackHost implements Listener {
     private final String url;
     private final boolean required;
     private HttpServer server;
+    /** 額外的資源包（其他插件產生的 zip，例如 BetterHud 的 HUD；plugins 資料夾底下的路徑），一起送給玩家。 */
+    private java.util.List<String> extraPacks = java.util.List.of();
+    private String base;
+    private final java.util.Map<String, String[]> extraSha = new java.util.HashMap<>(); // 路徑 → {最後修改時間, sha1}
 
     private ResourcePackHost(JavaPlugin plugin, byte[] data, String url, boolean required) throws Exception {
         this.plugin = plugin;
@@ -76,6 +80,26 @@ final class ResourcePackHost implements Listener {
                         os.write(h.data);
                     }
                 });
+                h.base = "http://" + (host.contains(":") ? host : host + ":" + port);
+                h.extraPacks = cfg.getStringList("resource-pack.extra-packs");
+                for (int i = 0; i < h.extraPacks.size(); i++) {
+                    final java.io.File f = h.extraFile(i);
+                    h.server.createContext("/extra/" + i + ".zip", ex -> {
+                        byte[] b;
+                        try {
+                            b = java.nio.file.Files.readAllBytes(f.toPath());
+                        } catch (IOException e) {
+                            ex.sendResponseHeaders(404, -1);
+                            ex.close();
+                            return;
+                        }
+                        ex.getResponseHeaders().add("Content-Type", "application/zip");
+                        ex.sendResponseHeaders(200, b.length);
+                        try (OutputStream os = ex.getResponseBody()) {
+                            os.write(b);
+                        }
+                    });
+                }
                 h.server.setExecutor(Executors.newSingleThreadExecutor(r -> {
                     Thread t = new Thread(r, "GhostHunt-ResourcePack");
                     t.setDaemon(true);
@@ -92,9 +116,41 @@ final class ResourcePackHost implements Listener {
         }
     }
 
+    private java.io.File extraFile(int i) {
+        return new java.io.File(plugin.getDataFolder().getParentFile(), extraPacks.get(i));
+    }
+
+    /** 額外資源包的 sha1（檔案改過才重算）；檔案不在就是 null。 */
+    private String extraSha1(int i) {
+        java.io.File f = extraFile(i);
+        if (!f.isFile()) return null;
+        String[] cached = extraSha.get(f.getPath());
+        String mod = String.valueOf(f.lastModified());
+        if (cached != null && cached[0].equals(mod)) return cached[1];
+        try {
+            String s = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-1").digest(java.nio.file.Files.readAllBytes(f.toPath())));
+            extraSha.put(f.getPath(), new String[]{mod, s});
+            return s;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     void send(Player p) {
+        java.util.List<ResourcePackInfo> packs = new java.util.ArrayList<>();
+        packs.add(ResourcePackInfo.resourcePackInfo(id, URI.create(url), sha1));
+        if (base != null)
+            for (int i = 0; i < extraPacks.size(); i++) {
+                String s = extraSha1(i);
+                if (s == null) {
+                    plugin.getLogger().warning("額外的資源包找不到：" + extraFile(i));
+                    continue;
+                }
+                packs.add(ResourcePackInfo.resourcePackInfo(UUID.nameUUIDFromBytes(("ghosthunt-extra-" + i + "-" + s).getBytes()),
+                        URI.create(base + "/extra/" + i + ".zip"), s));
+            }
         p.sendResourcePacks(ResourcePackRequest.resourcePackRequest()
-                .packs(ResourcePackInfo.resourcePackInfo(id, URI.create(url), sha1))
+                .packs(packs)
                 .required(required)
                 .replace(false)
                 .prompt(Component.text("鬼抓人的地圖音效（環境音、事件音）。不裝也能玩，只是沒有這些聲音。", NamedTextColor.GRAY))

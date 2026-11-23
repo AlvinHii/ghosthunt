@@ -1,0 +1,28 @@
+# 鬼抓人：心跳暗角（tools/make_vignette.py 產生的，不要手改）
+ghosthunt_heart_1:
+  type: sequence
+  files:
+    - ghosthunt/heart1_peak.png:2
+    - ghosthunt/heart1_mid.png:3
+    - ghosthunt/heart1_base.png:15
+
+ghosthunt_heart_2:
+  type: sequence
+  files:
+    - ghosthunt/heart2_peak.png:2
+    - ghosthunt/heart2_mid.png:3
+    - ghosthunt/heart2_base.png:11
+
+ghosthunt_heart_3:
+  type: sequence
+  files:
+    - ghosthunt/heart3_peak.png:2
+    - ghosthunt/heart3_mid.png:3
+    - ghosthunt/heart3_base.png:7
+
+ghosthunt_heart_4:
+  type: sequence
+  files:
+    - ghosthunt/heart4_peak.png:1
+    - ghosthunt/heart4_mid.png:2
+    - ghosthunt/heart4_base.png:6

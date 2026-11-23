@@ -16,3 +16,11 @@ permissions:
     default: true
   ghosthunt.admin:
     default: op
+  ghosthunt.heart.1:           # 心跳暗角（BetterHud 的 layout 看這個權限；插件依心跳段數暫時給玩家，誰都不預設有）
+    default: false
+  ghosthunt.heart.2:
+    default: false
+  ghosthunt.heart.3:
+    default: false
+  ghosthunt.heart.4:
+    default: false

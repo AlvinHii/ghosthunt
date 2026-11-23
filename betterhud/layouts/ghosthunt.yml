@@ -1,0 +1,48 @@
+# 鬼抓人：心跳暗角（tools/make_vignette.py 產生的，不要手改）
+ghosthunt_heart_1:
+  images:
+    1:
+      name: ghosthunt_heart_1
+      x: -240
+      y: -135
+  conditions:
+    1:
+      first: has_permission:ghosthunt.heart.1
+      second: true
+      operation: "=="
+
+ghosthunt_heart_2:
+  images:
+    1:
+      name: ghosthunt_heart_2
+      x: -240
+      y: -135
+  conditions:
+    1:
+      first: has_permission:ghosthunt.heart.2
+      second: true
+      operation: "=="
+
+ghosthunt_heart_3:
+  images:
+    1:
+      name: ghosthunt_heart_3
+      x: -240
+      y: -135
+  conditions:
+    1:
+      first: has_permission:ghosthunt.heart.3
+      second: true
+      operation: "=="
+
+ghosthunt_heart_4:
+  images:
+    1:
+      name: ghosthunt_heart_4
+      x: -240
+      y: -135
+  conditions:
+    1:
+      first: has_permission:ghosthunt.heart.4
+      second: true
+      operation: "=="

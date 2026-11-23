@@ -70,6 +70,9 @@ public final class Match {
         long heartStageStart;
         /** 心跳暗角：只有這個人看得到的世界邊界（靠近邊界時畫面四周變暗變紅）；沒有就是 null。 */
         org.bukkit.WorldBorder vignette;
+        /** 心跳暗角（BetterHud 版）：暫時給的權限 ghosthunt.heart.N。 */
+        org.bukkit.permissions.PermissionAttachment heartPerm;
+        int heartPermStage;
         Location lastSample;
         long stillSince;
         boolean inHole;
@@ -207,6 +210,9 @@ public final class Match {
         this.heartStageLoop = (int) Math.round(hc.getDouble("heartbeat.stage-loop", 24) * 20);
         this.heartStageVolume = (float) hc.getDouble("heartbeat.stage-volume", 1.0);
         this.vignetteOn = hc.getBoolean("heartbeat.vignette", true);
+        String vm = hc.getString("heartbeat.vignette-mode", "auto");
+        this.vignetteBetterHud = vm.equalsIgnoreCase("betterhud")
+                || vm.equalsIgnoreCase("auto") && Bukkit.getPluginManager().isPluginEnabled("BetterHud");
         List<Double> vs = hc.getDoubleList("heartbeat.vignette-strength");
         this.vignetteStrength = (vs.isEmpty() ? List.of(0.25, 0.4, 0.6, 0.8) : vs).stream().mapToDouble(Double::doubleValue).toArray();
         List<Integer> vb = hc.getIntegerList("heartbeat.vignette-bpm");
@@ -909,7 +915,19 @@ public final class Match {
             sv.vignette = null;
             if (p != null) p.setWorldBorder(null);
         }
+        if (sv.heartPerm != null) {
+            try {
+                if (p != null) p.removeAttachment(sv.heartPerm);
+            } catch (IllegalArgumentException ignored) {
+                // 已經拿掉了（玩家下線）
+            }
+            sv.heartPerm = null;
+            sv.heartPermStage = 0;
+        }
     }
+
+    /** 暗角用 BetterHud（有裝而且 heartbeat.vignette-mode 是 auto／betterhud）還是世界邊界。 */
+    private final boolean vignetteBetterHud;
 
     private final boolean vignetteOn;
     private final double[] vignetteStrength;
@@ -922,6 +940,14 @@ public final class Match {
      */
     private void vignette(Survivor sv, Player p, int stage) {
         if (!vignetteOn || stage <= 0) return;
+        if (vignetteBetterHud) {
+            // BetterHud 版：給玩家 ghosthunt.heart.N，BetterHud 的 layout 看權限顯示那一段的暗角（黑色、跟著心跳脈動的動畫）
+            if (sv.heartPermStage == stage) return;
+            if (sv.heartPerm == null) sv.heartPerm = p.addAttachment(plugin);
+            for (int n = 1; n <= 4; n++) sv.heartPerm.setPermission("ghosthunt.heart." + n, n == stage);
+            sv.heartPermStage = stage;
+            return;
+        }
         int i = Math.min(stage, vignetteStrength.length) - 1;
         double bpm = vignetteBpm[Math.min(i, vignetteBpm.length - 1)];
         double phase = ((tick - sv.heartStageStart) / 20.0 * bpm / 60.0) % 1.0;

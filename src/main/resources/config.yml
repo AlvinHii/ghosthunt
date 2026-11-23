@@ -186,6 +186,7 @@ heartbeat:                     # 逃生者的心跳（鬼越近越快、越大�
   stage-loop: 24               # 每段音檔幾秒（同一段每這麼多秒重播一次）
   stage-volume: 1.0            # 最大 1.0（再大只會傳更遠、不會更大聲）；太大聲的人可以自己調遊戲裡的「玩家」音量
   vignette: true               # 心跳暗角：鬼越近畫面四周越暗、偏紅，跟著心跳一下一下脈動（用只有自己看得到的世界邊界做的；要「精緻」以上的畫質才看得到）
+  vignette-mode: auto           # auto = 有裝 BetterHud 就用它（純黑、跟著心跳脈動；圖和設定在 betterhud/，tools/make_vignette.py 產生），沒有就用世界邊界；betterhud／border 強制選一種
   vignette-strength: [0.25, 0.4, 0.6, 0.8]   # 4 段心跳的暗角強度（0～0.95）
   vignette-bpm: [60, 75, 100, 130]           # 脈動的速度（每分鐘幾下，跟心跳音檔一樣）
   category: players            # 心跳走哪個音量滑桿：players（玩家）／master（主音量）／ambient（環境）……
@@ -350,6 +351,8 @@ resource-pack:                 # 地圖音效的資源包（插件自己開一�
                                # 用 playit.gg：在 playit 新增一條 TCP 隧道指到本機 8164，這裡填 playit 給的「位址:port」（例如 xxx.gl.at.ply.gg:12345）
   url: ""                      # 自己把 ghosthunt-pack.zip 放在別的網站的話填網址（填了就不開網頁伺服器）
   required: false              # true＝不裝資源包就進不來
+  extra-packs:                 # 其他插件產生的資源包 zip（plugins 資料夾底下的路徑），跟我們的一起送給玩家；找不到就跳過
+    - BetterHud/build.zip
 
 gimmicks:                      # 地圖專屬機關（地圖檔的 [interactions]，目前只有度假村）
   bell-cooldown: 45            # 迎賓鈴：全場共用冷卻（秒）
