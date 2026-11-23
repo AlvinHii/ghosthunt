@@ -1,9 +1,9 @@
 """
-鬼的高層策略網路（PPO 用）：每個區域用同一個小網路打分數（不管地圖有幾個區域、順序怎麼排都適用），
-加一個 GRU 記住之前發生的事；特殊動作（去聲音、關電源、弄壞大門、守監獄）從記憶出分數。
+高層策略網路（PPO 用）：每個區域用同一個小網路打分數（不管地圖有幾個區域、順序怎麼排都適用），
+加一個 GRU 記住之前發生的事；特殊動作從記憶出分數。鬼和逃生者用同一種網路（輸入、動作數不同）。
 
-輸入：obs（OBS_DIM）、h（HID）、mask（N_ACTIONS，True＝可以選）
-輸出：logits（N_ACTIONS，不能選的是 -1e9）、value、h'
+輸入：obs、h（HID）、mask（True＝可以選）
+輸出：logits（不能選的是 -1e9）、value、h'
 """
 import torch
 import torch.nn as nn
@@ -14,22 +14,27 @@ HID = 256
 EMB = 64
 
 
-class GhostNet(nn.Module):
-    def __init__(self):
+class Net(nn.Module):
+    def __init__(self, reg_feats=REG_FEATS, global_feats=GLOBAL_FEATS, n_actions=N_ACTIONS):
         super().__init__()
-        self.reg = nn.Sequential(nn.Linear(REG_FEATS, EMB), nn.ReLU(), nn.Linear(EMB, EMB), nn.ReLU())
-        self.ctx = nn.Sequential(nn.Linear(2 * EMB + GLOBAL_FEATS, HID), nn.ReLU())
+        self.rf, self.gf = reg_feats, global_feats
+        self.reg = nn.Sequential(nn.Linear(reg_feats, EMB), nn.ReLU(), nn.Linear(EMB, EMB), nn.ReLU())
+        self.ctx = nn.Sequential(nn.Linear(2 * EMB + global_feats, HID), nn.ReLU())
         self.gru = nn.GRUCell(HID, HID)
         self.score = nn.Sequential(nn.Linear(EMB + HID, 128), nn.ReLU(), nn.Linear(128, 1))
-        self.special = nn.Linear(HID, N_ACTIONS - RMAX)
+        self.special = nn.Linear(HID, n_actions - RMAX)
         self.value = nn.Sequential(nn.Linear(HID, 128), nn.ReLU(), nn.Linear(128, 1))
 
     def forward(self, obs, h, mask):
         b = obs.shape[0]
-        reg = obs[:, :RMAX * REG_FEATS].reshape(b, RMAX, REG_FEATS)
-        gl = obs[:, RMAX * REG_FEATS:]
+        reg = obs[:, :RMAX * self.rf].reshape(b, RMAX, self.rf)
+        gl = obs[:, RMAX * self.rf:]
         valid = mask[:, :RMAX].float().unsqueeze(-1)
-        e = self.reg(reg) * valid
+        e = self.reg(reg)
+        # 區域有效：鬼的遮罩前 R 個一定是 True；逃生者不是自由狀態時全部 False（只能「繼續」），這時用全部區域做摘要
+        anyv = valid.sum(1, keepdim=True) > 0
+        valid = torch.where(anyv, valid, torch.ones_like(valid))
+        e = e * valid
         mean = e.sum(1) / valid.sum(1).clamp(min=1.0)
         mx = (e - (1.0 - valid) * 1e4).max(1).values
         x = self.ctx(torch.cat([mean, mx, gl], -1))
@@ -38,3 +43,14 @@ class GhostNet(nn.Module):
         logits = torch.cat([s, self.special(h2)], -1)
         logits = logits.masked_fill(~mask, -1e9)
         return logits, self.value(h2).squeeze(-1), h2
+
+
+class GhostNet(Net):
+    def __init__(self):
+        super().__init__()
+
+
+class SurvivorNet(Net):
+    def __init__(self):
+        from ..sim.survivor import S_ACTIONS, S_GLOBAL, S_REG
+        super().__init__(S_REG, S_GLOBAL, S_ACTIONS)

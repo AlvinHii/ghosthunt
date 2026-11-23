@@ -4,7 +4,9 @@
   python -m ai.train.ppo --run ghost_v1 --hours 6
   （輸出在 %LOCALAPPDATA%/ghosthunt-ai/runs/<run>/：latest.pt、ckpt_*.pt、log.csv、eval.csv）
 
-獎勵（照計畫，先不加引導分數）：抓到一人 +1、淘汰 +0.5、全部抓完 +3、逃生者每完成一個主線目標 −0.3、每逃出一人 −3。
+獎勵（先不加引導分數）：同一個人第一次被抓 +1、之後再抓 +0.3（不刻意讓人被救再抓）、淘汰 +0.5、全部抓完 +3、
+逃生者每完成一個主線目標 −0.3、每逃出一人 −3、時間到還有人自由 −0.5。逃生者是規則型，每個人隨機一種個性（PERSONAS）；
+評估另外用訓練沒見過的個性（HELDOUT）。
 """
 import argparse
 import csv
@@ -36,6 +38,11 @@ def summarize(res):
         'minutes': float(np.median([r['time'] for r in res])) / 60,
         'power_cut': sum(r['power_cut'] for r in res) / k,
     }
+    # 鑽漏洞檢查（平均；沒有發生的局不算）
+    for key in ['jail_guard', 'down_guard', 'regions_per_min', 'hide_ratio', 'idle_ratio', 'contrib_top', 'doublekill']:
+        v = [r[key] for r in res if r.get(key) is not None]
+        if v:
+            out[key] = float(np.mean(v))
     for m in sorted({r['map'] for r in res}):
         rr = [r for r in res if r['map'] == m]
         out[f'{m}_escaped_per_survivor'] = sum(r['escaped'] for r in rr) / sum(r['n'] for r in rr)
@@ -48,12 +55,12 @@ def main():
     ap.add_argument('--run', default='ghost_v1')
     ap.add_argument('--maps', default='mall2,hospital')
     ap.add_argument('--difficulty', default='normal')
-    ap.add_argument('--workers', type=int, default=12)
+    ap.add_argument('--workers', type=int, default=10)
     ap.add_argument('--envs', type=int, default=8)
     ap.add_argument('--steps', type=int, default=128)
     ap.add_argument('--hours', type=float, default=6)
     ap.add_argument('--lr', type=float, default=2.5e-4)
-    ap.add_argument('--gamma', type=float, default=0.99)
+    ap.add_argument('--gamma', type=float, default=0.997)
     ap.add_argument('--lam', type=float, default=0.95)
     ap.add_argument('--clip', type=float, default=0.2)
     ap.add_argument('--ent', type=float, default=0.01)
@@ -63,6 +70,10 @@ def main():
     ap.add_argument('--eval-games', type=int, default=240)
     a = ap.parse_args()
 
+    if os.name == 'nt':
+        # 訓練期間讓 Windows 不要睡眠（跟影片播放器一樣，不改設定；程式結束就恢復）
+        import ctypes
+        ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
     dev = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     out = os.path.join(CACHE, 'runs', a.run)
     os.makedirs(out, exist_ok=True)
@@ -87,6 +98,7 @@ def main():
     if not os.path.exists(base_path):
         t = time.time()
         base = summarize(venv.evaluate(None, a.eval_games, use_rule=True))
+        base['heldout'] = summarize(venv.evaluate(None, a.eval_games, use_rule=True, personas='heldout'))
         with open(base_path, 'w', encoding='utf-8') as f:
             json.dump(base, f, ensure_ascii=False, indent=1)
         print(f'規則型大腦（對照，{time.time() - t:.0f} 秒）：{base}')
@@ -191,11 +203,16 @@ def main():
         if update % a.eval_every == 0:
             state = {k: v.cpu() for k, v in net.state_dict().items()}
             ev = summarize(venv.evaluate(state, a.eval_games))
+            ev['heldout'] = summarize(venv.evaluate(state, a.eval_games, personas='heldout'))
             evlog.writerow([update, decisions, round(time.time() - t_start)] + [round(ev.get(k, 0), 4) for k in
-                           ['any_escape', 'escaped_per_survivor', 'captures', 'wipe', 'minutes', 'power_cut', 'mall2_escaped_per_survivor', 'hospital_escaped_per_survivor']])
+                           ['any_escape', 'escaped_per_survivor', 'captures', 'wipe', 'minutes', 'power_cut', 'mall2_escaped_per_survivor', 'hospital_escaped_per_survivor',
+                            'jail_guard', 'regions_per_min']] + [round(ev['heldout'].get('escaped_per_survivor', 0), 4)])
             evalf.flush()
             torch.save({'net': state, 'update': update, 'decisions': decisions, 'eval': ev}, os.path.join(out, f'ckpt_{update:05d}.pt'))
-            print(f'  評估（{a.eval_games} 局，鬼選最高分）：{ev}', flush=True)
+            print(f'  評估（{a.eval_games} 局，鬼選最高分）：每人逃出 {ev["escaped_per_survivor"]:.3f}（規則型 {base["escaped_per_survivor"]:.3f}）'
+                  f'｜沒見過的個性 {ev["heldout"].get("escaped_per_survivor", 0):.3f}（規則型 {base["heldout"].get("escaped_per_survivor", 0):.3f}）'
+                  f'｜守監獄 {ev.get("jail_guard", 0):.2f}（{base.get("jail_guard", 0):.2f}）｜每分鐘區域 {ev.get("regions_per_min", 0):.1f}（{base.get("regions_per_min", 0):.1f}）'
+                  f'｜一局 {ev["minutes"]:.1f} 分（{base["minutes"]:.1f}）', flush=True)
     venv.close()
     print('時間到，結束。')
 

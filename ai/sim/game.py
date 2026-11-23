@@ -33,6 +33,21 @@ REALISM = {
     'hesitate-time': (1.0, 3.0),
     'mistake-chance': 0.01,  # 走錯路（去隨便一個相鄰區域）的機率
     'react': (0.3, 0.8),    # 察覺危險的反應時間（秒）
+    'flee-stage': 3,        # 心跳到第幾段（1 遠～4 貼臉）就開始逃
+    'rescue': 1.0,          # 願意去救人／扶人的機率（每局每人擲一次）
+    'hide': 1.0,            # 逃跑時附近有暗格就躲的機率（每局每人擲一次）
+}
+
+# 規則型逃生者的個性：訓練鬼時每個人隨機一種（避免鬼只會剋一種機器人）；heldout 只在評估用（訓練沒見過）
+PERSONAS = {
+    'standard': {},
+    'rusher': {'walk-chance': 0.1, 'flee-stage': 4, 'rescue': 0.6, 'hesitate-chance': 0.02},
+    'stealth': {'walk-chance': 0.8, 'flee-stage': 2, 'hide': 1.0, 'rescue': 0.7},
+    'rescuer': {'rescue': 1.0, 'flee-stage': 3, 'walk-chance': 0.3},
+    'selfish': {'rescue': 0.0, 'flee-stage': 3, 'hide': 0.5},
+}
+HELDOUT = {
+    'careful': {'walk-chance': 0.6, 'flee-stage': 2, 'rescue': 0.9, 'hesitate-chance': 0.08, 'react': (0.5, 1.0), 'hide': 0.3},
 }
 
 
@@ -58,7 +73,7 @@ class Survivor:
 
 
 class Game:
-    def __init__(self, world, cfg, seed=0, survivors=3, record=False, realism=None):
+    def __init__(self, world, cfg, seed=0, survivors=3, record=False, realism=None, personas='standard'):
         self.real = dict(REALISM, **(realism or {}))
         self.w = world
         self.c = cfg
@@ -120,6 +135,22 @@ class Game:
             if all(w.dist[p, q] >= spread for q in pts) or self.rng.random() < 0.02:
                 pts.append(p)
         self.sv = [Survivor(i, p) for i, p in enumerate(pts)]
+        table = {'standard': {'standard': {}}, 'train': PERSONAS, 'heldout': HELDOUT}[personas] if isinstance(personas, str) else personas
+        for s in self.sv:
+            name = self.rng.choice(sorted(table))
+            s.persona = name
+            s.p = dict(self.real, **table[name])
+            s.will_rescue = self.rng.random() < s.p['rescue']
+            s.will_hide = self.rng.random() < s.p['hide']
+            s.last_pos = s.pos
+        # 鑽漏洞檢查用的統計
+        self.m = {'jailed_t': 0.0, 'near_jail_t': 0.0, 'down_t': 0.0, 'near_down_t': 0.0, 'hide_t': 0.0, 'free_t': 0.0,
+                  'idle_t': 0.0, 'doublekill': 0}
+        self.contrib = [0] * survivors
+        self.camp_t = 0.0
+        self.camp_away = 0.0
+        self.rescue_events = []
+        self.ghost_regions = set()
         far = np.min(np.stack([np.asarray(w.dist[p]) for p in pts]), axis=0)
         far[far >= 60000] = -1
         self.g = far.argmax()
@@ -269,6 +300,7 @@ class Game:
         for s in self.sv:
             if s.state == FREE:
                 self._survivor(s)
+        self._metrics()
         self._rescues()
         self._gates()
         self._end_check()
@@ -512,7 +544,12 @@ class Game:
         self.g_target = None
         self.g_last_seen = None
         self.last_contact = self.t
-        self.reward += 1.0
+        self.reward += 1.0 if s.captures == 1 else 0.3
+        # 救援雙殺：救人／被救後 10 秒內又被抓
+        for ev in self.rescue_events:
+            if not ev.get('dk') and self.t - ev['t'] <= 10 and s.i in ev['who']:
+                ev['dk'] = True
+                self.m['doublekill'] += 1
         # 卡藏進附近的木桶
         for card in s.cards:
             near = [b for b in self.barrels if self.eu(b, s.pos) <= c['jail']['dropped-card-radius'] and b not in self.barrel_card]
@@ -628,10 +665,10 @@ class Game:
                 s.pos = s.hidden[1]
                 s.hidden = None
             return
-        threat = self._sees_ghost(s) or self.heartbeat_stage(s) >= 3
+        threat = self._sees_ghost(s) or self.heartbeat_stage(s) >= s.p['flee-stage']
         if threat:
             if s.threat_seen_at < 0:
-                s.threat_seen_at = self.t + self.rng.uniform(*self.real['react'])  # 反應延遲
+                s.threat_seen_at = self.t + self.rng.uniform(*s.p['react'])  # 反應延遲
             if self.t >= s.threat_seen_at:
                 s.flee_until = self.t + 3
                 if s.act:
@@ -646,7 +683,7 @@ class Game:
             if self.d(s.pos, self.g) <= 6 and self.t >= s.dash_ready:
                 s.dash_until = self.t + c['survivor']['dash-duration']
                 s.dash_ready = self.t + c['survivor']['dash-cooldown']
-            if not self._ghost_sees(s):
+            if not self._ghost_sees(s) and s.will_hide:
                 for (hide, entrance) in w.hideouts:
                     ei = w.node(*entrance)
                     if ei >= 0 and ei == s.pos and not any(o.hidden and o.hidden[0] == hide for o in self.sv):
@@ -670,6 +707,8 @@ class Game:
                 helpers = sum(1 for o in self.free() if o is not s and o.act and o.act[0] == 'power' and self.eu(o.pos, s.pos) <= 3)
                 mult = c['interaction']['team-power-multiplier'] if helpers else 1.0
             left -= DT * mult
+            if kind == 'rescue' and self.camped():
+                left = min(left, self.c['jail']['camp-rescue-time'])
             if kind != 'rescue' and int((left + DT * mult) / 1.0) != int(left / 1.0):
                 self.noise_at(s.pos, c['interaction']['noise-radius'])
             if left > 0:
@@ -683,13 +722,13 @@ class Game:
             return
         # 決定任務（每 0.5 秒）
         if s.task is None or int(self.t / DT) % 2 == 0:
-            if self.rng.random() < self.real['hesitate-chance']:
-                s.pause_until = self.t + self.rng.uniform(*self.real['hesitate-time'])
+            if self.rng.random() < s.p['hesitate-chance']:
+                s.pause_until = self.t + self.rng.uniform(*s.p['hesitate-time'])
                 return
             old = s.task
             s.task = self._choose_task(s)
             if s.task is not None and (old is None or old[1] != s.task[1]):
-                s.walk = self.rng.random() < self.real['walk-chance']
+                s.walk = self.rng.random() < s.p['walk-chance']
         if s.task is None:
             return
         kind, target, arg = s.task
@@ -741,18 +780,18 @@ class Game:
                 return ('escape', g['exit'], g)
         # 扶倒地的隊友：最近的一個人去（倒地的位置就是目標，站旁邊就會扶）
         down = [o for o in self.sv if o.state == DOWN]
-        if down:
+        if down and s.will_rescue:
             d0 = min(down, key=lambda o: self.d(s.pos, o.pos))
             if all(self.d(s.pos, d0.pos) <= self.d(o.pos, d0.pos) + 5 for o in others):
                 return ('revive', d0.pos, d0)
         # 救人：最近的一個人去
         jailed = [o for o in self.sv if o.state == JAILED]
-        if jailed and w.jails:
+        if jailed and w.jails and s.will_rescue:
             stand = w.jails[0]['stand']
             if all(self.d(s.pos, stand) <= self.d(o.pos, stand) + 5 for o in others) or len(jailed) >= 2:
                 return ('rescue', stand, None)
         # 偶爾犯錯：去隨便一個相鄰的區域
-        if rng.random() < self.real['mistake-chance']:
+        if rng.random() < s.p['mistake-chance']:
             adj = w.reg_adj[w.reg[s.pos]]
             if adj:
                 return ('wander', int(w.reg_center[rng.choice(adj)]), None)
@@ -818,6 +857,8 @@ class Game:
             jailed = [o for o in self.sv if o.state == JAILED]
             if jailed:
                 t = by_survivors(self.c['jail']['rescue-time-by-survivors'], self.n)
+                if self.camped():
+                    t = self.c['jail']['camp-rescue-time']
                 s.act = ('rescue', t, None)
         elif kind == 'escape':
             s.state = ESCAPED
@@ -834,16 +875,19 @@ class Game:
             card = self.barrel_card.pop(arg, None)
             if card:
                 s.cards.append(card)
+                self.contrib[s.i] += 1
                 self._objective('第一張卡')
                 self.log('逃生者%d 找到門禁卡 #%d' % (s.i, card))
         elif kind == 'power':
             self.power = True
             self.power_on_at = self.t
             self.known_lever = True
+            self.contrib[s.i] += 1
             self._objective('開電源')
             self.log('逃生者%d 開了電源' % s.i)
         elif kind == 'auth':
             self.authorized.add(arg)
+            self.contrib[s.i] += 1
             self._objective('授權')
             self.log('逃生者%d 授權門禁卡 #%d' % (s.i, arg))
         elif kind == 'swipe':
@@ -852,6 +896,7 @@ class Game:
             if card is not None and g['counting'] < 0:
                 s.cards.remove(card)
                 g['counting'] = self.c['gate']['open-countdown']
+                self.contrib[s.i] += 1
                 self._objective('刷卡')
                 self.log('逃生者%d 刷卡（大門 %dF）' % (s.i, g['floor'] + 1))
                 self.need_decision = True
@@ -864,6 +909,7 @@ class Game:
                     o.boost_until = self.t + self.c['jail']['rescue-speed-boost']
                     self.stats['rescues'] += 1
                     self.log('逃生者%d 救出逃生者%d' % (s.i, o.i))
+                    self.rescue_events.append({'t': self.t, 'who': {s.i, o.i}})
             self.need_decision = True
 
     def _objective(self, name):
@@ -887,6 +933,7 @@ class Game:
                 s.boost_until = self.t + self.c['jail']['rescue-speed-boost']
                 self.stats['rescues'] += 1
                 self.log('逃生者%d 扶起逃生者%d' % (helpers[0].i, s.i))
+                self.rescue_events.append({'t': self.t, 'who': {helpers[0].i, s.i}})
                 self.need_decision = True
             elif s.bleed <= 0:
                 s.state = OUT
@@ -905,11 +952,50 @@ class Game:
                     self._objective('大門打開')
                     self.log('大門 %dF 打開' % (g['floor'] + 1))
 
+    def camped(self):
+        return self.camp_t >= self.c['jail']['camp-time']
+
+    def _metrics(self):
+        m = self.m
+        self.ghost_regions.add(int(self.w.reg[self.g]))
+        near = False
+        if self.w.jails:
+            j = self.w.jails[0]
+            f, x, z = self.w.pos(self.g)
+            near = f == j['floor'] and math.hypot(x + 0.5 - j['cx'], z + 0.5 - j['cz']) <= self.c['jail']['camp-radius']
+        if near:
+            self.camp_t += DT
+            self.camp_away = 0.0
+        else:
+            self.camp_away += DT
+            if self.camp_away >= self.c['jail']['camp-recover-time']:
+                self.camp_t = 0.0
+        if any(s.state == JAILED for s in self.sv) and self.w.jails:
+            m['jailed_t'] += DT
+            if near:
+                m['near_jail_t'] += DT
+        down = [s for s in self.sv if s.state == DOWN]
+        if down:
+            m['down_t'] += DT
+            if min(self.eu(self.g, s.pos) for s in down) <= 8:
+                m['near_down_t'] += DT
+        for s in self.sv:
+            if s.state != FREE:
+                continue
+            m['free_t'] += DT
+            if s.hidden:
+                m['hide_t'] += DT
+            elif s.pos == s.last_pos and not s.act:
+                m['idle_t'] += DT
+            s.last_pos = s.pos
+
     def _end_check(self):
         if not self.free() or self.t >= self.c['match']['time-limit']:
             self.done = True
             if not any(s.state == ESCAPED for s in self.sv) and not self.free():
                 self.reward += 3.0
+            if self.free():
+                self.reward -= 0.5
 
     # =================================================================
     # 重播
@@ -944,6 +1030,15 @@ class Game:
             'objectives': dict(self.objectives),
             'power_cut': self.power_cut,
             'imp_touches': self.stats['imp_touches'],
+            # 鑽漏洞檢查
+            'jail_guard': self.m['near_jail_t'] / self.m['jailed_t'] if self.m['jailed_t'] > 0 else None,
+            'down_guard': self.m['near_down_t'] / self.m['down_t'] if self.m['down_t'] > 0 else None,
+            'regions_per_min': len(self.ghost_regions) / max(1.0, self.t / 60),
+            'hide_ratio': self.m['hide_t'] / max(1.0, self.m['free_t']),
+            'idle_ratio': self.m['idle_t'] / max(1.0, self.m['free_t']),
+            'contrib_top': max(self.contrib) / sum(self.contrib) if sum(self.contrib) >= 3 else None,
+            'doublekill': self.m['doublekill'] / len(self.rescue_events) if self.rescue_events else None,
+            'personas': [s.persona for s in self.sv],
         }
 
 

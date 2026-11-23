@@ -34,6 +34,8 @@ def advance(g, min_steps=MIN_STEPS):
 
 
 def _worker(conn, maps, n_envs, seed0, difficulty, survivors):
+    import os
+    os.environ['OMP_NUM_THREADS'] = '1'
     from ..sim.world import World
     worlds = {m: World(m) for m in maps}
     cfg = load(difficulty)
@@ -44,7 +46,7 @@ def _worker(conn, maps, n_envs, seed0, difficulty, survivors):
         counter[0] += 1
         m = maps[(counter[0] + k) % len(maps)]
         n = rng.choice(survivors)
-        g = Game(worlds[m], cfg, seed=counter[0], survivors=n)
+        g = Game(worlds[m], cfg, seed=counter[0], survivors=n, personas='train')
         g.map_name = m
         advance(g, 0)
         return g
@@ -72,13 +74,13 @@ def _worker(conn, maps, n_envs, seed0, difficulty, survivors):
                 infos.append(info)
             conn.send((obs, masks, rews, dones, infos))
         elif cmd == 'eval':
-            state, games, seed, use_rule = data
-            conn.send(_evaluate(worlds, cfg, maps, state, games, seed, use_rule, survivors))
+            state, games, seed, use_rule, personas = data
+            conn.send(_evaluate(worlds, cfg, maps, state, games, seed, use_rule, survivors, personas))
         elif cmd == 'close':
             break
 
 
-def _evaluate(worlds, cfg, maps, state, games, seed, use_rule, survivors):
+def _evaluate(worlds, cfg, maps, state, games, seed, use_rule, survivors, personas='train'):
     """固定種子打很多局（鬼取最高分的動作），回傳每局結果。use_rule=True 用規則型大腦當對照。"""
     out = []
     net = None
@@ -92,7 +94,7 @@ def _evaluate(worlds, cfg, maps, state, games, seed, use_rule, survivors):
     for k in range(games):
         m = maps[k % len(maps)]
         n = survivors[(k // len(maps)) % len(survivors)]
-        g = Game(worlds[m], cfg, seed=seed + k, survivors=n)
+        g = Game(worlds[m], cfg, seed=seed + k, survivors=n, personas=personas)
         brain = RuleBrain(random.Random(seed + k + 7)) if use_rule else None
         h = None
         advance(g, 0)
@@ -109,7 +111,7 @@ def _evaluate(worlds, cfg, maps, state, games, seed, use_rule, survivors):
                     a = int(logits.argmax(-1))
             g.decide(a)
             advance(g)
-        out.append(dict(g.result(), map=m, n=n))
+        out.append(dict(g.result(), map=m, n=n, seed=seed + k))
     return out
 
 
@@ -152,10 +154,10 @@ class VecEnv:
             infos += inf
         return np.stack(obs), np.stack(masks), np.array(rews, np.float32), np.array(dones, bool), infos
 
-    def evaluate(self, state, games, seed=10_000_000, use_rule=False):
+    def evaluate(self, state, games, seed=10_000_000, use_rule=False, personas='train'):
         per = max(1, games // len(self.conns))
         for i, c in enumerate(self.conns):
-            c.send(('eval', (state, per, seed + i * per, use_rule)))
+            c.send(('eval', (state, per, seed + i * per, use_rule, personas)))
         out = []
         for c in self.conns:
             out += c.recv()
