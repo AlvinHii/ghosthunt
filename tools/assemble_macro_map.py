@@ -63,7 +63,19 @@ path = polished_blackstone
 room-floors = polished_andesite, smooth_stone, white_concrete, polished_diorite, white_terracotta, stripped_oak_wood, birch_planks, black_concrete, red_terracotta, purple_terracotta, light_gray_terracotta, smooth_quartz, gray_concrete, cyan_terracotta, polished_granite
 door = spruce
 """
-PRESETS = {'mall': (MALL_FURN, MALL_PAL), 'mall2': (MALL_FURN, MALL2_PAL)}
+HOSPITAL_PAL = """
+wall = white_concrete
+outer-wall = smooth_quartz
+ceiling = smooth_stone
+hedge = moss_block
+fence = birch_fence
+deck = smooth_stone
+outdoor = grass_block, moss_block
+path = gray_concrete
+room-floors = light_gray_concrete, polished_andesite, white_terracotta, gray_concrete, polished_deepslate, light_blue_terracotta, cyan_terracotta, lime_terracotta, light_blue_concrete, light_gray_glazed_terracotta, blue_terracotta, green_terracotta, polished_diorite, red_terracotta, yellow_terracotta, brown_terracotta, lime_concrete, cyan_concrete, light_blue_wool, calcite, light_gray_wool, pink_terracotta, green_concrete
+door = birch
+"""
+PRESETS = {'mall': (MALL_FURN, MALL_PAL), 'mall2': (MALL_FURN, MALL2_PAL), 'hospital': (MALL_FURN, HOSPITAL_PAL)}
 
 # 拼之前對模組改的格子：(樓層, 模組, x, y, 新字元)，模組內座標。用來切斷「幾個模組的開口排成一直線」造成的長直線視野。
 EDITS = {

@@ -566,7 +566,7 @@ public final class Lobby implements Listener {
     // =====================================================================
 
     private static final Map<String, String> MAP_NAMES = Map.of(
-            "mall2", "夜半購物城", "mall", "購物中心", "mall_m", "小購物中心",
+            "mall2", "夜半購物城", "mall", "購物中心", "mall_m", "小購物中心", "hospital", "深夜綜合醫院",
             "office_park", "辦公園區", "hydro_plant", "水力發電廠", "seaside_resort", "海邊度假村");
     private static final Map<String, String> PERSONA_NAMES = Map.of("auto", "自動", "hound", "獵犬", "ambusher", "埋伏者", "watcher", "守望者", "standard", "標準");
     private static final Map<String, String> DIFF_NAMES = Map.of("easy", "簡單", "normal", "普通", "hard", "困難");
