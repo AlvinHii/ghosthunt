@@ -279,9 +279,12 @@ public final class Sim {
     }
 
     Stats run(int seconds) {
-        Ghost g = new Ghost(m.ghostStart());
         List<Escaper> es = new ArrayList<>();
         for (int i = 0; i < 3; i++) es.add(new Escaper(mainNodes.get(rnd.nextInt(mainNodes.size()))));
+        // 有鬼房：從鐵欄杆門外面出發；沒有鬼房（PvE 現在的規則）：離最近的逃生者走路最遠的地方
+        int start = m.ghostStart() >= 0 ? m.ghostStart() : m.farthestFrom(es.stream().mapToInt(e -> e.node).toArray());
+        if (start < 0) throw new IllegalStateException("找不到鬼的出生點（地圖沒有鬼房，主要區域也是空的）");
+        Ghost g = new Ghost(start);
         int catches = 0, losses = 0, re = 0;
         double first = -1, reDelay = 0;
         ParticleTracker.Config pc = this.pc;

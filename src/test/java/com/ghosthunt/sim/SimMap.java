@@ -1,5 +1,6 @@
 package com.ghosthunt.sim;
 
+import com.ghosthunt.game.ai.DistanceField;
 import com.ghosthunt.game.ai.GridNav;
 import com.ghosthunt.game.ai.GridNav.Kind;
 import com.ghosthunt.game.ai.VisibilityTable;
@@ -20,6 +21,8 @@ import java.util.function.IntPredicate;
  * 可走：. , ; 標記（S E）、數字（地洞，兩個同數字用 HATCH 邊連）、門 D W O（當作開著）。
  * h：蹲伏小洞（HOLE 邊，只有逃生者能走）。H：暗格入口（HOLE 邊），後面那格是暗格（也是 HOLE 邊）。
  * 牆、樹籬、家具、櫃子 C、終端機 Q、大門 G、鐵欄杆門 I、監獄 J、鬼房 K、樓梯箭頭不可走。
+ * 有鬼房（I）的舊地圖：鬼從鐵欄杆門外面出發；沒有鬼房（mall2、hospital）：照遊戲的 Spawns.farthest，
+ * 鬼出生在離最近的逃生者走路最遠的格子（{@link #farthestFrom}）。
  * 不透明：牆、樹籬、家具（全部當成 2 格高）、C、Q、G。
  */
 final class SimMap {
@@ -168,7 +171,29 @@ final class SimMap {
         return spawn;
     }
 
+    /** 鬼房門口外面那一格；地圖沒有鬼房回傳 -1（改用 {@link #farthestFrom}）。 */
     int ghostStart() {
         return ghostStart;
+    }
+
+    /**
+     * 沒有鬼房時鬼的出生點（跟遊戲的 Spawns.farthest 一樣）：只走一般格子和門，
+     * 在主要區域裡挑離「最近的逃生者」走路最遠的格子。找不到回傳 -1。
+     */
+    int farthestFrom(int... people) {
+        if (people.length == 0) return -1;
+        DistanceField f = DistanceField.compute(nav, e -> e.kind() == Kind.WALK || e.kind() == Kind.DOOR ? 0 : Double.POSITIVE_INFINITY,
+                1.0, people);
+        int best = -1;
+        double bd = -1;
+        for (int i = 0; i < nav.size(); i++) {
+            if (!main[i]) continue;
+            double d = f.seconds(i);
+            if (!Double.isInfinite(d) && d > bd) {
+                bd = d;
+                best = i;
+            }
+        }
+        return best;
     }
 }

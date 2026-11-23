@@ -27,4 +27,15 @@ class SimMapTest {
         SimMap m = SimMap.load(HYDRO);
         for (int h : m.hideoutNodes()) assertTrue(!m.ghostReachable().test(h), "暗格裡面鬼走不到");
     }
+
+    @Test
+    void noGhostRoomPicksFarthestSpawn() throws Exception {
+        for (String map : new String[]{"mall2", "hospital"}) {
+            SimMap m = SimMap.load(Path.of("src/main/resources/pve-maps/" + map + ".txt"));
+            assertEquals(-1, m.ghostStart(), map + " 沒有鬼房");
+            int g = m.farthestFrom(m.spawn());
+            assertTrue(g >= 0 && g != m.spawn(), map + " 要找得到鬼的出生點");
+            assertTrue(m.ghostReachable().test(g), map + " 鬼的出生點要在主要區域");
+        }
+    }
 }
