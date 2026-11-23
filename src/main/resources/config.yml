@@ -284,7 +284,8 @@ models:                        # 3D 模型（資源包裡的經典款 classic；
   style: classic               # 模型風格（資源包 assets/ghosthunt/items/<風格>/）
   items: true                  # 道具（手電筒、煙霧彈、門禁卡……）用 3D 模型
   scene: true                  # 場景物件（木桶、讀卡機、電源……）上面疊 3D 模型
-  yaw-offset: 0                # 場景模型的朝向全部轉幾度（模型方向全部相反就填 180）
+  scene-mode: block            # 場景模型怎麼顯示：block＝資源包換過外觀的方塊（一定對齊格子）；item＝舊的 item display
+  yaw-offset: 0                # 只對 scene-mode: item 有用：場景模型的朝向全部轉幾度
 
 lobby:                         # 遊戲大廳：玩家進伺服器自動傳送過來，在大廳選地圖、AI 難度……，全部人準備好就倒數開局；遊戲結束回大廳
   enabled: true

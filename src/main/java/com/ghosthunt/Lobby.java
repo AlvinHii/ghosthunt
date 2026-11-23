@@ -167,7 +167,7 @@ public final class Lobby implements Listener {
         settingSigns.clear();
         frameItem.clear();
         for (Entity e : world.getEntities())
-            if (e instanceof ItemFrame || e instanceof org.bukkit.entity.ItemDisplay || e instanceof org.bukkit.entity.Interaction) e.remove();
+            if (e instanceof ItemFrame || e instanceof org.bukkit.entity.Display || e instanceof org.bukkit.entity.Interaction) e.remove();
         for (int x = -HX - 2; x <= HX + 2; x++)
             for (int z = -HZ - 2; z <= HZ + 2; z++)
                 for (int y = FLOOR - 3; y <= CEIL + 1; y++) at(x, y, z).setType(Material.AIR, false);
@@ -407,7 +407,7 @@ public final class Lobby implements Listener {
         for (Block b : parts) exhibitAt.put(key(b), k);
     }
 
-    /** 展示品疊上 3D 模型（跟遊戲裡一樣：方塊換成屏障，上面放模型）；一般的木門沒有模型，維持原版的門。 */
+    /** 展示品疊上 3D 模型（跟遊戲裡一樣：方塊換成屏障，同一格放模型）；一般的木門沒有模型，維持原版的門。 */
     private void overlayModel(String k, Slot s, List<Block> parts) {
         if (!plugin.getConfig().getBoolean("models.scene", true)) return;
         String model;
@@ -486,7 +486,10 @@ public final class Lobby implements Listener {
         }
         for (Entity e : world.getNearbyEntities(new Location(world, s.x() + 0.5, y + 1, s.z() + 0.5), 1.2, 1.2, 1.2))
             if (e instanceof ItemFrame) e.remove();
-        com.ghosthunt.game.Models.spawn(plugin, world, px, y, pz, com.ghosthunt.game.Models.yaw(plugin, s.in(), model), model, scale, false);
+        if (com.ghosthunt.game.Models.blockMode(plugin))
+            com.ghosthunt.game.Models.spawnBlock(world, px, y, pz, s.in(), model, scale, false);
+        else
+            com.ghosthunt.game.Models.spawn(plugin, world, px, y, pz, com.ghosthunt.game.Models.yaw(plugin, s.in(), model), model, scale, false);
     }
 
     // ---- 方塊小工具 ----
@@ -817,7 +820,7 @@ public final class Lobby implements Listener {
     public void onEntitiesLoad(org.bukkit.event.world.EntitiesLoadEvent e) {
         if (world == null || !e.getWorld().equals(world)) return;
         for (Entity en : e.getEntities())
-            if (en.isPersistent() && (en instanceof ItemFrame || en instanceof org.bukkit.entity.ItemDisplay || en instanceof org.bukkit.entity.Interaction))
+            if (en.isPersistent() && (en instanceof ItemFrame || en instanceof org.bukkit.entity.Display || en instanceof org.bukkit.entity.Interaction))
                 en.remove();
     }
 

@@ -8,6 +8,7 @@ import org.bukkit.NamespacedKey;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.data.BlockData;
+import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.ItemFrame;
@@ -23,7 +24,9 @@ import java.util.Set;
 
 /**
  * 場景物件的 3D 模型（資源包 assets/ghosthunt/items/&lt;風格&gt;/，2026-11-23 使用者選經典款）：
- * 功能方塊換成看不見的屏障（碰撞、右鍵照舊，因為互動都是看位置），上面疊一個 item display 顯示模型；
+ * 功能方塊換成看不見的屏障（碰撞、右鍵照舊，因為互動都是看位置），同一格放一個 block display 顯示模型
+ * （資源包把紅石線的方塊狀態換成我們的模型，所以模型一定對齊格子、朝向照方塊 facing 的規則；
+ * config models.scene-mode: item 可以換回舊的 item display）；
  * 每半秒照狀態換模型（讀卡機紅燈／倒數／綠燈、木桶上鎖／翻過、配電箱修好……）。遊戲結束放回原本的方塊。
  * 會動的東西（門、大門、監獄、鐵捲門、下水道鐵柵、地下通道活板門）還是原本的方塊。
  */
@@ -33,11 +36,12 @@ final class SceneModels {
     private final Building b;
     private final String style;
     private final float yawOffset;
+    private final boolean blockMode;
 
-    private record Spot(Pos at, int height, float yaw) {}
+    private record Spot(Pos at, int height, BlockFace front) {}
 
     private final Map<Pos, Spot> spots = new LinkedHashMap<>();
-    private final Map<Pos, ItemDisplay> displays = new HashMap<>();
+    private final Map<Pos, Display> displays = new HashMap<>();
     private final Map<Pos, String> current = new HashMap<>();
     private final Map<Pos, BlockData> original = new HashMap<>();
     private final Map<ItemFrame, ItemStack> hiddenFrames = new HashMap<>();
@@ -47,6 +51,7 @@ final class SceneModels {
         this.b = m.b;
         this.style = m.plugin.getConfig().getString("models.style", "classic");
         this.yawOffset = (float) m.plugin.getConfig().getDouble("models.yaw-offset", 0);
+        this.blockMode = Models.blockMode(m.plugin);
     }
 
     static boolean enabled(Match m) {
@@ -74,7 +79,7 @@ final class SceneModels {
         for (Pos p : b.noteSpots) add(p, 1);
         for (Building.Camera c : b.cameras) {
             Pos obs = c.eye().add(0, 1, 0);
-            if (m.block(obs).getType() == Material.OBSERVER) addAt(obs, 1, c.yaw() + 180);
+            if (m.block(obs).getType() == Material.OBSERVER) addAt(obs, 1, Models.faceOfYaw(c.yaw()));
         }
         hideFrontDecor();
         tick();
@@ -82,12 +87,12 @@ final class SceneModels {
 
     /** 加一個物件：正面朝旁邊走得到的那一格。 */
     private void add(Pos p, int height) {
-        addAt(p, height, frontYaw(p));
+        addAt(p, height, frontFace(p));
     }
 
-    private void addAt(Pos p, int height, float yaw) {
+    private void addAt(Pos p, int height, BlockFace front) {
         if (spots.containsKey(p)) return;
-        spots.put(p, new Spot(p, height, yaw));
+        spots.put(p, new Spot(p, height, front));
         for (int dy = 0; dy < height; dy++) {
             Pos q = p.add(0, dy, 0);
             Block bl = m.block(q);
@@ -101,17 +106,17 @@ final class SceneModels {
      * 正面的方向：先找背後的牆（旁邊是實心、會擋視線的方塊，而且對面那格走得到），背貼牆、正面朝對面；
      * 旁邊都沒有牆（擺在空地上）才朝旁邊走得到的那一格。
      */
-    private float frontYaw(Pos p) {
+    private BlockFace frontFace(Pos p) {
         BlockFace[] faces = {BlockFace.SOUTH, BlockFace.NORTH, BlockFace.EAST, BlockFace.WEST};
         for (BlockFace back : faces) {
             Pos w = p.add(back.getModX(), 0, back.getModZ());
             Pos front = p.add(-back.getModX(), 0, -back.getModZ());
             if (!m.block(w).getType().isOccluding() || spots.containsKey(w)) continue;
-            if (walkable(front)) return yawOf(back.getOppositeFace());
+            if (walkable(front)) return back.getOppositeFace();
         }
         for (BlockFace f : faces)
-            if (walkable(p.add(f.getModX(), 0, f.getModZ()))) return yawOf(f);
-        return yawOf(BlockFace.SOUTH);
+            if (walkable(p.add(f.getModX(), 0, f.getModZ()))) return f;
+        return BlockFace.SOUTH;
     }
 
     private boolean walkable(Pos q) {
@@ -163,11 +168,20 @@ final class SceneModels {
             String model = modelFor(s.at());
             if (model == null || model.equals(current.get(s.at()))) continue;
             current.put(s.at(), model);
-            ItemDisplay d = displays.get(s.at());
+            if (blockMode) {
+                BlockData data = SceneBlocks.data(model, s.front());
+                if (data == null) continue;
+                Display d = displays.get(s.at());
+                if (d instanceof org.bukkit.entity.BlockDisplay bd && bd.isValid()) bd.setBlock(data);
+                else displays.put(s.at(), Models.spawnBlock(m.world, s.at().x(), s.at().y(), s.at().z(), s.front(), model, 1f, false));
+                continue;
+            }
+            Display old = displays.get(s.at());
+            ItemDisplay d = old instanceof ItemDisplay id ? id : null;
             ItemStack it = item(model);
             if (d == null || !d.isValid()) {
                 Location l = m.loc(s.at()).add(0.5, 0.5, 0.5);
-                l.setYaw(s.yaw() + Models.flip(model));
+                l.setYaw(yawOf(s.front()) + Models.flip(model));
                 l.setPitch(0);
                 d = m.world.spawn(l, ItemDisplay.class, e -> {
                     e.setItemStack(it);
@@ -213,7 +227,7 @@ final class SceneModels {
 
     /** 遊戲結束：拿掉模型，放回原本的方塊和展示框。 */
     void cleanup() {
-        for (ItemDisplay d : displays.values()) d.remove();
+        for (Display d : displays.values()) if (d != null) d.remove();
         displays.clear();
         for (Map.Entry<Pos, BlockData> e : original.entrySet()) m.block(e.getKey()).setBlockData(e.getValue(), false);
         for (Map.Entry<ItemFrame, ItemStack> e : hiddenFrames.entrySet()) {
@@ -232,7 +246,7 @@ final class SceneModels {
 
     List<String> summary() {
         List<String> out = new ArrayList<>();
-        out.add("3D 模型：" + spots.size() + " 個物件（" + style + "），方塊換成屏障 " + original.size() + " 格");
+        out.add("3D 模型：" + spots.size() + " 個物件（" + style + "，" + (blockMode ? "方塊外觀" : "item display") + "），方塊換成屏障 " + original.size() + " 格");
         return out;
     }
 }
