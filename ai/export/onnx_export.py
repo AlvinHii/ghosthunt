@@ -37,7 +37,7 @@ def main():
     mask = torch.ones(1, N_ACTIONS, dtype=torch.bool)
     torch.onnx.export(net, (obs, h, mask), out, input_names=['obs', 'h', 'mask'], output_names=['logits', 'value', 'h_next'],
                       dynamic_axes={'obs': {0: 'b'}, 'h': {0: 'b'}, 'mask': {0: 'b'}, 'logits': {0: 'b'}, 'value': {0: 'b'}, 'h_next': {0: 'b'}},
-                      opset_version=17)
+                      opset_version=17, dynamo=False)
     import onnxruntime as ort
     sess = ort.InferenceSession(out, providers=['CPUExecutionProvider'])
     rng = np.random.default_rng(0)
