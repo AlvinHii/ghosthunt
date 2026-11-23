@@ -104,6 +104,16 @@ final class SideQuests {
         for (Pos p : b.sewerCells) sewerXZ.add(xz(p));
     }
 
+    /** /gh goto 用：今晚實際用到的監控室、廣播台、紙條、備用電源拉桿（沒抽到的不列）。 */
+    Map<String, List<Pos>> chosen() {
+        Map<String, List<Pos>> out = new LinkedHashMap<>();
+        if (monitor != null) out.put("monitor", List.of(monitor));
+        if (paDesk != null) out.put("pa", List.of(paDesk));
+        if (!noteOrder.isEmpty()) out.put("note", new ArrayList<>(noteOrder));
+        if (!backupLevers.isEmpty()) out.put("backup", new ArrayList<>(backupLevers));
+        return out;
+    }
+
     static boolean present(Building b) {
         return !b.elevatorCells.isEmpty() || !b.helipadCells.isEmpty() || !b.sewerCells.isEmpty() || !b.monitors.isEmpty()
                 || !b.paDesks.isEmpty() || !b.breakers.isEmpty() || !b.shutters.isEmpty() || !b.lockedDoors.isEmpty();

@@ -106,6 +106,7 @@ public final class GhostHuntPlugin extends JavaPlugin {
                 else match.end("管理員結束了遊戲");
             }
             case "tp" -> tp(sender, args);
+            case "goto" -> gotoTarget(sender, args);
             case "info" -> info(sender);
             case "fog" -> fog(sender, args);
             case "export" -> exportLayout(sender);
@@ -183,10 +184,15 @@ public final class GhostHuntPlugin extends JavaPlugin {
     public List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command,
                                       @NotNull String alias, @NotNull String[] args) {
         if (args.length == 1) {
-            return List.of("start", "stop", "build", "clear", "tp", "fog", "info", "reload").stream()
+            return List.of("start", "stop", "build", "clear", "tp", "goto", "fog", "info", "reload").stream()
                     .filter(s -> s.startsWith(args[0].toLowerCase(Locale.ROOT))).toList();
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("tp")) return List.of("1", "2", "3");
+        if (args.length == 2 && args[0].equalsIgnoreCase("goto")) {
+            java.util.Collection<String> keys = building == null ? com.ghosthunt.game.Goto.LABELS.keySet()
+                    : com.ghosthunt.game.Goto.targets(building, match).keySet();
+            return keys.stream().filter(s -> s.startsWith(args[1].toLowerCase(Locale.ROOT))).toList();
+        }
         if (args.length == 2 && args[0].equalsIgnoreCase("start")) {
             List<String> names = new java.util.ArrayList<>(List.of("random"));
             getServer().getOnlinePlayers().forEach(pl -> names.add(pl.getName()));
@@ -654,6 +660,68 @@ public final class GhostHuntPlugin extends JavaPlugin {
         Pos c = building.layout.crossing(f);
         p.teleport(new Location(world, c.x() + 0.5, c.y(), c.z() + 0.5));
         msg(sender, "傳送到 " + (f + 1) + "F 走廊交叉口。", NamedTextColor.GREEN);
+    }
+
+    /** /gh goto [設施] [第幾個]：測試用，傳送到電源、保全室、大門、支線設施旁邊。 */
+    private void gotoTarget(CommandSender sender, String[] args) {
+        if (building == null) {
+            msg(sender, "還沒有大樓，先用 /ghosthunt build。", NamedTextColor.RED);
+            return;
+        }
+        java.util.Map<String, List<Pos>> all = com.ghosthunt.game.Goto.targets(building, match);
+        if (!(sender instanceof Player p)) {
+            // 主控台：列出座標（檢查用）
+            for (java.util.Map.Entry<String, List<Pos>> e : all.entrySet()) {
+                StringBuilder sb = new StringBuilder(e.getKey() + "：");
+                for (Pos q : e.getValue()) {
+                    String room = com.ghosthunt.game.Goto.regionName(building, q);
+                    Location st = com.ghosthunt.game.Goto.standNear(building, ArenaWorld.getOrCreate(BuildingSettings.from(getConfig()).worldName()), q);
+                    sb.append(q).append(room == null ? "" : "（" + room + "）")
+                            .append(String.format(" 站 %.1f 格", st.toVector().distance(new org.bukkit.util.Vector(q.x() + 0.5, q.y(), q.z() + 0.5)))).append("；");
+                }
+                msg(sender, sb.toString(), NamedTextColor.GRAY);
+            }
+            return;
+        }
+        if (args.length < 2 || !all.containsKey(args[1].toLowerCase(Locale.ROOT))) {
+            if (args.length >= 2) msg(sender, "這張地圖沒有「" + args[1] + "」。", NamedTextColor.RED);
+            msg(sender, match == null ? "可以傳送到（還沒開局，列的是所有候選；開局後只列今晚抽到的）：" : "可以傳送到（點一下）：", NamedTextColor.YELLOW);
+            Component line = Component.empty();
+            for (java.util.Map.Entry<String, List<Pos>> e : all.entrySet()) {
+                String label = com.ghosthunt.game.Goto.LABELS.getOrDefault(e.getKey(), e.getKey());
+                line = line.append(Component.text("［" + label + (e.getValue().size() > 1 ? " ×" + e.getValue().size() : "") + "］", NamedTextColor.AQUA)
+                        .hoverEvent(net.kyori.adventure.text.event.HoverEvent.showText(Component.text("/gh goto " + e.getKey())))
+                        .clickEvent(net.kyori.adventure.text.event.ClickEvent.runCommand("/gh goto " + e.getKey()))).append(Component.text(" "));
+            }
+            p.sendMessage(line);
+            return;
+        }
+        String key = args[1].toLowerCase(Locale.ROOT);
+        List<Pos> list = all.get(key);
+        int i = 0;
+        if (args.length > 2) {
+            try {
+                i = Integer.parseInt(args[2]) - 1;
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        i = Math.floorMod(i, list.size());
+        Pos target = list.get(i);
+        World world = ArenaWorld.getOrCreate(BuildingSettings.from(getConfig()).worldName());
+        p.teleport(com.ghosthunt.game.Goto.standNear(building, world, target));
+        String label = com.ghosthunt.game.Goto.LABELS.getOrDefault(key, key);
+        String room = com.ghosthunt.game.Goto.regionName(building, target);
+        int floor = 1;
+        for (int f = 0; f < building.layout.floors; f++) if (target.y() >= building.layout.floorY(f)) floor = f + 1;
+        msg(sender, "傳送到 " + label + (list.size() > 1 ? "（" + (i + 1) + "/" + list.size() + "）" : "") + "：" + floor + "F"
+                + (room == null ? "" : " " + room) + "。", NamedTextColor.GREEN);
+        if (list.size() > 1) {
+            Component line = Component.text("其他：", NamedTextColor.GRAY);
+            for (int j = 0; j < list.size(); j++)
+                line = line.append(Component.text("［" + (j + 1) + "］", j == i ? NamedTextColor.WHITE : NamedTextColor.AQUA)
+                        .clickEvent(net.kyori.adventure.text.event.ClickEvent.runCommand("/gh goto " + key + " " + (j + 1))));
+            p.sendMessage(line);
+        }
     }
 
     private void fog(CommandSender sender, String[] args) {
