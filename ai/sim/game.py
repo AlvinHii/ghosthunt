@@ -148,6 +148,14 @@ class Game:
         self.stats = {'captures': 0, 'rescues': 0, 'escaped': 0, 'eliminated': 0, 'whiffs': 0, 'decisions': 0}
         big = w.N > self.ai.get('big-map-nodes', 8000)
         self.sense_quiet = self.ai['sense-quiet'] * (self.ai.get('big-map-sense-scale', 0.67) if big else 1)
+        # 小鬼（不抓人：碰到人打斷做事、大笑讓大鬼聽到）；困難 4 隻（ai-ghost.presets.hard.imp-count）
+        imp = cfg.get('imp', {})
+        self.imps = []
+        if imp.get('enabled', True):
+            for k in range(int(self.ai.get('imp-count', imp.get('count', 3)))):
+                self.imps.append({'pos': None, 'out_at': imp.get('start-after', 150) + imp.get('stagger', 40) * k,
+                                  'ready': 0.0, 'target': None, 'budget': 0.0})
+        self.stats['imp_touches'] = 0
 
     # =================================================================
     # 公用
@@ -257,6 +265,7 @@ class Game:
         self.t += DT
         self._env()
         self._ghost_reflex()
+        self._imps()
         for s in self.sv:
             if s.state == FREE:
                 self._survivor(s)
@@ -441,6 +450,39 @@ class Game:
                     self.g_goal = (a, ei, None)
                     return
         self.need_decision = True
+
+    def _imps(self):
+        if not self.imps:
+            return
+        c = self.c.get('imp', {})
+        w = self.w
+        for im in self.imps:
+            if im['pos'] is None:
+                if self.t >= im['out_at']:
+                    im['pos'] = int(self.rng.choice([int(w.reg_center[r]) for r in range(w.R) if w.reg_size[r] > 20]))
+                continue
+            fr = [x for x in self.free() if not x.hidden]
+            if self.t >= im['ready'] and fr:
+                tgt = min(fr, key=lambda x: self.d(im['pos'], x.pos))
+                if self.d(im['pos'], tgt.pos) <= c.get('seek-range', 48):
+                    im['target'] = tgt.pos
+                    if self.eu(im['pos'], tgt.pos) <= c.get('touch-range', 1.3) + 0.5:
+                        # 碰到：打斷做事、大笑（大鬼沿路 40 格內聽得到）、逃開
+                        if tgt.act:
+                            tgt.act = None
+                        self.stats['imp_touches'] += 1
+                        if self.d(tgt.pos, self.g) <= c.get('laugh-range', 40):
+                            self.noise = (tgt.pos, self.t, 1.5)
+                            self.noise_handled = False
+                            self.reg_noise[w.reg[tgt.pos]] = self.t
+                            self.belief[w.reg[tgt.pos]] += 1.0
+                            self.need_decision = True
+                        im['ready'] = self.t + c.get('touch-cooldown', 45)
+                        im['target'] = int(w.reg_center[self.rng.randrange(w.R)])
+            if im['target'] is None or im['pos'] == im['target']:
+                im['target'] = int(w.reg_center[self.rng.randrange(w.R)])
+            im['budget'] += c.get('speed', 3.2) * DT
+            im['pos'], im['budget'] = self.step_toward(im['pos'], im['target'], im['budget'])
 
     def _ghost_finish(self, kind, arg):
         if kind == 'power' and self.power:
@@ -887,6 +929,7 @@ class Game:
                    None if not s.task else s.task[0]] for s in self.sv],
             'power': self.power,
             'gates': [[g['counting'], g['open']] for g in self.gates],
+            'imps': [p(im['pos']) for im in self.imps if im['pos'] is not None],
         }
 
     def result(self):
@@ -900,6 +943,7 @@ class Game:
             'decisions': self.stats['decisions'],
             'objectives': dict(self.objectives),
             'power_cut': self.power_cut,
+            'imp_touches': self.stats['imp_touches'],
         }
 
 

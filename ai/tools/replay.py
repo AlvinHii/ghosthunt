@@ -32,6 +32,7 @@ function draw(i){const fr=D.frames[i];ctx.drawImage(bg,0,0);
  fr.s.forEach((s,k)=>{if(!s[0])return;const [x,y]=px(s[0]);ctx.fillStyle=s[1]==0?(s[2]?'#58a':'#4af'):'#666';
   ctx.beginPath();ctx.arc(x,y,S*1.2,0,7);ctx.fill();if(s[3]){ctx.strokeStyle='#ff0';ctx.lineWidth=2;ctx.stroke()}
   ctx.fillStyle='#fff';ctx.font='10px sans-serif';ctx.fillText(k+(s[4]?' '+s[4]:''),x+6,y-4)});
+ (fr.imps||[]).forEach(p=>{const [x,y]=px(p);ctx.fillStyle='#c6f';ctx.fillRect(x-3,y-3,6,6)});
  if(fr.g){const [x,y]=px(fr.g);ctx.fillStyle='#f33';ctx.beginPath();ctx.arc(x,y,S*1.5,0,7);ctx.fill()}
  document.getElementById('info').textContent=`${fr.t.toFixed(1)} 秒｜電源 ${fr.power?'開':'關'}｜大門 ${fr.gates.map(g=>g[1]?'開':(g[0]>=0?'倒數'+g[0].toFixed(0):'鎖')).join(' ')}｜鬼${fr.gt!==null?' 追 '+fr.gt:''}`;
  document.getElementById('log').textContent=D.events.filter(e=>e[0]<=fr.t).slice(-12).map(e=>e[0].toFixed(1)+'  '+e[1]).join('\n')}
