@@ -31,6 +31,8 @@ public final class GhostHuntPlugin extends JavaPlugin {
     private Building building;
     private boolean busy;
     private com.ghosthunt.game.Match match;
+    /** 遊戲大廳（lobby.enabled）；關掉時是 null。 */
+    private Lobby lobby;
     private ResourcePackHost pack;
 
     @Override
@@ -42,6 +44,11 @@ public final class GhostHuntPlugin extends JavaPlugin {
         com.ghosthunt.game.Items.init(this);
         pack = ResourcePackHost.start(this);
         getServer().getPluginManager().registerEvents(new com.ghosthunt.game.GameListener(() -> match), this);
+        if (Lobby.enabled(this)) {
+            lobby = new Lobby(this);
+            getServer().getPluginManager().registerEvents(lobby, this);
+            getServer().getScheduler().runTask(this, lobby::start);
+        }
         com.ghosthunt.game.Match.recoverAfterCrash(this);
         if (FogExperiment.install(this)) {
             getLogger().warning("霧的資料包已寫入或更新，要重開伺服器一次才會生效。");
@@ -72,6 +79,7 @@ public final class GhostHuntPlugin extends JavaPlugin {
     @Override
     public void onDisable() {
         if (match != null) match.end("伺服器關閉");
+        if (lobby != null) lobby.stop();
         if (pack != null) pack.stop();
     }
 
@@ -79,7 +87,8 @@ public final class GhostHuntPlugin extends JavaPlugin {
     public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command,
                              @NotNull String label, @NotNull String[] args) {
         String sub = args.length == 0 ? "info" : args[0].toLowerCase(Locale.ROOT);
-        if (!sub.equals("info") && !sub.equals("cam") && !sub.equals("pa") && !sender.hasPermission("ghosthunt.admin")) {
+        boolean playerLobby = sub.equals("lobby") && args.length < 2;
+        if (!sub.equals("info") && !sub.equals("cam") && !sub.equals("pa") && !playerLobby && !sender.hasPermission("ghosthunt.admin")) {
             msg(sender, "沒有權限。", NamedTextColor.RED);
             return true;
         }
@@ -151,6 +160,24 @@ public final class GhostHuntPlugin extends JavaPlugin {
                     if (which.equalsIgnoreCase("all") || f.getName().equalsIgnoreCase(which + ".yml")) if (f.delete()) n++;
                 msg(sender, "清掉了 " + n + " 份 AI 鬼記憶（" + which + "）。", NamedTextColor.GREEN);
             }
+            case "lobby" -> {
+                // /gh lobby：回大廳（玩家可以用，遊戲中不行）；/gh lobby rebuild：重蓋大廳；/gh lobby all：所有不在遊戲裡的人回大廳
+                if (lobby == null) {
+                    msg(sender, "大廳沒開（config 的 lobby.enabled）。", NamedTextColor.RED);
+                    break;
+                }
+                if (args.length >= 2 && args[1].equalsIgnoreCase("rebuild")) {
+                    lobby.build();
+                    msg(sender, "大廳重蓋好了。", NamedTextColor.GREEN);
+                } else if (args.length >= 2 && args[1].equalsIgnoreCase("start")) {
+                    msg(sender, lobby.forceStart(), NamedTextColor.GOLD);
+                } else if (args.length >= 2 && args[1].equalsIgnoreCase("all")) {
+                    for (Player p : getServer().getOnlinePlayers()) if (!inGame(p)) lobby.send(p);
+                } else if (sender instanceof Player p) {
+                    if (inGame(p)) msg(sender, "遊戲進行中不能回大廳。", NamedTextColor.RED);
+                    else lobby.send(p);
+                }
+            }
             case "imp" -> msg(sender, match == null ? "沒有進行中的遊戲。" : match.impCommand(), NamedTextColor.DARK_PURPLE);
             case "aidebug" -> {
                 if (!(sender instanceof Player p) || match == null || !match.isAi()) {
@@ -185,7 +212,7 @@ public final class GhostHuntPlugin extends JavaPlugin {
     public List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command,
                                       @NotNull String alias, @NotNull String[] args) {
         if (args.length == 1) {
-            return List.of("start", "stop", "build", "clear", "tp", "goto", "fog", "info", "reload").stream()
+            return List.of("start", "stop", "build", "clear", "tp", "goto", "lobby", "fog", "info", "reload").stream()
                     .filter(s -> s.startsWith(args[0].toLowerCase(Locale.ROOT))).toList();
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("tp")) return List.of("1", "2", "3");
@@ -208,6 +235,40 @@ public final class GhostHuntPlugin extends JavaPlugin {
         }
         if (args.length == 3 && args[0].equalsIgnoreCase("fog")) return List.of("me", "others");
         return List.of();
+    }
+
+    // ---- 大廳 ----
+
+    private void onMatchEnd() {
+        match = null;
+        if (lobby != null) lobby.afterMatch();
+    }
+
+    /** 這個人在進行中的遊戲裡嗎（鬼或逃生者）。 */
+    public boolean inGame(Player p) {
+        return match != null && match.isParticipant(p);
+    }
+
+    public boolean matchRunning() {
+        return match != null;
+    }
+
+    public boolean isBuilding() {
+        return busy;
+    }
+
+    /** 大廳全員準備好：照大廳的設定蓋地圖、開局（PvE：固定地圖；PvP：隨機大樓）。 */
+    void startFromLobby(boolean pve, String map, String diff, String persona, String ghost, String gtype, boolean imp) {
+        if (match != null || busy) return;
+        CommandSender console = getServer().getConsoleSender();
+        getConfig().set("imp.enabled", imp); // 只改記憶體裡的設定（不寫回檔案）
+        long seed = ThreadLocalRandom.current().nextLong(1_000_000);
+        if (pve) {
+            buildFixed(console, map, seed, false, () -> start(console, new String[]{"start", "ai", diff, persona}, true));
+        } else {
+            BuildingSettings s = BuildingSettings.from(getConfig(), false);
+            place(console, s, BuildingGenerator.generate(s, seed), false, () -> start(console, new String[]{"start", ghost, gtype}, true));
+        }
     }
 
     // ---- 指令 ----
@@ -263,7 +324,7 @@ public final class GhostHuntPlugin extends JavaPlugin {
             }
             World world = ArenaWorld.getOrCreate(BuildingSettings.from(getConfig()).worldName());
             match = com.ghosthunt.game.Match.pve(this, building, world, com.ghosthunt.game.GameSettings.from(getConfig()),
-                    solo ? List.of() : players, () -> match = null, difficulty, persona, testDummies);
+                    solo ? List.of() : players, this::onMatchEnd, difficulty, persona, testDummies);
             if (testDummies >= 0)
                 msg(sender, "測試模式：你照常當逃生者，被抓一次會立刻重生、之後 AI 鬼無視你；鬼出來時自動生 " + testDummies
                         + " 個假逃生者。這局不寫 AI 的學習記憶。", NamedTextColor.AQUA);
@@ -297,7 +358,7 @@ public final class GhostHuntPlugin extends JavaPlugin {
         players.remove(ghost);
         World world = ArenaWorld.getOrCreate(BuildingSettings.from(getConfig()).worldName());
         match = new com.ghosthunt.game.Match(this, building, world, com.ghosthunt.game.GameSettings.from(getConfig()),
-                type, ghost, players, () -> match = null);
+                type, ghost, players, this::onMatchEnd);
         match.start();
     }
 
