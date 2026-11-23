@@ -104,6 +104,8 @@ public final class Match {
     long mapVersion;
     /** v2 地圖的支線（沒有的地圖是 null）。 */
     SideQuests side;
+    /** 場景物件的 3D 模型（models.scene）；關掉時是 null。 */
+    SceneModels scene;
     /** 小鬼（不會抓人，只會干擾；imp.count 隻，依序出來）；這局沒有就是空的。 */
     final List<Imp> imps = new ArrayList<>();
     /** 測試用的假逃生者（/gh dummy）。 */
@@ -254,6 +256,11 @@ public final class Match {
         resetBuilding();
         if (side != null) side.setup(); // 先決定今晚的路線（木桶要放保險絲、鑰匙……）
         obj.setup();
+        if (SceneModels.enabled(this)) {
+            scene = new SceneModels(this);
+            scene.setup();
+            for (String l : scene.summary()) plugin.getLogger().info(l);
+        }
         labelPowerRoom(true);
         stats.put("seed", b.seed);
         stats.put("ghostType", type.name());
@@ -625,6 +632,7 @@ public final class Match {
         if (audio != null && tick % 20 == 0) audio.tick();
         if (side != null) side.tick();
         if (released) for (Imp im : imps) im.tick();
+        if (scene != null && tick % 10 == 0) scene.tick();
         if (gimmicks != null) gimmicks.tick();
         if (tick % 10 == 0 && g instanceof Player gp) ghostHud(gp);
         if (tick % 200 == 0) refreshSurvivorFog();
@@ -1403,6 +1411,11 @@ public final class Match {
         ghostArrow(g, speaker);
     }
 
+    /** 視線射線會不會被這一格擋住：屏障當透明（椅子），但 3D 模型底下原本是實心的照樣擋。 */
+    boolean rayHits(Block bl) {
+        return bl.getType() != Material.BARRIER || (scene != null && scene.blocksSight(bl.getX(), bl.getY(), bl.getZ()));
+    }
+
     /** 小鬼用的尋路圖：AI 局用 AI 鬼的，PvP 用開局建的（沒有鬼房時才有）。 */
     NavMap navForImp() {
         return aiGhost != null ? aiGhost.navMap() : pvpNav;
@@ -1557,6 +1570,7 @@ public final class Match {
             stats.putAll(sum);
         }
         labelPowerRoom(false);
+        if (scene != null) scene.cleanup();
         if (aiGhost != null) {
             aiGhost.statsInto(stats);
             stats.put("dummyCatches", dummies.caught);

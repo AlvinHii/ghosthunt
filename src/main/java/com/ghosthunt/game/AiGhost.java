@@ -793,7 +793,7 @@ final class AiGhost {
             Location eye = mob.getEyeLocation(), to = l.clone().add(0, 1, 0);
             org.bukkit.util.Vector dir = to.toVector().subtract(eye.toVector());
             if (dir.length() < 0.01) return true;
-            var hit = eye.getWorld().rayTraceBlocks(eye, dir.normalize(), dir.length(), FluidCollisionMode.NEVER, true, bl -> bl.getType() != org.bukkit.Material.BARRIER);
+            var hit = eye.getWorld().rayTraceBlocks(eye, dir.normalize(), dir.length(), FluidCollisionMode.NEVER, true, m::rayHits);
             return hit == null || hit.getHitBlock() == null;
         }
         if (d > (m.obj.powerOn() ? c.sightRange() : c.sightRangeDark())) return false;
@@ -1345,7 +1345,7 @@ final class AiGhost {
             Vector dir = to.toVector().subtract(me.toVector());
             double len = dir.length();
             if (len < 0.01) return true;
-            var hit = me.getWorld().rayTraceBlocks(me, dir.normalize(), len, FluidCollisionMode.NEVER, true, bl -> bl.getType() != org.bukkit.Material.BARRIER);
+            var hit = me.getWorld().rayTraceBlocks(me, dir.normalize(), len, FluidCollisionMode.NEVER, true, m::rayHits);
             if (hit == null || hit.getHitBlock() == null) return true;
         }
         return false;
@@ -1500,7 +1500,7 @@ final class AiGhost {
             if (!t.getWorld().equals(mob.getWorld()) || t.distance(mob.getLocation()) > 16) continue;
             Location me = mob.getEyeLocation();
             Vector dir = t.toVector().subtract(me.toVector());
-            var hit = me.getWorld().rayTraceBlocks(me, dir.clone().normalize(), dir.length(), FluidCollisionMode.NEVER, true, bl -> bl.getType() != org.bukkit.Material.BARRIER);
+            var hit = me.getWorld().rayTraceBlocks(me, dir.clone().normalize(), dir.length(), FluidCollisionMode.NEVER, true, m::rayHits);
             if (hit == null || hit.getHitBlock() == null) knownHatches.add(i);
         }
     }
@@ -1914,7 +1914,7 @@ final class AiGhost {
             if (d < min || d > max) continue;
             Location eye = l.clone().add(0, 1.6, 0), cage = jail.clone().add(0, targetHeight, 0);
             Vector dir = cage.toVector().subtract(eye.toVector());
-            var hit = eye.getWorld().rayTraceBlocks(eye, dir.clone().normalize(), dir.length(), FluidCollisionMode.NEVER, true, bl -> bl.getType() != org.bukkit.Material.BARRIER);
+            var hit = eye.getWorld().rayTraceBlocks(eye, dir.clone().normalize(), dir.length(), FluidCollisionMode.NEVER, true, m::rayHits);
             if (hit == null || hit.getHitBlock() == null) {
                 cands.add(l);
                 candNodes.add(i);

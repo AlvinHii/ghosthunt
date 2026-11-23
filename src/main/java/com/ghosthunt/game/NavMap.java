@@ -213,7 +213,8 @@ final class NavMap {
                 for (int x = 0; x < size; x++)
                     for (int z = 0; z < size; z++) {
                         Material t = block(ox + x, yy + 1, oz + z).getType();
-                        a[x * size + z] = t.isOccluding() || Tag.LEAVES.isTagged(t);
+                        a[x * size + z] = t.isOccluding() || Tag.LEAVES.isTagged(t)
+                                || (m.scene != null && m.scene.blocksSight(ox + x, yy + 1, oz + z)); // 3D 模型底下的屏障照原本的方塊算
                     }
                 return a;
             });

@@ -731,6 +731,25 @@ final class SideQuests {
         });
     }
 
+    // ---- 3D 模型用 ----
+
+    boolean heliCalling() {
+        return heliCalled;
+    }
+
+    boolean isRepaired(Pos z) {
+        return repaired.contains(z);
+    }
+
+    int fusesInstalled() {
+        return fuses;
+    }
+
+    /** 這個講台上還有今晚的紙條嗎。 */
+    boolean noteAvailable(Pos p) {
+        return noteDigit.containsKey(p) && !notesTaken.contains(p);
+    }
+
     /** 小鬼把修好的配電箱關掉：那一區又暗了，要再修一次。回傳 true 表示有關到。 */
     boolean breakerOff(Pos z) {
         if (!repaired.remove(z)) return false;
@@ -888,7 +907,7 @@ final class SideQuests {
             if (eye.getWorld().equals(g.getWorld()) && eye.distance(g.getLocation()) <= 24) {
                 org.bukkit.util.Vector dir = g.getEyeLocation().toVector().subtract(eye.toVector());
                 var hit = eye.getWorld().rayTraceBlocks(eye, dir.clone().normalize(), dir.length(), org.bukkit.FluidCollisionMode.NEVER, true,
-                        bl -> bl.getType() != Material.BARRIER);
+                        m::rayHits);
                 sees = hit == null || hit.getHitBlock() == null;
             }
             if (sees && m.tick - camNoticeAt >= ticks("camera-notice-cooldown", 10)) {

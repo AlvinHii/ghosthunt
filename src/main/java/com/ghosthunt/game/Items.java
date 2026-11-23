@@ -36,11 +36,38 @@ public final class Items {
     public static final List<String> LOOT = List.of(SMOKE, SPEED, FLASHLIGHT, SCANNER, BARRICADE);
 
     private static NamespacedKey key;
+    /** 3D 模型（資源包 assets/ghosthunt/items/&lt;風格&gt;/）：config 的 models.items、models.style。 */
+    private static boolean useModels = true;
+    private static String style = "classic";
+    private static final java.util.Map<String, String> MODEL = java.util.Map.ofEntries(
+            java.util.Map.entry(SMOKE, "smoke_bomb"), java.util.Map.entry(SPEED, "speed_potion"),
+            java.util.Map.entry(FLASHLIGHT, "flashlight"), java.util.Map.entry(SCANNER, "scanner"),
+            java.util.Map.entry(FUSE, "fuse"), java.util.Map.entry(ROOF_KEY, "roof_key"),
+            java.util.Map.entry(COIN, "coin"), java.util.Map.entry(MEDKIT, "medkit"),
+            java.util.Map.entry(BARRICADE, "barricade_item"), java.util.Map.entry(LIGHTS_OUT, "lights_out"),
+            java.util.Map.entry(MOVE_CARD, "move_card"));
 
     private Items() {}
 
     public static void init(Plugin plugin) {
         key = new NamespacedKey(plugin, "item");
+        useModels = plugin.getConfig().getBoolean("models.items", true);
+        style = plugin.getConfig().getString("models.style", "classic");
+    }
+
+    /** 換成資源包裡的 3D 模型（沒裝資源包的人看到原本的物品）。 */
+    private static void setModel(ItemStack it, String model) {
+        if (!useModels || it == null || model == null) return;
+        ItemMeta meta = it.getItemMeta();
+        meta.setItemModel(new NamespacedKey("ghosthunt", style + "/" + model));
+        it.setItemMeta(meta);
+    }
+
+    /** 手電筒開／關：身上的手電筒換成亮燈或關燈的模型。 */
+    public static void setFlashlightOn(Player p, boolean on) {
+        if (!useModels || p == null) return;
+        for (ItemStack it : p.getInventory().getContents())
+            if (it != null && FLASHLIGHT.equals(id(it))) setModel(it, on ? "flashlight_on" : "flashlight");
     }
 
     public static ItemStack lightsOut() {
@@ -60,11 +87,15 @@ public final class Items {
     /** authorized = false：還沒到保全室授權的卡。 */
     public static ItemStack keycard(int n, boolean authorized) {
         if (!authorized) {
-            return make(Material.TRIAL_KEY, KEYCARD + n, "門禁卡 #" + n + "（未授權）", NamedTextColor.GRAY,
+            ItemStack it = make(Material.TRIAL_KEY, KEYCARD + n, "門禁卡 #" + n + "（未授權）", NamedTextColor.GRAY,
                     "先拿到保全室的終端機授權（右鍵、站著等，要有電）", "授權後才能在大門旁的讀卡機刷");
+            setModel(it, "keycard");
+            return it;
         }
-        return make(Material.OMINOUS_TRIAL_KEY, KEYCARD + n, "門禁卡 #" + n + "（已授權）", NamedTextColor.AQUA,
+        ItemStack it = make(Material.OMINOUS_TRIAL_KEY, KEYCARD + n, "門禁卡 #" + n + "（已授權）", NamedTextColor.AQUA,
                 "拿著它右鍵大門旁的讀卡機（要先開電源）", "刷了就會用掉");
+        setModel(it, "keycard_ok");
+        return it;
     }
 
     /** 把玩家身上的門禁卡 #n 換成授權過／沒授權的樣子。 */
@@ -140,6 +171,7 @@ public final class Items {
                 .toList());
         meta.getPersistentDataContainer().set(key, PersistentDataType.STRING, id);
         it.setItemMeta(meta);
+        setModel(it, MODEL.get(id));
         return it;
     }
 

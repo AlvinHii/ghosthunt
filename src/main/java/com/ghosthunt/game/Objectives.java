@@ -207,7 +207,7 @@ final class Objectives {
     }
 
     boolean isContainer(Block block) {
-        return block.getType() == Material.BARREL && b.containers.contains(pos(block));
+        return (block.getType() == Material.BARREL || block.getType() == Material.BARRIER) && b.containers.contains(pos(block));
     }
 
     void onContainer(Player p, Block block) {
@@ -258,8 +258,16 @@ final class Objectives {
         p.sendActionBar(Component.text("找到 " + Items.label(c), NamedTextColor.GREEN));
     }
 
+    /** 3D 模型用：木桶現在的樣子（上鎖／翻過的空桶／一般）。 */
+    String containerModel(Pos pos) {
+        if (locked.contains(pos)) return "container_locked";
+        if (searched.contains(pos) && !content.containsKey(pos)) return "container_open";
+        return "container";
+    }
+
     private void lock(Pos pos) {
         locked.add(pos);
+        if (m.scene != null && m.scene.active()) return; // 3D 模型會顯示掛鎖
         TrapDoor t = (TrapDoor) Bukkit.createBlockData(Material.IRON_TRAPDOOR);
         t.setHalf(Bisected.Half.BOTTOM);
         t.setOpen(false);

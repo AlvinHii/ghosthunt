@@ -62,6 +62,7 @@ final class ItemUse {
                 }
                 boolean on = !flashOn.getOrDefault(p.getUniqueId(), false);
                 flashOn.put(p.getUniqueId(), on);
+                Items.setFlashlightOn(p, on);
                 if (!on) clearLight(p.getUniqueId());
                 p.playSound(p.getLocation(), Sound.UI_BUTTON_CLICK, 0.6f, on ? 1.4f : 0.8f);
             }
@@ -110,12 +111,14 @@ final class ItemUse {
             if (p == null || !m.isFreeSurvivor(p) || Items.count(p, Items.FLASHLIGHT) == 0) {
                 e.setValue(false);
                 clearLight(e.getKey());
+                Items.setFlashlightOn(p, false);
                 continue;
             }
             int left = battery.merge(e.getKey(), -1, Integer::sum);
             if (left <= 0) {
                 e.setValue(false);
                 clearLight(e.getKey());
+                Items.setFlashlightOn(p, false);
                 p.sendActionBar(Component.text("手電筒沒電了", NamedTextColor.GRAY));
                 continue;
             }
@@ -153,7 +156,7 @@ final class ItemUse {
     private void moveLight(Player p) {
         Location eye = p.getEyeLocation();
         Vector dir = eye.getDirection();
-        RayTraceResult hit = p.getWorld().rayTraceBlocks(eye, dir, o.flashRange(), FluidCollisionMode.NEVER, true, bl -> bl.getType() != org.bukkit.Material.BARRIER);
+        RayTraceResult hit = p.getWorld().rayTraceBlocks(eye, dir, o.flashRange(), FluidCollisionMode.NEVER, true, m::rayHits);
         Location spot = hit != null ? hit.getHitPosition().toLocation(p.getWorld()).subtract(dir.clone().multiply(0.6))
                 : eye.clone().add(dir.clone().multiply(o.flashRange() * 0.7));
         Pos target = new Pos(spot.getBlockX(), spot.getBlockY(), spot.getBlockZ());
