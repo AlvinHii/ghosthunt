@@ -32,7 +32,20 @@ public final class Models {
         return it;
     }
 
-    /** 模型正面（原本朝北 -Z）轉到朝 f 的 yaw（再加 config 的 models.yaw-offset）。 */
+    /**
+     * 模型包裡大部分模型的正面其實朝南（+Z），只有講台、廣播台朝北（2026-11-23 使用者在遊戲裡看的結果）：
+     * 這兩個以外都多轉 180 度。
+     */
+    public static float flip(String model) {
+        return model.startsWith("note_stand") || model.startsWith("pa_desk") ? 0 : 180;
+    }
+
+    /** 模型正面轉到朝 f 的 yaw（含 flip 和 config 的 models.yaw-offset）。 */
+    public static float yaw(Plugin plugin, BlockFace f, String model) {
+        return yaw(plugin, f) + flip(model);
+    }
+
+    /** 模型正面（照北 -Z 算）轉到朝 f 的 yaw（再加 config 的 models.yaw-offset）；不含 flip。 */
     public static float yaw(Plugin plugin, BlockFace f) {
         float y = switch (f) {
             case SOUTH -> 180;

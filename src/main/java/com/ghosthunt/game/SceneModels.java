@@ -156,7 +156,7 @@ final class SceneModels {
             ItemStack it = item(model);
             if (d == null || !d.isValid()) {
                 Location l = m.loc(s.at()).add(0.5, 0.5, 0.5);
-                l.setYaw(s.yaw());
+                l.setYaw(s.yaw() + Models.flip(model));
                 l.setPitch(0);
                 d = m.world.spawn(l, ItemDisplay.class, e -> {
                     e.setItemStack(it);

@@ -131,6 +131,9 @@ public final class Lobby implements Listener {
         world.setTime(18000);
         world.setStorm(false);
         world.setSpawnLocation(spawn());
+        // 大廳的區塊一直載入（展示品是不存檔的實體，區塊卸載就會不見）
+        for (int cx = -2; cx <= 1; cx++)
+            for (int cz = -1; cz <= 0; cz++) world.addPluginChunkTicket(cx, cz, plugin);
         build();
         task = Bukkit.getScheduler().runTaskTimer(plugin, this::tick, 20L, 20L);
         for (Player p : Bukkit.getOnlinePlayers()) if (!plugin.inGame(p)) send(p);
@@ -233,7 +236,7 @@ public final class Lobby implements Listener {
             world.spawn(l, org.bukkit.entity.ItemDisplay.class, d -> {
                 d.setItemStack(it);
                 d.setItemDisplayTransform(org.bukkit.entity.ItemDisplay.ItemDisplayTransform.GUI);
-                d.setPersistent(true);
+                d.setPersistent(false);
                 d.setTransformation(new org.bukkit.util.Transformation(new org.joml.Vector3f(), new org.joml.AxisAngle4f(),
                         new org.joml.Vector3f(0.9f, 0.9f, 0.9f), new org.joml.AxisAngle4f()));
             });
@@ -241,7 +244,7 @@ public final class Lobby implements Listener {
                 in.setInteractionWidth(0.9f);
                 in.setInteractionHeight(0.9f);
                 in.setResponsive(true);
-                in.setPersistent(true);
+                in.setPersistent(false);
             });
             frameItem.put(hit.getUniqueId(), id);
         }
@@ -404,13 +407,14 @@ public final class Lobby implements Listener {
         for (Block b : parts) exhibitAt.put(key(b), k);
     }
 
-    /** 展示品疊上 3D 模型（跟遊戲裡一樣：方塊換成屏障，上面放模型）；門、監獄、地上扁平的東西維持原本的方塊。 */
+    /** 展示品疊上 3D 模型（跟遊戲裡一樣：方塊換成屏障，上面放模型）；一般的木門沒有模型，維持原版的門。 */
     private void overlayModel(String k, Slot s, List<Block> parts) {
         if (!plugin.getConfig().getBoolean("models.scene", true)) return;
         String model;
         int height = 1;
         float scale = 1f;
         int y = FLOOR + 1;
+        boolean inWall = false;
         switch (k) {
             case "barrel" -> model = "container";
             case "locked" -> model = "container_locked";
@@ -451,23 +455,42 @@ public final class Lobby implements Listener {
                 model = "cctv_camera";
                 y = CEIL - 1;
             }
+            case "lockeddoor" -> {
+                model = "locked_door";
+                height = 2;
+                inWall = true;
+            }
+            case "shutter" -> {
+                model = "shutter";
+                height = 2;
+                inWall = true;
+            }
+            case "hole" -> {
+                model = "crawl_hole";
+                inWall = true;
+            }
+            case "hatch" -> model = "hatch";
+            case "sewer" -> model = "sewer_grate";
+            case "barricade" -> model = "barricade_mark";
             default -> {
                 return;
             }
         }
-        // 原本的方塊換成屏障（右鍵、碰撞照舊）；模型自己有的按鈕、拉桿、掛鎖、展示框拿掉
+        // 模型自己有的拉桿（電源）、按鈕（販賣機）、掛鎖（上鎖的木桶）拿掉；鐵捲門旁邊的開關留著
         for (Block b : new ArrayList<>(parts)) {
             Material t = b.getType();
-            if (t == Material.LEVER || t == Material.STONE_BUTTON || t == Material.IRON_TRAPDOOR && k.equals("locked")) b.setType(Material.AIR, false);
+            if (k.equals("power") && t == Material.LEVER || k.equals("vending") && t == Material.STONE_BUTTON
+                    || k.equals("locked") && t == Material.IRON_TRAPDOOR) b.setType(Material.AIR, false);
         }
+        int px = inWall ? s.wx() : s.x(), pz = inWall ? s.wz() : s.z();
         for (int dy = 0; dy < height; dy++) {
-            Block b = at(s.x(), y + dy, s.z());
+            Block b = at(px, y + dy, pz);
             b.setType(Material.BARRIER, false);
             parts.add(b);
         }
         for (Entity e : world.getNearbyEntities(new Location(world, s.x() + 0.5, y + 1, s.z() + 0.5), 1.2, 1.2, 1.2))
             if (e instanceof ItemFrame) e.remove();
-        com.ghosthunt.game.Models.spawn(plugin, world, s.x(), y, s.z(), com.ghosthunt.game.Models.yaw(plugin, s.in()), model, scale, true);
+        com.ghosthunt.game.Models.spawn(plugin, world, px, y, pz, com.ghosthunt.game.Models.yaw(plugin, s.in(), model), model, scale, false);
     }
 
     // ---- 方塊小工具 ----
@@ -509,7 +532,7 @@ public final class Lobby implements Listener {
                 fr.setItem(it, false);
                 fr.setFixed(true);
                 fr.setInvulnerable(true);
-                fr.setPersistent(true);
+                fr.setPersistent(false);
             });
             frameItem.put(f.getUniqueId(), "exhibit:" + exhibit);
         } catch (IllegalArgumentException ignored) {
@@ -791,6 +814,15 @@ public final class Lobby implements Listener {
         if (t == null) return;
         p.sendMessage(Component.text("【" + t[0] + "】", NamedTextColor.GOLD).append(Component.text(t[3], NamedTextColor.WHITE)));
         p.playSound(p.getLocation(), Sound.ITEM_BOOK_PAGE_TURN, 0.8f, 1.2f);
+    }
+
+    /** 舊版存進世界的展示框、展示實體（現在的都不存檔）：區塊載入時清掉，不然會跟新的疊在一起。 */
+    @EventHandler
+    public void onEntitiesLoad(org.bukkit.event.world.EntitiesLoadEvent e) {
+        if (world == null || !e.getWorld().equals(world)) return;
+        for (Entity en : e.getEntities())
+            if (en.isPersistent() && (en instanceof ItemFrame || en instanceof org.bukkit.entity.ItemDisplay || en instanceof org.bukkit.entity.Interaction))
+                en.remove();
     }
 
     @EventHandler
