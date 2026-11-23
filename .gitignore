@@ -7,3 +7,7 @@ test-server/
 __pycache__/
 *.pyc
 .superpowers/
+
+# 自我對弈訓練：重播、訓練輸出（大檔案，不進 git）
+ai/replays/
+ai/runs/
