@@ -531,12 +531,16 @@ final class SideQuests {
     void cameraMenu(Player p) {
         CamView v = viewers.get(p.getUniqueId());
         List<io.papermc.paper.registry.data.dialog.ActionButton> buttons = new ArrayList<>();
+        Map<String, Integer> total = new HashMap<>(), seen = new HashMap<>();
+        for (Building.Camera c : b.cameras) total.merge(c.name(), 1, Integer::sum);
         for (int i = 0; i < b.cameras.size(); i++) {
             Building.Camera cam = b.cameras.get(i);
             final int idx = i;
             boolean now = v != null && v.cam() == i;
-            buttons.add(Dialogs.button(m.plugin, Component.text((now ? "▶ " : "") + cam.name(), now ? NamedTextColor.YELLOW : NamedTextColor.WHITE),
-                    Component.text("切到「" + cam.name() + "」"), 110, (pl, view) -> camCommand(pl, String.valueOf(idx))));
+            int k = seen.merge(cam.name(), 1, Integer::sum);
+            String label = total.get(cam.name()) > 1 ? cam.name() + " " + k : cam.name(); // 同一區有兩台：加編號
+            buttons.add(Dialogs.button(m.plugin, Component.text((now ? "▶ " : "") + label, now ? NamedTextColor.YELLOW : NamedTextColor.WHITE),
+                    Component.text("切到「" + label + "」"), 110, (pl, view) -> camCommand(pl, String.valueOf(idx))));
         }
         var exit = v != null
                 ? Dialogs.button(m.plugin, Component.text("離開監視器", NamedTextColor.RED), Component.text("回到你的身體"), 150, (pl, view) -> exitCamera(pl))
@@ -548,10 +552,13 @@ final class SideQuests {
     }
 
     private final Map<UUID, Long> menuAt = new HashMap<>();
+    /** 最後一次換台／進監視器的時間（這之後一秒內的「離開旁觀」不是玩家按的 Shift）。 */
+    private final Map<UUID, Long> switchAt = new HashMap<>();
 
     /** 看監視器時按 Shift（原本會跳出旁觀）：改成打開攝影機選單。 */
     void onSneakWhileViewing(Player p) {
         if (m.tick - menuAt.getOrDefault(p.getUniqueId(), -1_000L) < 10) return;
+        if (m.tick - switchAt.getOrDefault(p.getUniqueId(), -1_000L) < 20) return; // 剛換台、剛進來：不是按 Shift
         menuAt.put(p.getUniqueId(), m.tick);
         cameraMenu(p);
     }
@@ -592,15 +599,16 @@ final class SideQuests {
                 if (viewers.containsKey(p.getUniqueId())) p.setSpectatorTarget(target);
             }, 2L);
         } else {
+            // 換台：先把視角切到新的攝影機，下一 tick 才拿掉舊的（直接拿掉會被當成「離開旁觀」，跳出選單）
             ArmorStand eye = spawnEye(i);
-            v.eye().remove();
+            ArmorStand old = v.eye();
             v = new CamView(v.body(), eye, v.back(), i);
             viewers.put(p.getUniqueId(), v);
-            final ArmorStand target = eye;
-            Bukkit.getScheduler().runTaskLater(m.plugin, () -> {
-                if (viewers.containsKey(p.getUniqueId())) p.setSpectatorTarget(target);
-            }, 1L);
+            switchAt.put(p.getUniqueId(), m.tick);
+            p.setSpectatorTarget(eye);
+            Bukkit.getScheduler().runTaskLater(m.plugin, old::remove, 2L);
         }
+        switchAt.put(p.getUniqueId(), m.tick);
         p.sendActionBar(Component.text("攝影機：" + b.cameras.get(i).name() + "（按 Shift 換台或離開）", NamedTextColor.AQUA));
     }
 
