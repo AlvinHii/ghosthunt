@@ -67,11 +67,6 @@ class SurvivorGame(Game):
 
     # ---- 動作 ----
 
-    def _known_ghost(self):
-        if self.team_ghost and self.t - self.team_ghost[1] <= 8:
-            return self.team_ghost[0]
-        return None
-
     def s_mask(self, s):
         m = np.zeros(S_ACTIONS, bool)
         m[SA_WAIT] = True
@@ -89,7 +84,7 @@ class SurvivorGame(Game):
         m[SA_SWIPE] = self.power and any(c in self.authorized for c in s.cards) and any(g['counting'] < 0 for g in self.gates)
         m[SA_ESCAPE] = any(g['open'] for g in self.gates)
         m[SA_RESCUE] = any(o.state in (JAILED, DOWN) for o in self.sv) and (bool(w.jails) or any(o.state == DOWN for o in self.sv))
-        m[SA_FLEE] = self._known_ghost() is not None or self.heartbeat_stage(s) >= 1
+        m[SA_FLEE] = self._known_ghost() is not None  # 只能從看到過鬼的地方逃開（心跳不給方向）
         m[SA_HIDE] = self._hideout(s) is not None
         return m
 
@@ -119,7 +114,7 @@ class SurvivorGame(Game):
             # 照規則型逃生者（一般玩家）的做法：有危險就逃，沒有就做下一個目標
             if s.hidden:
                 return
-            if self._sees_ghost(s) or self.heartbeat_stage(s) >= s.p['flee-stage']:
+            if self._known_ghost() is not None and (self._sees_ghost(s) or self.heartbeat_stage(s) >= s.p['flee-stage']):
                 s.act = None
                 s.flee_until = self.t + 1.5
                 s.task = ('flee', None, None)
@@ -227,7 +222,10 @@ class SurvivorGame(Game):
             if self.t >= s.flee_until:
                 s.task = None
                 return
-            g = self._known_ghost() or self.g
+            g = self._known_ghost()
+            if g is None:
+                s.task = None
+                return
             if self.d(s.pos, self.g) <= 6 and self.t >= s.dash_ready:
                 s.dash_until = self.t + c['survivor']['dash-duration']
                 s.dash_ready = self.t + c['survivor']['dash-cooldown']

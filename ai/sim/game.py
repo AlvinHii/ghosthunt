@@ -149,6 +149,9 @@ class Game:
         self.contrib = [0] * survivors
         self.camp_t = 0.0
         self.camp_away = 0.0
+        # 隊上最後確定看到鬼的位置（等於語音報位）。逃生者只能從這裡判斷鬼在哪個方向：
+        # 心跳只告訴你多近、不告訴你方向（2026-11-24 修：之前逃跑直接用鬼的真實位置，等於透視）
+        self.team_ghost = None
         # 守監獄的額度：每次有人被關，鬼最多在監獄附近待 guard-cap 秒（跟插件現在的 AI 一樣的設計限制）
         self.guard_used = 0.0
         self.jail_regions = set()
@@ -665,6 +668,11 @@ class Game:
     # 逃生者（規則型，像真人）
     # =================================================================
 
+    def _known_ghost(self):
+        if self.team_ghost and self.t - self.team_ghost[1] <= 20:
+            return self.team_ghost[0]
+        return None
+
     def _sees_ghost(self, s):
         d = self.eu(s.pos, self.g)
         rng = 24 if self.power else 12
@@ -684,16 +692,22 @@ class Game:
             if s.threat_seen_at < 0:
                 s.threat_seen_at = self.t + self.rng.uniform(*s.p['react'])  # 反應延遲
             if self.t >= s.threat_seen_at:
-                s.flee_until = self.t + 3
-                if s.act:
-                    s.act = None
+                if self._sees_ghost(s):
+                    self.team_ghost = (self.g, self.t)
+                if self._known_ghost() is not None:
+                    s.flee_until = self.t + 3
+                    if s.act:
+                        s.act = None
+                else:
+                    s.walk = True  # 心跳變快但不知道鬼在哪：放輕腳步，照原本的計畫走
         else:
             s.threat_seen_at = -1
         speed = 5.6
         if self.t < s.dash_until or self.t < s.boost_until:
             speed *= 1.5
-        if self.t < s.flee_until:
-            # 逃跑：往離鬼遠的方向；鬼很近就衝刺；附近有暗格、鬼沒看到就躲
+        kg = self._known_ghost()
+        if self.t < s.flee_until and kg is not None:
+            # 逃跑：往離「隊上最後看到鬼的位置」遠的方向；心跳最快（鬼 6 格內）就衝刺；附近有暗格、鬼沒看到就躲
             if self.d(s.pos, self.g) <= 6 and self.t >= s.dash_ready:
                 s.dash_until = self.t + c['survivor']['dash-duration']
                 s.dash_ready = self.t + c['survivor']['dash-cooldown']
@@ -703,14 +717,14 @@ class Game:
                     if ei >= 0 and ei == s.pos and not any(o.hidden and o.hidden[0] == hide for o in self.sv):
                         s.hidden = (hide, ei, self.t + self.rng.uniform(12, 25))
                         return
-                    if ei >= 0 and self.d(s.pos, ei) <= 5 and self.d(self.g, ei) > self.d(s.pos, ei) + 4:
+                    if ei >= 0 and self.d(s.pos, ei) <= 5 and self.d(kg, ei) > self.d(s.pos, ei) + 4:
                         s.budget += speed * DT
                         s.pos, s.budget = self.step_toward(s.pos, ei, s.budget)
                         self._run_noise(s)
                         return
             s.budget += speed * DT
             s.running = True
-            s.pos, s.budget = self.step_toward(s.pos, self.g, s.budget, away=True)
+            s.pos, s.budget = self.step_toward(s.pos, kg, s.budget, away=True)
             self._run_noise(s)
             return
         # 正在做事
