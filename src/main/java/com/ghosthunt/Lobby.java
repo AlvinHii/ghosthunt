@@ -744,6 +744,7 @@ public final class Lobby implements Listener {
     /** 遊戲結束後：5 秒後所有沒在遊戲裡的人回大廳。 */
     void afterMatch() {
         ready.clear();
+        if (!plugin.isEnabled()) return; // 伺服器關閉時結束的對局：不用排程回大廳
         Bukkit.getScheduler().runTaskLater(plugin, () -> {
             for (Player p : Bukkit.getOnlinePlayers()) if (!plugin.inGame(p)) send(p);
             refreshSigns();

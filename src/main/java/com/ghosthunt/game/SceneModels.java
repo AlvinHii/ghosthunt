@@ -38,7 +38,13 @@ final class SceneModels {
     private final float yawOffset;
     private final boolean blockMode;
 
-    private record Spot(Pos at, int height, BlockFace front) {}
+    /** at：狀態用的位置；height：換成屏障的格數（solid 才換）；ox/oy/oz：模型那一格的西北下角（通常就是 at）。 */
+    private record Spot(Pos at, int height, BlockFace front, boolean solid, double ox, double oy, double oz) {}
+
+    /** 不在 modelFor 裡的物件（電源、備用電源、迎賓鈴、蒸氣閥門、球車）：位置 → 現在的模型。 */
+    private final Map<Pos, java.util.function.Supplier<String>> custom = new HashMap<>();
+    /** 球車：點車身任何一格都當成點開關。 */
+    private final Map<Pos, Pos> alias = new HashMap<>();
 
     private final Map<Pos, Spot> spots = new LinkedHashMap<>();
     private final Map<Pos, Display> displays = new HashMap<>();
@@ -77,10 +83,42 @@ final class SceneModels {
         for (Pos p : b.fusePanels) add(p, 2);
         for (Pos p : b.vendingCells) if (!b.vendingCells.contains(p.add(0, -1, 0))) add(p, 2);
         for (Pos p : b.noteSpots) add(p, 1);
-        for (Building.Camera c : b.cameras) {
+        for (int i = 0; i < b.cameras.size(); i++) {
+            Building.Camera c = b.cameras.get(i);
             Pos obs = c.eye().add(0, 1, 0);
-            if (m.block(obs).getType() == Material.OBSERVER) addAt(obs, 1, Models.faceOfYaw(c.yaw()));
+            float yaw = m.side != null ? m.side.camYaw(i) : c.yaw(); // 跟監視器實際看的方向一樣
+            if (m.block(obs).getType() == Material.OBSERVER) addAt(obs, 1, Models.faceOfYaw(yaw));
         }
+        // 總電源：拉桿換成看不見的絆線鉤（點得到、不擋路），下面那格放 2 格高的電源箱模型（不擋路）
+        if (m.obj.lever != null) {
+            BlockFace f = hideLever(m.obj.lever);
+            if (f != null) {
+                Pos at = m.obj.lever.add(0, -1, 0);
+                addAt(at, 2, f, false);
+                custom.put(at, () -> m.obj.powerOn() ? "power_panel_on" : "power_panel");
+            }
+        }
+        // 雙人備用電源
+        if (m.side != null) {
+            List<Pos> bl = m.side.backupLevers();
+            for (int i = 0; i < bl.size(); i++) {
+                BlockFace f = hideLever(bl.get(i));
+                if (f == null) continue;
+                final int k = i;
+                addAt(bl.get(i), 1, f, false);
+                custom.put(bl.get(i), () -> m.side.backupUp(k) ? "backup_lever_up" : "backup_lever");
+            }
+        }
+        // 度假村機關
+        for (Pos bell : b.bells) {
+            addAt(bell, 1, frontFaceLow(bell), true);
+            custom.put(bell, () -> "welcome_bell");
+        }
+        for (Building.Gadget g : b.valves) {
+            addAt(g.trigger(), 1, frontFaceLow(g.trigger()), true);
+            custom.put(g.trigger(), () -> "steam_valve");
+        }
+        for (int i = 0; i < b.carts.size(); i++) addCart(i);
         hideFrontDecor();
         tick();
     }
@@ -91,8 +129,13 @@ final class SceneModels {
     }
 
     private void addAt(Pos p, int height, BlockFace front) {
+        addAt(p, height, front, true);
+    }
+
+    private void addAt(Pos p, int height, BlockFace front, boolean solid) {
         if (spots.containsKey(p)) return;
-        spots.put(p, new Spot(p, height, front));
+        spots.put(p, new Spot(p, height, front, solid, p.x(), p.y(), p.z()));
+        if (!solid) return;
         for (int dy = 0; dy < height; dy++) {
             Pos q = p.add(0, dy, 0);
             Block bl = m.block(q);
@@ -119,6 +162,89 @@ final class SceneModels {
         return BlockFace.SOUTH;
     }
 
+    /** 擺在家具上面的東西（迎賓鈴、蒸氣閥門）：往下找 2 格，看哪一邊站得到人。 */
+    private BlockFace frontFaceLow(Pos p) {
+        for (int dy = 0; dy <= 2; dy++)
+            for (BlockFace f : new BlockFace[]{BlockFace.SOUTH, BlockFace.NORTH, BlockFace.EAST, BlockFace.WEST})
+                if (walkable(p.add(f.getModX(), -dy, f.getModZ()))) return f;
+        return BlockFace.SOUTH;
+    }
+
+    /** 牆上的拉桿換成看不見的絆線鉤（資源包把絆線鉤的外觀換成空的），回傳拉桿朝哪邊；不是牆上的拉桿回傳 null。 */
+    private BlockFace hideLever(Pos p) {
+        Block bl = m.block(p);
+        if (!(bl.getBlockData() instanceof org.bukkit.block.data.type.Switch sw)) return null;
+        if (sw.getAttachedFace() != org.bukkit.block.data.FaceAttachable.AttachedFace.WALL) return null;
+        BlockFace f = sw.getFacing();
+        if (!blockMode) return f; // item display 模式沒有換外觀，拉桿留著
+        original.put(p, bl.getBlockData());
+        org.bukkit.block.data.type.TripwireHook hook = (org.bukkit.block.data.type.TripwireHook) org.bukkit.Bukkit.createBlockData(Material.TRIPWIRE_HOOK);
+        hook.setFacing(f);
+        bl.setBlockData(hook, false);
+        return f;
+    }
+
+    /**
+     * 球車（地圖上 2 格高的家具，開關按鈕放在車頂）：整台換成屏障、按鈕拿掉，模型放在整台的正中間，
+     * 車頭朝外面最空的那一邊；點車身任何一格都算按開關。
+     */
+    private void addCart(int i) {
+        Building.Gadget g = b.carts.get(i);
+        Pos trig = g.trigger();
+        Material body = m.block(trig.add(0, -1, 0)).getType();
+        if (body.isAir()) return;
+        java.util.Set<Pos> foot = new java.util.LinkedHashSet<>();
+        java.util.ArrayDeque<Pos> q = new java.util.ArrayDeque<>();
+        q.add(trig.add(0, -1, 0));
+        foot.add(trig.add(0, -1, 0));
+        BlockFace[] faces = {BlockFace.NORTH, BlockFace.SOUTH, BlockFace.EAST, BlockFace.WEST};
+        while (!q.isEmpty()) {
+            Pos c = q.poll();
+            for (BlockFace f : faces) {
+                Pos n = c.add(f.getModX(), 0, f.getModZ());
+                if (Math.abs(n.x() - trig.x()) > 3 || Math.abs(n.z() - trig.z()) > 3) continue;
+                if (m.block(n).getType() == body && foot.add(n)) q.add(n);
+            }
+        }
+        int base = trig.y() - 2;
+        Map<BlockFace, Integer> open = new HashMap<>();
+        for (Pos c : foot)
+            for (BlockFace f : faces)
+                for (int dy = 1; dy <= 3; dy++) {
+                    Pos n = c.add(f.getModX(), -dy, f.getModZ());
+                    if (foot.contains(n.add(0, dy, 0)) || !walkable(n)) continue;
+                    base = n.y();
+                    open.merge(f, 1, Integer::sum);
+                    break;
+                }
+        BlockFace front = open.entrySet().stream().max(Map.Entry.comparingByValue()).map(Map.Entry::getKey).orElse(BlockFace.SOUTH);
+        double sx = 0, sz = 0;
+        for (Pos c : foot) {
+            sx += c.x();
+            sz += c.z();
+            for (int y = base; y < trig.y(); y++) {
+                Pos cell = new Pos(c.x(), y, c.z());
+                Block bl = m.block(cell);
+                if (bl.getType().isAir()) continue;
+                original.put(cell, bl.getBlockData());
+                bl.setType(Material.BARRIER, false);
+                alias.put(cell, trig);
+            }
+        }
+        Block button = m.block(trig);
+        if (!button.getType().isAir()) {
+            original.put(trig, button.getBlockData());
+            button.setType(Material.AIR, false);
+        }
+        spots.put(trig, new Spot(trig, 0, front, true, sx / foot.size(), base, sz / foot.size()));
+        custom.put(trig, () -> m.gimmicks != null && m.gimmicks.beamOn(i) ? "golf_cart_high" : "golf_cart");
+    }
+
+    /** 點到的格子要當成哪一格（球車車身 → 車頂開關）。 */
+    Pos alias(Pos p) {
+        return alias.getOrDefault(p, p);
+    }
+
     private boolean walkable(Pos q) {
         for (Set<Pos> tiles : b.walkTiles.values()) if (tiles.contains(q)) return true;
         return false;
@@ -139,7 +265,7 @@ final class SceneModels {
     /** 販賣機前面的按鈕和展示框、監視器前面的展示框：模型已經有了，先藏起來（結束時放回）。 */
     private void hideFrontDecor() {
         for (Spot s : spots.values()) {
-            if (s.height() < 2) continue;
+            if (s.height() < 2 || !s.solid()) continue;
             Location c = m.loc(s.at()).add(0.5, 1, 0.5);
             for (Entity e : c.getWorld().getNearbyEntities(c, 1.6, 1.6, 1.6)) {
                 if (e instanceof ItemFrame f && !hiddenFrames.containsKey(f)) {
@@ -173,14 +299,18 @@ final class SceneModels {
                 if (data == null) continue;
                 Display d = displays.get(s.at());
                 if (d instanceof org.bukkit.entity.BlockDisplay bd && bd.isValid()) bd.setBlock(data);
-                else displays.put(s.at(), Models.spawnBlock(m.world, s.at().x(), s.at().y(), s.at().z(), s.front(), model, 1f, false));
+                else displays.put(s.at(), m.world.spawn(new Location(m.world, s.ox(), s.oy(), s.oz()), org.bukkit.entity.BlockDisplay.class, e -> {
+                    e.setBlock(data);
+                    e.setPersistent(false);
+                    e.setViewRange(1.5f);
+                }));
                 continue;
             }
             Display old = displays.get(s.at());
             ItemDisplay d = old instanceof ItemDisplay id ? id : null;
             ItemStack it = item(model);
             if (d == null || !d.isValid()) {
-                Location l = m.loc(s.at()).add(0.5, 0.5, 0.5);
+                Location l = new Location(m.world, s.ox() + 0.5, s.oy() + 0.5, s.oz() + 0.5);
                 l.setYaw(yawOf(s.front()) + Models.flip(model));
                 l.setPitch(0);
                 d = m.world.spawn(l, ItemDisplay.class, e -> {
@@ -203,9 +333,11 @@ final class SceneModels {
     }
 
     private String modelFor(Pos p) {
+        java.util.function.Supplier<String> c = custom.get(p);
+        if (c != null) return c.get();
         boolean power = m.obj.powerOn();
         if (b.containers.contains(p)) return m.obj.containerModel(p);
-        if (b.securityTerminals.contains(p)) return power ? "security_terminal_on" : "security_terminal";
+        if (b.securityTerminals.contains(p)) return m.obj.terminalModel(p);
         for (Objectives.GateState gs : m.obj.gates)
             if (gs.g.reader().equals(p)) {
                 if (gs.opened) return "card_reader_open";
@@ -236,6 +368,8 @@ final class SceneModels {
             e.getKey().setItem(e.getValue(), false);
         }
         spots.clear();
+        custom.clear();
+        alias.clear();
     }
 
     /** 換成屏障的格子原本會不會擋視線（AI 的視線、手電筒照射照原本的方塊算）。 */

@@ -41,6 +41,7 @@ final class Gimmicks {
     private Location lureAt;
     private long lureUntil;
     private final Map<Integer, Integer> cartUsed = new HashMap<>();
+    private final Map<Integer, Long> beamUntil = new HashMap<>();
     private final Map<Integer, Long> steamUntil = new HashMap<>(), steamReadyAt = new HashMap<>();
 
     private Gimmicks(Match m) {
@@ -66,6 +67,7 @@ final class Gimmicks {
     /** 右鍵方塊；是機關就處理並回傳 true（取消原版動作）。 */
     boolean onClick(Player p, Block clicked) {
         Pos at = new Pos(clicked.getX(), clicked.getY(), clicked.getZ());
+        if (m.scene != null) at = m.scene.alias(at); // 3D 模型：點球車任何一格都算按到開關
         if (m.b.bells.contains(at)) {
             if (m.isFreeSurvivor(p)) ringBell(p, at);
             return true;
@@ -119,6 +121,7 @@ final class Gimmicks {
             return;
         }
         cartUsed.put(i, used + 1);
+        beamUntil.put(i, m.tick + Math.max(40, cartEffect));
         Vector dir = p.getLocation().getDirection().setY(0);
         if (dir.lengthSquared() < 1e-6) dir = new Vector(1, 0, 0);
         dir.normalize();
@@ -141,6 +144,11 @@ final class Gimmicks {
         }
         p.sendActionBar(Component.text((hit ? "閃到鬼了！" : "遠光燈沒照到鬼") + "（這台還剩 " + (cartUses - used - 1) + " 次）",
                 hit ? NamedTextColor.GOLD : NamedTextColor.GRAY));
+    }
+
+    /** 球車的遠光燈是不是正亮著（3D 模型換亮燈的樣子）。 */
+    boolean beamOn(int i) {
+        return m.tick < beamUntil.getOrDefault(i, 0L);
     }
 
     private boolean inCone(Location from, Vector dir, LivingEntity e) {

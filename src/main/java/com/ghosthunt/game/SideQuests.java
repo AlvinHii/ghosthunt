@@ -12,7 +12,6 @@ import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Sound;
-import org.bukkit.SoundCategory;
 import org.bukkit.block.Block;
 import org.bukkit.block.data.type.Switch;
 import org.bukkit.block.data.type.TrapDoor;
@@ -94,6 +93,7 @@ final class SideQuests {
     private final Set<Integer> shuttersOpen = new HashSet<>();
     private final List<Pos> backupLevers = new ArrayList<>();
     private final long[] backupDone = {-1_000_000, -1_000_000};
+    private boolean backupWorked;
 
     SideQuests(Match m) {
         this.m = m;
@@ -598,6 +598,9 @@ final class SideQuests {
             Bukkit.getScheduler().runTaskLater(m.plugin, () -> {
                 if (viewers.containsKey(p.getUniqueId())) p.setSpectatorTarget(target);
             }, 2L);
+            refocus(p, i, 4L);
+            refocus(p, i, 10L);
+            refocus(p, i, 25L);
         } else {
             // 換台：先把視角切到新的攝影機，下一 tick 才拿掉舊的（直接拿掉會被當成「離開旁觀」，跳出選單）
             ArmorStand eye = spawnEye(i);
@@ -607,15 +610,35 @@ final class SideQuests {
             switchAt.put(p.getUniqueId(), m.tick);
             p.setSpectatorTarget(eye);
             Bukkit.getScheduler().runTaskLater(m.plugin, old::remove, 2L);
+            // 很遠的攝影機：切的當下玩家的畫面還沒收到那個視角實體，切換會被忽略（「沒反應」）。
+            // 伺服器已經把人移到攝影機旁邊了，等區塊、實體送到以後再換一個新的視角實體切一次。
+            refocus(p, i, 4L);
+            refocus(p, i, 10L);
+            refocus(p, i, 25L);
         }
         switchAt.put(p.getUniqueId(), m.tick);
         p.sendActionBar(Component.text("攝影機：" + b.cameras.get(i).name() + "（按 Shift 換台或離開）", NamedTextColor.AQUA));
     }
 
+    /** delay tick 之後：如果還在看同一台，換一個新的視角實體再切一次（這時候玩家的畫面一定已經收到它了）。 */
+    private void refocus(Player p, int i, long delay) {
+        Bukkit.getScheduler().runTaskLater(m.plugin, () -> {
+            CamView v = viewers.get(p.getUniqueId());
+            if (v == null || v.cam() != i || !p.isOnline()) return;
+            ArmorStand eye = spawnEye(i);
+            ArmorStand old = v.eye();
+            viewers.put(p.getUniqueId(), new CamView(v.body(), eye, v.back(), i));
+            switchAt.put(p.getUniqueId(), m.tick);
+            p.setSpectatorTarget(eye);
+            Bukkit.getScheduler().runTaskLater(m.plugin, old::remove, 2L);
+        }, delay);
+    }
+
     private ArmorStand spawnEye(int i) {
         Building.Camera cam = b.cameras.get(i);
         Location l = m.loc(cam.eye()).add(0.5, 0, 0.5);
-        l.setYaw(cam.yaw());
+        float yaw = camYaw(i);
+        l.setYaw(yaw);
         l.setPitch(20);
         return m.world.spawn(l, ArmorStand.class, as -> {
             as.setInvisible(true);
@@ -623,8 +646,71 @@ final class SideQuests {
             as.setGravity(false);
             as.setInvulnerable(true);
             as.setPersistent(false);
-            as.setRotation(cam.yaw(), 20);
+            as.setRotation(yaw, 20);
         });
+    }
+
+    private final Map<Integer, Float> camYaws = new HashMap<>();
+
+    /**
+     * 攝影機朝哪裡：地圖給的方向是「朝這一區的中間」，長條或 L 形的區域中間可能在牆後面，攝影機就正對著牆（看起來像穿牆）。
+     * 改成實際打射線：每 10 度一個方向，算左右 ±30 度看得多遠，挑看得最遠的；地圖給的方向只要不差（八成以上）就用原本的。
+     */
+    float camYaw(int i) {
+        return camYaws.computeIfAbsent(i, k -> {
+            Building.Camera cam = b.cameras.get(k);
+            Location eye = m.loc(cam.eye()).add(0.5, 0.1, 0.5);
+            double given = viewScore(eye, cam.yaw()), best = given;
+            float bestYaw = cam.yaw();
+            for (int y = 0; y < 360; y += 10) {
+                double sc = viewScore(eye, y);
+                if (sc > best) {
+                    best = sc;
+                    bestYaw = y;
+                }
+            }
+            return given >= best * 0.8 ? cam.yaw() : bestYaw;
+        });
+    }
+
+    private double viewScore(Location eye, float yaw) {
+        double sum = 0;
+        for (int a = -30; a <= 30; a += 10)
+            for (int pitch : new int[]{10, 25}) {
+                Location l = eye.clone();
+                l.setYaw(yaw + a);
+                l.setPitch(pitch);
+                org.bukkit.util.Vector dir = l.getDirection();
+                var hit = m.world.rayTraceBlocks(eye, dir, 24, org.bukkit.FluidCollisionMode.NEVER, true);
+                sum += hit == null ? 24 : hit.getHitPosition().distance(eye.toVector());
+            }
+        return sum;
+    }
+
+    /** 攝影機的檢查（/gh sidetest）：視角卡在方塊裡、正前方很近就是牆的台數。 */
+    String cameraReport() {
+        int stuck = 0, wall = 0, turned = 0;
+        List<String> bad = new ArrayList<>();
+        for (int i = 0; i < b.cameras.size(); i++) {
+            Building.Camera cam = b.cameras.get(i);
+            Block at = m.block(cam.eye());
+            if (at.getType().isOccluding()) {
+                stuck++;
+                bad.add(cam.name() + "（卡在 " + at.getType() + "）");
+            }
+            float y = camYaw(i);
+            if (y != cam.yaw()) turned++;
+            Location eye = m.loc(cam.eye()).add(0.5, 0.1, 0.5);
+            eye.setYaw(y);
+            eye.setPitch(20);
+            var hit = m.world.rayTraceBlocks(eye, eye.getDirection(), 24, org.bukkit.FluidCollisionMode.NEVER, true);
+            if (hit != null && hit.getHitPosition().distance(eye.toVector()) < 2.5) {
+                wall++;
+                bad.add(cam.name() + "（正前方 " + String.format("%.1f", hit.getHitPosition().distance(eye.toVector())) + " 格就是 " + hit.getHitBlock().getType() + "）");
+            }
+        }
+        return "攝影機 " + b.cameras.size() + " 台：方向重新對準 " + turned + " 台、卡在方塊裡 " + stuck + " 台、正對牆 " + wall + " 台"
+                + (bad.isEmpty() ? "" : "：" + String.join("、", bad));
     }
 
     void exitCamera(Player p) {
@@ -796,6 +882,16 @@ final class SideQuests {
         m.block(d).setType(Material.AIR, false);
     }
 
+    /** 備用電源拉桿的位置（3D 模型用）。 */
+    List<Pos> backupLevers() {
+        return backupLevers;
+    }
+
+    /** 備用電源拉桿是不是拉上去的狀態（剛拉完 3 秒內，或兩根已經一起拉成功）。 */
+    boolean backupUp(int i) {
+        return backupWorked || m.tick - backupDone[i] <= 60;
+    }
+
     private void onBackupLever(Player p, int i) {
         if (m.obj.powerOn()) {
             p.sendActionBar(Component.text("電源已經開著", NamedTextColor.GRAY));
@@ -804,7 +900,10 @@ final class SideQuests {
         Location at = m.loc(backupLevers.get(i));
         m.acts.start(p, "backup:" + i, "拉備用電源（兩邊要同時）", ticks("backup-power-hold", 3), false, true, at, () -> {
             backupDone[i] = m.tick;
-            if (Math.abs(backupDone[0] - backupDone[1]) <= 60) m.obj.forcePowerOn("備用電源接上了！兩個人同時拉成功");
+            if (Math.abs(backupDone[0] - backupDone[1]) <= 60) {
+                backupWorked = true;
+                m.obj.forcePowerOn("備用電源接上了！兩個人同時拉成功");
+            }
             else m.survivorMessage("備用電源：另一根拉桿要在 3 秒內一起拉（相隔很遠，要分頭）", NamedTextColor.YELLOW);
         });
     }
@@ -875,8 +974,7 @@ final class SideQuests {
         Location pad = m.loc(b.helipadCells.get(b.helipadCells.size() / 2)).add(0.5, 1, 0.5);
         if (m.tick - heliNoiseAt >= ticks("heli-noise-every", 10)) {
             heliNoiseAt = m.tick;
-            m.lureNoise(pad); // 直升機越來越近：鬼不管多遠都聽得到
-            for (Player p : m.world.getPlayers()) p.playSound(pad, Sound.ITEM_ELYTRA_FLYING, SoundCategory.AMBIENT, 2f, 0.6f);
+            m.lureNoise(pad); // 直升機越來越近：鬼不管多遠都知道（守停機坪的時候不播任何音效，2026-11-24 使用者決定）
         }
         if (on.isEmpty()) return;
         heliHeld++;
@@ -1039,6 +1137,7 @@ final class SideQuests {
      */
     List<String> selfTest() {
         List<String> out = new ArrayList<>();
+        if (!b.cameras.isEmpty()) out.add(cameraReport());
         if (elevatorOpen) {
             fuses = 2;
             elevatorCalled = true;

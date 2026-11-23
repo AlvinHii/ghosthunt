@@ -10,6 +10,7 @@
   resourcepack/assets/ghosthunt/models/block/<風格>/<模型>.json   （從 item 模型複製，貼圖改指到 block/）
   resourcepack/assets/ghosthunt/textures/block/<風格>/*.png        （貼圖複製一份到方塊圖集）
   resourcepack/assets/minecraft/blockstates/redstone_wire.json     （multipart：只有我們用的狀態有模型）
+  resourcepack/assets/minecraft/blockstates/tripwire_hook.json     （絆線鉤看不見：遊戲裡拿來代替總電源、備用電源的拉桿）
   src/main/java/com/ghosthunt/game/SceneBlocks.java                 （模型名稱 → 方塊狀態）
 
 模型正面一律當成朝北（-Z）；講台（note_stand*）、廣播台（pa_desk*）的正面朝南，產生時多轉 180 度。
@@ -80,6 +81,13 @@ def main():
     os.makedirs(os.path.dirname(BLOCKSTATES), exist_ok=True)
     with open(BLOCKSTATES, 'w', encoding='utf-8') as fo:
         json.dump({'multipart': parts}, fo, ensure_ascii=False, separators=(',', ':'))
+
+    # 絆線鉤：外觀換成空的（遊戲裡把牆上的拉桿換成它：點得到、看不見，模型自己畫拉桿）
+    empty = os.path.join(PACK, 'ghosthunt', 'models', 'block', 'empty.json')
+    with open(empty, 'w', encoding='utf-8') as fo:
+        json.dump({'textures': {'particle': 'minecraft:block/oak_planks'}, 'elements': []}, fo)
+    with open(os.path.join(os.path.dirname(BLOCKSTATES), 'tripwire_hook.json'), 'w', encoding='utf-8') as fo:
+        json.dump({'variants': {'': {'model': 'ghosthunt:block/empty'}}}, fo)
 
     names = ',\n            '.join('"%s"' % m for m in models)
     java = f'''package com.ghosthunt.game;

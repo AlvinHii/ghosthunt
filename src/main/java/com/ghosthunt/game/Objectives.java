@@ -70,6 +70,10 @@ final class Objectives {
     private boolean movedThisReveal;
     /** 已經在保全室授權過的門禁卡編號。 */
     final Set<Integer> authorized = new HashSet<>();
+    /** 撬開過的上鎖木桶（3D 模型顯示壞掉的鎖）。 */
+    final Set<Pos> pried = new HashSet<>();
+    /** 終端機最後一次授權完成的 tick（3D 模型亮授權畫面）。 */
+    private final Map<Pos, Long> authDoneAt = new HashMap<>();
     /** 亮起期間標出門禁卡箱子的發光方塊（只有鬼看得到，外框會穿牆）。 */
     private final Map<Pos, BlockDisplay> markers = new HashMap<>();
 
@@ -261,6 +265,7 @@ final class Objectives {
     /** 3D 模型用：木桶現在的樣子（上鎖／翻過的空桶／一般）。 */
     String containerModel(Pos pos) {
         if (locked.contains(pos)) return "container_locked";
+        if (pried.contains(pos)) return "container_locked_pried";
         if (searched.contains(pos) && !content.containsKey(pos)) return "container_open";
         return "container";
     }
@@ -277,6 +282,7 @@ final class Objectives {
 
     private void unlock(Pos pos) {
         locked.remove(pos);
+        pried.add(pos);
         Block above = m.block(pos.add(0, 1, 0));
         if (above.getType() == Material.IRON_TRAPDOOR) above.setType(Material.AIR, false);
         m.world.playSound(m.loc(pos), Sound.BLOCK_IRON_TRAPDOOR_OPEN, 1f, 0.8f);
@@ -835,15 +841,24 @@ final class Objectives {
             return;
         }
         final int card = n;
-        Location at = m.loc(pos(block)).add(0, 0.5, 0);
+        final Pos tp = pos(block);
+        Location at = m.loc(tp).add(0, 0.5, 0);
         m.acts.start(p, "authorize:" + pos(block), "授權門禁卡 #" + card, o.authorize(), false, true, at, () -> {
             if (!Items.keycardsOn(p).contains(card)) return;
             authorized.add(card);
+            authDoneAt.put(tp, m.tick);
             Items.replaceKeycard(p, card, true);
             m.world.playSound(at, Sound.BLOCK_NOTE_BLOCK_CHIME, 1.5f, 1.4f);
             m.survivorMessage(p.getName() + " 把門禁卡 #" + card + " 授權了，可以去大門刷了。", NamedTextColor.AQUA);
             m.stat("firstAuthorizeAt", m.tick / 20, false);
         });
+    }
+
+    /** 終端機的 3D 模型：沒電、有電、授權中（含授權完 3 秒）。 */
+    String terminalModel(Pos p) {
+        if (!powerOn) return "security_terminal";
+        if (m.acts.running("authorize:" + p) || m.tick - authDoneAt.getOrDefault(p, -1_000_000L) <= 60) return "security_terminal_auth";
+        return "security_terminal_on";
     }
 
     /** 電源最後一次打開的 tick（AI 鬼不會一開電就衝去關）。 */
