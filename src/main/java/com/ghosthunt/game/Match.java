@@ -72,6 +72,8 @@ public final class Match {
         org.bukkit.WorldBorder vignette;
         /** 心跳暗角（BetterHud 版）：暫時給的權限 ghosthunt.heart.N。 */
         org.bukkit.permissions.PermissionAttachment heartPerm;
+        /** 心跳暗角（結凍畫面版）正在用。 */
+        boolean freezeVignette;
         int heartPermStage;
         Location lastSample;
         long stillSince;
@@ -211,8 +213,8 @@ public final class Match {
         this.heartStageVolume = (float) hc.getDouble("heartbeat.stage-volume", 1.0);
         this.vignetteOn = hc.getBoolean("heartbeat.vignette", true);
         String vm = hc.getString("heartbeat.vignette-mode", "auto");
-        this.vignetteBetterHud = vm.equalsIgnoreCase("betterhud")
-                || vm.equalsIgnoreCase("auto") && Bukkit.getPluginManager().isPluginEnabled("BetterHud");
+        this.vignetteBetterHud = vm.equalsIgnoreCase("betterhud");
+        this.vignetteFreeze = vm.equalsIgnoreCase("auto") || vm.equalsIgnoreCase("freeze");
         List<Double> vs = hc.getDoubleList("heartbeat.vignette-strength");
         this.vignetteStrength = (vs.isEmpty() ? List.of(0.25, 0.4, 0.6, 0.8) : vs).stream().mapToDouble(Double::doubleValue).toArray();
         List<Integer> vb = hc.getIntegerList("heartbeat.vignette-bpm");
@@ -885,7 +887,7 @@ public final class Match {
                 sv.heartStage = st;
                 if (st > 0) playStage(sv, p);
             } else if (st > 0 && tick - sv.heartStageStart >= heartStageLoop) playStage(sv, p);
-            if (st > 0 && tick % 2 == 0) vignette(sv, p, st);
+            if (st > 0) vignette(sv, p, st);
             return;
         }
         int interval = heart.intervalTicks(d);
@@ -915,6 +917,13 @@ public final class Match {
             sv.vignette = null;
             if (p != null) p.setWorldBorder(null);
         }
+        if (sv.freezeVignette) {
+            sv.freezeVignette = false;
+            if (p != null) {
+                p.lockFreezeTicks(false);
+                p.setFreezeTicks(0);
+            }
+        }
         if (sv.heartPerm != null) {
             try {
                 if (p != null) p.removeAttachment(sv.heartPerm);
@@ -926,8 +935,8 @@ public final class Match {
         }
     }
 
-    /** 暗角用 BetterHud（有裝而且 heartbeat.vignette-mode 是 auto／betterhud）還是世界邊界。 */
-    private final boolean vignetteBetterHud;
+    /** 暗角用 BetterHud（heartbeat.vignette-mode: betterhud）、結凍畫面（auto／freeze，預設）、還是世界邊界（border）。 */
+    private final boolean vignetteBetterHud, vignetteFreeze;
 
     private final boolean vignetteOn;
     private final double[] vignetteStrength;
@@ -953,6 +962,16 @@ public final class Match {
         double phase = ((tick - sv.heartStageStart) / 20.0 * bpm / 60.0) % 1.0;
         double pulse = Math.exp(-phase * 5); // 每下一開始最暗，之後很快退掉
         double strength = Math.min(0.95, vignetteStrength[i] * (0.7 + 0.3 * pulse));
+        if (vignetteFreeze) {
+            // 結凍畫面版（2026-11-23）：原版「快凍僵」時會在畫面疊一張全螢幕貼圖（textures/misc/powder_snow_outline.png），
+            // 濃淡 = 凍結程度。資源包把那張圖換成黑色暗角，這裡用凍結 tick 控制濃淡；上限 139（140 才算凍僵、會扣血）。
+            if (!sv.freezeVignette) {
+                sv.freezeVignette = true;
+                p.lockFreezeTicks(true); // 不讓原版每 tick 自己退冰
+            }
+            p.setFreezeTicks((int) Math.min(p.getMaxFreezeTicks() - 1, Math.round(strength * p.getMaxFreezeTicks())));
+            return;
+        }
         if (sv.vignette == null) {
             sv.vignette = Bukkit.createWorldBorder();
             sv.vignette.setSize(2000);
