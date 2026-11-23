@@ -38,6 +38,8 @@ class NNGhost:
 def make_ghost(spec, rng):
     if spec == 'rule':
         return RuleBrain(random.Random(rng.random()))
+    if spec == 'rule_camper':
+        return RuleBrain(random.Random(rng.random()), jail_chance=0.9)  # 能守監獄就守（還是受 45 秒額度限制）
     return NNGhost(spec)
 
 
@@ -64,8 +66,11 @@ def _worker(conn, maps, n_envs, seed0, difficulty, survivors):
     pool = ['rule']
 
     def pick_ghost():
-        if len(pool) == 1 or rng.random() < 0.35:
+        x = rng.random()
+        if len(pool) == 1 or x < 0.25:
             return 'rule'
+        if x < 0.45:
+            return 'rule_camper'
         return pool[-1] if rng.random() < 0.5 else rng.choice(pool[1:])
 
     def new(k):

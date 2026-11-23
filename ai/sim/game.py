@@ -1080,8 +1080,9 @@ class Game:
 class RuleBrain:
     """規則型的高層決策（照插件的 AI 鬼簡化：聲音 → 關電源 → 弄壞大門 → 守監獄 → 依信念和多久沒去巡邏）。"""
 
-    def __init__(self, rng=None):
+    def __init__(self, rng=None, jail_chance=None):
         self.rng = rng or random.Random(0)
+        self.jail_chance = jail_chance  # None：照 config 的 guard-jail-chance；「守監獄型」給 0.9
 
     def __call__(self, game, mask):
         g = game
@@ -1092,7 +1093,8 @@ class RuleBrain:
             return A_SABOTAGE
         if mask[A_POWER] and g.t - g.power_on_at >= g.ai['power-cut-delay'] + 20:
             return A_POWER
-        if mask[A_JAIL] and r.random() < g.ai['guard-jail-chance'] * 0.3:
+        jc = self.jail_chance if self.jail_chance is not None else g.ai['guard-jail-chance'] * 0.3
+        if mask[A_JAIL] and r.random() < jc:
             return A_JAIL
         w = g.w
         dist = np.asarray(w.dist[g.g][w.reg_center]).astype(np.float64)
