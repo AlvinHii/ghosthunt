@@ -30,6 +30,12 @@ Paper 26.3 的非對稱小遊戲插件：1 鬼 vs 3–5 逃生者，在隨機生
 2. `python tools/room_plans.py` 檢查（門口、走得到、木桶摸得到）。
 3. `python tools/gen_java_templates.py` 重新產生 `RoomTemplates.java`；`python tools/make_room_doc.py` 更新 `docs/房間設計v2.md`。
 
+## 鬼 AI 的自我對弈訓練（`ai/`，2026-11-24 開始）
+
+Python 模擬器（`ai/sim`，讀 pve-maps 和 config.yml）＋PPO＋GRU 訓練鬼的高層決策（`ai/train`）＋ONNX 匯出（`ai/export`）。只做 mall2、hospital。
+說明、怎麼跑、模擬器還沒有的東西見 `ai/README.md`。訓練用的 Python 在 `%USERPROFILE%\.venvs\ghosthunt`（PyTorch CUDA），距離快取和訓練輸出在 `%LOCALAPPDATA%\ghosthunt-ai\`。
+還沒接進插件：接的時候取代 `GhostBrain.decideUtility` 的打分數，出錯／逾時／沒模型退回規則型（要使用者看過報告再做）。
+
 ## 平衡模擬
 
 `tools/simulate.py`：用 `/ghosthunt export` 匯出的大樓 JSON 跑電腦對局。
@@ -48,6 +54,7 @@ Paper 26.3 的非對稱小遊戲插件：1 鬼 vs 3–5 逃生者，在隨機生
 - 固定地圖 2F 也放大門候選（每局一扇 1F、一扇 2F）；2F 大門外面是陽台＋欄杆＋梯子下到地面（只是外觀，穿過大門就算逃出）。
 - 度假村機關（地圖檔 `[interactions]`，`game/Gimmicks`，數值在 config 的 `gimmicks`）：迎賓鈴（遠處涼亭響廣播吸引鬼，AI 不管多遠都聽得到）、球車遠光燈（扇形強光，鬼看不到人＋緩速，每台 2 次）、溫泉蒸氣（煙裡 AI 看不到人、真人鬼失明）。路燈分區通電、2F 木棧道腳步聲不做（跟電源規則衝突／等腳步聲系統）。
 - mall2 的支線（`game/SideQuests`，數值在 config 的 `side:`，說明見 `docs/支線任務候選.md`、`docs/夜間進度報告-2026-11-23.md`）：逃生路線大門＋每局隨機 1～2 條（貨梯、屋頂直升機、下水道），監控室、廣播、販賣機、配電箱、鐵捲門、急救包、雙人備用電源、今晚的規則。新地圖符號 L F P R X N M Y A Z V T U 見 `docs/PvE購物中心v2_藍圖prompt.md`。
+- 困難模式（2026-11-24 使用者決定，`ai-ghost.presets.hard`）：被抓原地倒地、隊友站旁邊 4 秒扶起來（`capture-mode: downed`，流血 60 秒、鬼在 8 格內暫停、第 2 次被抓淘汰；其他難度還是關監獄）、小鬼 4 隻（`imp-count`）、開局亮度 0 直到第一次開總電源（`start-blackout`；總電源本來就是開局關著的）、反應 0.15／視距 32／感應 24／揮空 0.05（速度不變）。server.pro 的 config.yml 是舊檔，這四個數字用 sed 改過（備份 `config.yml.bak-20261124`）。
 - PvE 不用鬼房（2026-11-23 決定，`pve.ghost-room: false`）：逃生者隨機分散出生，AI 鬼出生在離所有人走路最遠的地方，開局就放出來、馬上可以抓（所以用大地圖）。PvP 也一樣（`pvp.ghost-room: false`，開局建一張尋路圖算出生點，心跳也用走路距離；2026-11-23 做了，還沒真人測）。待做方向見 `docs/待做建議.md`。
 - 1F 底下有地下通道（地上活板門＋梯子，連到遠處另一個房間）；逃生者自由進出，鬼要先撬開出入口。每間房間地板顏色不同（認路用）。
 
