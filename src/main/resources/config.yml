@@ -294,6 +294,7 @@ side:                          # v2 地圖（mall2）的支線任務和額外的
   backup-power-hold: 3         # 雙人備用電源：兩根拉桿各站幾秒（兩邊要在 3 秒內都拉完）
   camera-notice-cooldown: 10   # 監視器：被鬼發現有人在看之後，幾秒內不會再通知
   rules: true                  # 每局隨機一條「今晚的規則」
+  force-routes: []             # 測試用：寫了就只開這幾條（elevator、heli、sewer），平常留空
 
 test-mode:                     # /gh start ai test [難度] [個性] [數量]：你當逃生者，被抓一次立刻重生、之後 AI 鬼無視你
   dummies: 3                   # 鬼出來時自動生幾個假逃生者（指令後面加數字可以改）

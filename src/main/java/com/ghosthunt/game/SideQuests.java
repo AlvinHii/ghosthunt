@@ -135,6 +135,12 @@ final class SideQuests {
         List<Integer> range = c.getIntegerList("side.extra-routes");
         int lo = range.size() > 0 ? range.get(0) : 1, hi = range.size() > 1 ? range.get(1) : 2;
         int n = Math.min(routes.size(), lo + (hi > lo ? m.rnd.nextInt(hi - lo + 1) : 0));
+        // 測試用：side.force-routes 有寫就只開那幾條（例如 [elevator, sewer]）
+        List<String> forced = c.getStringList("side.force-routes");
+        if (!forced.isEmpty()) {
+            routes.retainAll(forced);
+            n = routes.size();
+        }
         for (String r : routes.subList(0, n)) {
             switch (r) {
                 case "elevator" -> elevatorOpen = true;
