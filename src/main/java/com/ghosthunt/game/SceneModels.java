@@ -97,15 +97,26 @@ final class SceneModels {
         }
     }
 
-    /** 正面的方向（模型的正面朝北 -Z）：旁邊哪一格走得到就朝哪邊。 */
+    /**
+     * 正面的方向：先找背後的牆（旁邊是實心、會擋視線的方塊，而且對面那格走得到），背貼牆、正面朝對面；
+     * 旁邊都沒有牆（擺在空地上）才朝旁邊走得到的那一格。
+     */
     private float frontYaw(Pos p) {
         BlockFace[] faces = {BlockFace.SOUTH, BlockFace.NORTH, BlockFace.EAST, BlockFace.WEST};
-        for (Set<Pos> tiles : b.walkTiles.values())
-            for (BlockFace f : faces) {
-                Pos n = p.add(f.getModX(), 0, f.getModZ());
-                if (tiles.contains(n)) return yawOf(f);
-            }
+        for (BlockFace back : faces) {
+            Pos w = p.add(back.getModX(), 0, back.getModZ());
+            Pos front = p.add(-back.getModX(), 0, -back.getModZ());
+            if (!m.block(w).getType().isOccluding() || spots.containsKey(w)) continue;
+            if (walkable(front)) return yawOf(back.getOppositeFace());
+        }
+        for (BlockFace f : faces)
+            if (walkable(p.add(f.getModX(), 0, f.getModZ()))) return yawOf(f);
         return yawOf(BlockFace.SOUTH);
+    }
+
+    private boolean walkable(Pos q) {
+        for (Set<Pos> tiles : b.walkTiles.values()) if (tiles.contains(q)) return true;
+        return false;
     }
 
     /** 模型正面朝 f 的 yaw（模型原本朝北）。 */
