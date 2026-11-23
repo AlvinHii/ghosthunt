@@ -52,6 +52,9 @@ public final class Match {
         final String name;
         Status status = Status.FREE;
         int captures;
+        /** 逃出的時間（tick）和怎麼逃的（結算畫面用）。 */
+        long escapedAt = -1;
+        String escapedHow;
         long protectedUntil;
         int jailFloor = -1;
         long dashReadyAt;
@@ -1407,6 +1410,11 @@ public final class Match {
 
     /** 小鬼碰到人時的笑聲：沿路傳 range 格，大鬼聽得到（AI 當成高等級聲音；真人鬼有方向箭頭）。 */
     void impLaugh(Location at, double range) {
+        loudNoise(at, range);
+    }
+
+    /** 很大的聲音（小鬼大笑、密碼打錯的警報）：沿路傳 range 格，大鬼聽得到。 */
+    void loudNoise(Location at, double range) {
         LivingEntity g = ghostEntity();
         if (g == null || !released) return;
         if (aiGhost != null) aiGhost.hearSound(at, NOISE_HIGH, range);
@@ -1455,6 +1463,8 @@ public final class Match {
         Survivor sv = survivors.get(p.getUniqueId());
         if (sv == null || sv.status != Status.FREE) return;
         sv.status = Status.ESCAPED;
+        sv.escapedAt = tick;
+        sv.escapedHow = message.replace("逃出去了！", "").trim();
         acts.cancel(sv.id, null);
         if (aiGhost != null) aiGhost.forget(sv.id);
         obj.dropCards(p, cardsAt);
@@ -1494,6 +1504,8 @@ public final class Match {
             Objectives.GateState gs = obj.escapedThrough(p);
             if (gs == null) continue;
             sv.status = Status.ESCAPED;
+            sv.escapedAt = tick;
+            sv.escapedHow = "從 " + (gs.g.floor() + 1) + "F 大門";
             acts.cancel(sv.id, null);
             if (aiGhost != null) aiGhost.forget(sv.id);
             obj.dropCards(p, loc(gs.g.reader()));
@@ -1582,7 +1594,46 @@ public final class Match {
             p.teleport(back);
         }
         writeStats(reason);
+        showResults(reason, secs);
         onEnd.run();
+    }
+
+    /** 結算畫面（對話框）：每個人的結果、被抓幾次、怎麼逃出的；按「回大廳」馬上回去（不按也會自動回）。 */
+    private void showResults(String reason, long secs) {
+        List<Component> body = new ArrayList<>();
+        body.add(Component.text(reason + "（" + secs / 60 + " 分 " + secs % 60 + " 秒）", NamedTextColor.GOLD));
+        int escaped = 0;
+        for (Survivor sv : survivors.values()) {
+            Component line = switch (sv.status) {
+                case ESCAPED -> {
+                    escaped++;
+                    long t = Math.max(0, sv.escapedAt) / 20;
+                    yield Component.text("✔ " + sv.name + "：" + (sv.escapedHow == null ? "" : sv.escapedHow) + "逃出（" + t / 60 + " 分 " + t % 60 + " 秒）", NamedTextColor.GREEN);
+                }
+                case FREE -> Component.text("… " + sv.name + "：還在大樓裡", NamedTextColor.YELLOW);
+                case JAILED -> Component.text("✘ " + sv.name + "：在監獄", NamedTextColor.RED);
+                case ELIMINATED -> Component.text("✘ " + sv.name + "：被淘汰", NamedTextColor.DARK_RED);
+            };
+            body.add(line.append(Component.text("　被抓 " + sv.captures + " 次", NamedTextColor.GRAY)));
+        }
+        if (!survivors.isEmpty()) body.add(Component.text("逃出 " + escaped + " / " + survivors.size() + " 人", NamedTextColor.WHITE));
+        StringBuilder extra = new StringBuilder();
+        Object caps = stats.get("captures");
+        if (caps != null) extra.append("鬼一共抓了 ").append(caps).append(" 次");
+        Object rescues = stats.get("rescues");
+        if (rescues != null && ((Number) rescues).intValue() > 0) extra.append("｜救人 ").append(rescues).append(" 次");
+        Object touches = stats.get("impTouches");
+        if (touches != null) extra.append("｜小鬼碰到人 ").append(touches).append(" 次");
+        if (aiGhost != null) extra.append("｜AI：").append(aiGhost.settings().difficulty());
+        if (extra.length() > 0) body.add(Component.text(extra.toString(), NamedTextColor.GRAY));
+        List<io.papermc.paper.registry.data.dialog.ActionButton> buttons = List.of(
+                Dialogs.command(Component.text("回大廳", NamedTextColor.GREEN), Component.text("馬上回大廳（不按 5 秒後也會自動回去）"), 150, "/gh lobby"));
+        List<UUID> all = new ArrayList<>(survivors.keySet());
+        all.add(ghost);
+        for (UUID id : all) {
+            Player p = Bukkit.getPlayer(id);
+            if (p != null) Dialogs.show(p, Component.text("遊戲結束"), body, List.of(), buttons, Dialogs.close(Component.text("關閉")), 1);
+        }
     }
 
     /** 記一個數據；list = false 時只記第一次（例如「第一次抓人的時間」），list = true 時累積成清單。 */

@@ -436,12 +436,51 @@ final class SideQuests {
             return;
         }
         if (sewerOpened) return;
-        if (notesTaken.size() < noteOrder.size()) {
-            p.sendActionBar(Component.text("鐵柵有一個密碼鎖：還差 " + (noteOrder.size() - notesTaken.size()) + " 張紙條", NamedTextColor.GRAY));
+        sewerDialog(p, x);
+    }
+
+    private final Map<UUID, Long> wrongCodeAt = new HashMap<>();
+    private int wrongCodes;
+
+    /** 鐵柵的密碼鎖：跳出對話框自己打 3 位數（紙條上的數字）。打錯會響警報，鬼聽得到。 */
+    private void sewerDialog(Player p, Pos x) {
+        List<Component> body = List.of(
+                Component.text("鐵柵上有一個 " + noteOrder.size() + " 位數的密碼鎖。", NamedTextColor.WHITE),
+                Component.text("紙條上的數字：" + code() + "（找到 " + notesTaken.size() + "/" + noteOrder.size() + " 張）", NamedTextColor.AQUA),
+                Component.text("打錯會響很大聲的警報，鬼聽得到。", NamedTextColor.RED));
+        var input = io.papermc.paper.registry.data.dialog.input.DialogInput.text("code", Component.text("密碼"))
+                .maxLength(noteOrder.size()).width(120).build();
+        var ok = Dialogs.button(m.plugin, Component.text("輸入", NamedTextColor.GREEN), Component.text("輸入密碼（對了要站 5 秒解鎖，很大聲）"), 120,
+                (pl, view) -> submitCode(pl, x, view.getText("code")));
+        Dialogs.show(p, Component.text("下水道鐵柵"), body, List.of(input), List.of(ok), Dialogs.close(Component.text("取消")), 1);
+    }
+
+    private String fullCode() {
+        StringBuilder sb = new StringBuilder();
+        for (Pos p : noteOrder) sb.append(noteDigit.get(p));
+        return sb.toString();
+    }
+
+    private void submitCode(Player p, Pos x, String typed) {
+        if (sewerOpened || !m.isFreeSurvivor(p)) return;
+        Location at = m.loc(x).add(0.5, 0, 0.5);
+        if (p.getLocation().distance(at) > 4) {
+            p.sendActionBar(Component.text("離鐵柵太遠了", NamedTextColor.GRAY));
             return;
         }
-        Location at = m.loc(x).add(0.5, 0, 0.5);
-        m.acts.start(p, "sewer", "輸入密碼 " + code(), ticks("sewer-code", 5), false, true, at, () -> {
+        String code = typed == null ? "" : typed.trim();
+        if (!code.equals(fullCode())) {
+            long last = wrongCodeAt.getOrDefault(p.getUniqueId(), -1_000_000L);
+            if (m.tick - last < 40) return; // 不要連按
+            wrongCodeAt.put(p.getUniqueId(), m.tick);
+            wrongCodes++;
+            m.world.playSound(at, Sound.BLOCK_NOTE_BLOCK_BASS, 2f, 0.5f);
+            m.world.playSound(at, Sound.BLOCK_ANVIL_LAND, 1.2f, 0.6f);
+            m.loudNoise(at, 24); // 警報：鬼聽得到
+            p.showTitle(Title.title(Component.empty(), Component.text("密碼錯誤！警報響了", NamedTextColor.RED)));
+            return;
+        }
+        m.acts.start(p, "sewer", "解開密碼鎖", ticks("sewer-code", 5), false, true, at, () -> {
             sewerOpened = true;
             for (Pos q : b.sewerCells) {
                 Block bl = m.block(q.add(0, -1, 0));
@@ -488,17 +527,33 @@ final class SideQuests {
         cameraMenu(p);
     }
 
-    /** 聊天窗的攝影機清單（可以點）。 */
-    private void cameraMenu(Player p) {
-        Component line = Component.text("監視器：", NamedTextColor.GOLD);
+    /** 攝影機選單（對話框）：一開始點螢幕時、看的時候按 Shift 時打開。 */
+    void cameraMenu(Player p) {
+        CamView v = viewers.get(p.getUniqueId());
+        List<io.papermc.paper.registry.data.dialog.ActionButton> buttons = new ArrayList<>();
         for (int i = 0; i < b.cameras.size(); i++) {
             Building.Camera cam = b.cameras.get(i);
-            line = line.append(Component.text("［" + cam.name() + "］", NamedTextColor.AQUA)
-                    .clickEvent(ClickEvent.runCommand("/gh cam " + i))
-                    .hoverEvent(HoverEvent.showText(Component.text("切到這台攝影機"))));
+            final int idx = i;
+            boolean now = v != null && v.cam() == i;
+            buttons.add(Dialogs.button(m.plugin, Component.text((now ? "▶ " : "") + cam.name(), now ? NamedTextColor.YELLOW : NamedTextColor.WHITE),
+                    Component.text("切到「" + cam.name() + "」"), 110, (pl, view) -> camCommand(pl, String.valueOf(idx))));
         }
-        line = line.append(Component.text("［離開］", NamedTextColor.RED).clickEvent(ClickEvent.runCommand("/gh cam exit")));
-        p.sendMessage(line);
+        var exit = v != null
+                ? Dialogs.button(m.plugin, Component.text("離開監視器", NamedTextColor.RED), Component.text("回到你的身體"), 150, (pl, view) -> exitCamera(pl))
+                : Dialogs.close(Component.text("取消"));
+        List<Component> body = List.of(
+                Component.text("點一台攝影機切過去看。看的時候按 Shift 打開這個選單。", NamedTextColor.WHITE),
+                Component.text("你的身體留在原地不能動，鬼打到就算抓到你；攝影機拍到鬼，鬼會知道有人在看。", NamedTextColor.GRAY));
+        Dialogs.show(p, Component.text("監視器"), body, List.of(), buttons, exit, 3);
+    }
+
+    private final Map<UUID, Long> menuAt = new HashMap<>();
+
+    /** 看監視器時按 Shift（原本會跳出旁觀）：改成打開攝影機選單。 */
+    void onSneakWhileViewing(Player p) {
+        if (m.tick - menuAt.getOrDefault(p.getUniqueId(), -1_000L) < 10) return;
+        menuAt.put(p.getUniqueId(), m.tick);
+        cameraMenu(p);
     }
 
     /** /gh cam &lt;編號|exit&gt;。 */
@@ -515,7 +570,6 @@ final class SideQuests {
         }
         if (i < 0 || i >= b.cameras.size()) return;
         CamView v = viewers.get(p.getUniqueId());
-        boolean entering = v == null;
         if (v == null) {
             // 要站在監控室的螢幕旁邊才能開
             if (monitor == null || !m.isFreeSurvivor(p) || p.getLocation().distance(m.loc(monitor)) > 4 || !m.obj.powerOn()) return;
@@ -547,8 +601,7 @@ final class SideQuests {
                 if (viewers.containsKey(p.getUniqueId())) p.setSpectatorTarget(target);
             }, 1L);
         }
-        p.sendActionBar(Component.text("攝影機：" + b.cameras.get(i).name() + "（在聊天窗切換或離開）", NamedTextColor.AQUA));
-        if (entering) cameraMenu(p); // 切換時不再送一次清單（會刷頻），聊天窗裡原本那排還能點
+        p.sendActionBar(Component.text("攝影機：" + b.cameras.get(i).name() + "（按 Shift 換台或離開）", NamedTextColor.AQUA));
     }
 
     private ArmorStand spawnEye(int i) {
@@ -1024,6 +1077,7 @@ final class SideQuests {
         s.put("sideNotes", notesTaken.size());
         s.put("sideBreakers", repaired.size());
         s.put("sideShutters", shuttersOpen.size());
+        s.put("sideWrongCodes", wrongCodes);
         s.put("sidePaUsed", c.getInt("side.pa-uses", 2) - paUses);
         return s;
     }

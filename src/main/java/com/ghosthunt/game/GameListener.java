@@ -109,7 +109,10 @@ public final class GameListener implements Listener {
     @EventHandler
     public void onStopSpectating(com.destroystokyo.paper.event.player.PlayerStopSpectatingEntityEvent e) {
         Match m = running();
-        if (m != null && m.side != null && m.side.isViewing(e.getPlayer())) e.setCancelled(true);
+        if (m != null && m.side != null && m.side.isViewing(e.getPlayer())) {
+            e.setCancelled(true);
+            m.side.onSneakWhileViewing(e.getPlayer()); // 按 Shift：打開攝影機選單
+        }
     }
 
     @EventHandler(priority = EventPriority.LOW)

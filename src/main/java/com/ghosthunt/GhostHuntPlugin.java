@@ -197,6 +197,7 @@ public final class GhostHuntPlugin extends JavaPlugin {
                     for (String line : com.ghosthunt.game.Match.selfTest(this, building, w, com.ghosthunt.game.GameSettings.from(getConfig()),
                             line -> msg(sender, "[自我檢查] " + line, line.contains("走不到") ? NamedTextColor.RED : NamedTextColor.AQUA)))
                         msg(sender, "[自我檢查] " + line, NamedTextColor.AQUA);
+                    msg(sender, "[自我檢查] " + com.ghosthunt.game.Dialogs.check(this), NamedTextColor.AQUA);
                     msg(sender, "[自我檢查] 完成，沒有錯誤。", NamedTextColor.GREEN);
                 } catch (RuntimeException e) {
                     msg(sender, "[自我檢查] 出錯：" + e, NamedTextColor.RED);
