@@ -16,10 +16,10 @@ from .game import (DT, DOWN, ESCAPED, FREE, JAILED, OUT, RMAX, Game)
 S_REG = 13
 S_GLOBAL = 16
 SOBS_DIM = RMAX * S_REG + S_GLOBAL
-(SA_POWER, SA_BARREL1, SA_BARREL2, SA_BARREL3, SA_AUTH, SA_SWIPE, SA_ESCAPE, SA_RESCUE, SA_FLEE, SA_HIDE, SA_WAIT) = range(RMAX, RMAX + 11)
-S_ACTIONS = RMAX + 11
+(SA_POWER, SA_BARREL1, SA_BARREL2, SA_BARREL3, SA_AUTH, SA_SWIPE, SA_ESCAPE, SA_RESCUE, SA_FLEE, SA_HIDE, SA_WAIT, SA_AUTO) = range(RMAX, RMAX + 12)
+S_ACTIONS = RMAX + 12
 S_NAMES = {SA_POWER: '開電源', SA_BARREL1: '木桶1', SA_BARREL2: '木桶2', SA_BARREL3: '木桶3', SA_AUTH: '授權', SA_SWIPE: '刷卡',
-           SA_ESCAPE: '逃出', SA_RESCUE: '救人', SA_FLEE: '逃跑', SA_HIDE: '躲', SA_WAIT: '繼續'}
+           SA_ESCAPE: '逃出', SA_RESCUE: '救人', SA_FLEE: '逃跑', SA_HIDE: '躲', SA_WAIT: '繼續', SA_AUTO: '照一般玩家'}
 TICK = 4  # 每 4 步（1 秒）做一次決定
 
 
@@ -77,6 +77,9 @@ class SurvivorGame(Game):
         m[SA_WAIT] = True
         if s.state != FREE:
             return m
+        # 沒事做的時候不能「繼續」（不然會學成站著不動）
+        m[SA_WAIT] = s.task is not None or s.act is not None or s.hidden is not None
+        m[SA_AUTO] = True
         w = self.w
         m[:w.R] = True
         m[SA_POWER] = not self.power
@@ -112,6 +115,17 @@ class SurvivorGame(Game):
             return
         if s.act and a not in (SA_FLEE, SA_HIDE):
             return  # 讀條中：只有逃跑、躲會中斷
+        if a == SA_AUTO:
+            # 照規則型逃生者（一般玩家）的做法：有危險就逃，沒有就做下一個目標
+            if s.hidden:
+                return
+            if self._sees_ghost(s) or self.heartbeat_stage(s) >= s.p['flee-stage']:
+                s.act = None
+                s.flee_until = self.t + 1.5
+                s.task = ('flee', None, None)
+            elif not s.act:
+                s.task = self._choose_task(s)
+            return
         w = self.w
         if s.hidden:
             if a == SA_HIDE:

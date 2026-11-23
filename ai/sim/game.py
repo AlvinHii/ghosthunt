@@ -780,13 +780,17 @@ class Game:
                 return ('escape', g['exit'], g)
         # 扶倒地的隊友：最近的一個人去（倒地的位置就是目標，站旁邊就會扶）
         down = [o for o in self.sv if o.state == DOWN]
-        if down and s.will_rescue:
+        # 去救人的路上心跳變快（鬼在附近，可能在守）：先放棄 15 秒，做別的事再回來（真人會這樣）
+        if s.task and s.task[0] in ('rescue', 'revive') and self.heartbeat_stage(s) >= 2:
+            s.rescue_block = self.t + 15
+        can_rescue = s.will_rescue and self.t >= getattr(s, 'rescue_block', -1)
+        if down and can_rescue:
             d0 = min(down, key=lambda o: self.d(s.pos, o.pos))
             if all(self.d(s.pos, d0.pos) <= self.d(o.pos, d0.pos) + 5 for o in others):
                 return ('revive', d0.pos, d0)
         # 救人：最近的一個人去
         jailed = [o for o in self.sv if o.state == JAILED]
-        if jailed and w.jails and s.will_rescue:
+        if jailed and w.jails and can_rescue:
             stand = w.jails[0]['stand']
             if all(self.d(s.pos, stand) <= self.d(o.pos, stand) + 5 for o in others) or len(jailed) >= 2:
                 return ('rescue', stand, None)

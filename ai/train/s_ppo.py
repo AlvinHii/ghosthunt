@@ -49,11 +49,11 @@ def main():
     ap.add_argument('--envs', type=int, default=6)
     ap.add_argument('--steps', type=int, default=128)
     ap.add_argument('--hours', type=float, default=4)
-    ap.add_argument('--lr', type=float, default=2.5e-4)
+    ap.add_argument('--lr', type=float, default=1e-4)
     ap.add_argument('--gamma', type=float, default=0.997)
     ap.add_argument('--lam', type=float, default=0.95)
     ap.add_argument('--clip', type=float, default=0.2)
-    ap.add_argument('--ent', type=float, default=0.01)
+    ap.add_argument('--ent', type=float, default=0.003)
     ap.add_argument('--epochs', type=int, default=3)
     ap.add_argument('--minibatches', type=int, default=4)
     ap.add_argument('--eval-every', type=int, default=20)
@@ -77,6 +77,11 @@ def main():
     N = venv.n * SLOTS
     T = a.steps
     net = SurvivorNet().to(dev)
+    with torch.no_grad():
+        # 一開始偏向「照一般玩家」：起點等於規則型逃生者，再從這裡學什麼時候該做不一樣的事
+        from ..sim.game import RMAX
+        from ..sim.survivor import SA_AUTO
+        net.special.bias[SA_AUTO - RMAX] += 3.0
     opt = torch.optim.Adam(net.parameters(), lr=a.lr, eps=1e-5)
     update, decisions = 0, 0
     latest = os.path.join(out, 'latest.pt')
