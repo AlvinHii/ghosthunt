@@ -713,8 +713,14 @@ public final class GhostHuntPlugin extends JavaPlugin {
         String room = com.ghosthunt.game.Goto.regionName(building, target);
         int floor = 1;
         for (int f = 0; f < building.layout.floors; f++) if (target.y() >= building.layout.floorY(f)) floor = f + 1;
-        msg(sender, "傳送到 " + label + (list.size() > 1 ? "（" + (i + 1) + "/" + list.size() + "）" : "") + "：" + floor + "F"
-                + (room == null ? "" : " " + room) + "。", NamedTextColor.GREEN);
+        String where = "傳送到 " + label + (list.size() > 1 ? "（" + (i + 1) + "/" + list.size() + "）" : "") + "：" + floor + "F"
+                + (room == null ? "" : " " + room);
+        // 有指定第幾個（點［1］［2］切換）時只顯示在快捷列上方，不刷聊天窗
+        if (args.length > 2) {
+            p.sendActionBar(Component.text(where, NamedTextColor.GREEN));
+            return;
+        }
+        msg(sender, where + "。", NamedTextColor.GREEN);
         if (list.size() > 1) {
             Component line = Component.text("其他：", NamedTextColor.GRAY);
             for (int j = 0; j < list.size(); j++)

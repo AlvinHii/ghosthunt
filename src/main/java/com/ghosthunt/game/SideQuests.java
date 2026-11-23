@@ -512,6 +512,7 @@ final class SideQuests {
         }
         if (i < 0 || i >= b.cameras.size()) return;
         CamView v = viewers.get(p.getUniqueId());
+        boolean entering = v == null;
         if (v == null) {
             // 要站在監控室的螢幕旁邊才能開
             if (monitor == null || !m.isFreeSurvivor(p) || p.getLocation().distance(m.loc(monitor)) > 4 || !m.obj.powerOn()) return;
@@ -543,7 +544,7 @@ final class SideQuests {
             }, 1L);
         }
         p.sendActionBar(Component.text("攝影機：" + b.cameras.get(i).name() + "（在聊天窗切換或離開）", NamedTextColor.AQUA));
-        cameraMenu(p);
+        if (entering) cameraMenu(p); // 切換時不再送一次清單（會刷頻），聊天窗裡原本那排還能點
     }
 
     private ArmorStand spawnEye(int i) {
