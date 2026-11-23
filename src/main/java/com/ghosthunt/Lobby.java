@@ -163,7 +163,8 @@ public final class Lobby implements Listener {
         exhibitAt.clear();
         settingSigns.clear();
         frameItem.clear();
-        for (Entity e : world.getEntities()) if (e instanceof ItemFrame) e.remove();
+        for (Entity e : world.getEntities())
+            if (e instanceof ItemFrame || e instanceof org.bukkit.entity.ItemDisplay || e instanceof org.bukkit.entity.Interaction) e.remove();
         for (int x = -HX - 2; x <= HX + 2; x++)
             for (int z = -HZ - 2; z <= HZ + 2; z++)
                 for (int y = FLOOR - 3; y <= CEIL + 1; y++) at(x, y, z).setType(Material.AIR, false);
@@ -225,23 +226,26 @@ public final class Lobby implements Listener {
         String[] ids = {Items.KEYCARD, Items.SMOKE, Items.SPEED, Items.FLASHLIGHT, Items.SCANNER, Items.BARRICADE, Items.FUSE, Items.ROOF_KEY, Items.COIN, Items.MEDKIT};
         for (int i = 0; i < ids.length; i++) {
             int x = -13 + i * 3;
-            Location l = new Location(world, x, FLOOR + 4, -HZ + 1);
             String id = ids[i];
             ItemStack it = id.equals(Items.KEYCARD) ? Items.keycard(1, false) : id.equals(Items.BARRICADE) ? Items.barricade(1) : Items.of(id);
-            try {
-                GlowItemFrame f = world.spawn(l, GlowItemFrame.class, fr -> {
-                    fr.setFacingDirection(BlockFace.SOUTH, true);
-                    fr.setItem(it, false);
-                    fr.setFixed(true);
-                    fr.setInvulnerable(true);
-                    fr.setPersistent(true);
-                });
-                frameItem.put(f.getUniqueId(), id);
-            } catch (IllegalArgumentException e) {
-                plugin.getLogger().warning("大廳的道具展示框掛不上去：" + id);
-            }
+            // 浮在牆前的 3D 道具（背包圖示的斜角，比展示框看得清楚）＋一個看不見的點擊框（右鍵看說明）
+            Location l = new Location(world, x + 0.5, FLOOR + 4.5, -HZ + 1.45);
+            world.spawn(l, org.bukkit.entity.ItemDisplay.class, d -> {
+                d.setItemStack(it);
+                d.setItemDisplayTransform(org.bukkit.entity.ItemDisplay.ItemDisplayTransform.GUI);
+                d.setPersistent(true);
+                d.setTransformation(new org.bukkit.util.Transformation(new org.joml.Vector3f(), new org.joml.AxisAngle4f(),
+                        new org.joml.Vector3f(0.9f, 0.9f, 0.9f), new org.joml.AxisAngle4f()));
+            });
+            org.bukkit.entity.Interaction hit = world.spawn(new Location(world, x + 0.5, FLOOR + 4.05, -HZ + 1.45), org.bukkit.entity.Interaction.class, in -> {
+                in.setInteractionWidth(0.9f);
+                in.setInteractionHeight(0.9f);
+                in.setResponsive(true);
+                in.setPersistent(true);
+            });
+            frameItem.put(hit.getUniqueId(), id);
         }
-        wallSign(-16, FLOOR + 4, -HZ + 1, BlockFace.SOUTH, "§b道具", "§7右鍵展示框", "§7看說明", "");
+        wallSign(-16, FLOOR + 4, -HZ + 1, BlockFace.SOUTH, "§b道具", "§7右鍵道具", "§7看說明", "");
     }
 
     // ---- 西牆：準備 ----
@@ -393,10 +397,77 @@ public final class Lobby implements Listener {
             default -> {
             }
         }
+        overlayModel(k, s, parts);
         String[] t = EXHIBITS.get(k);
         Block sign = wallSign(x, FLOOR + 3, z, s.in(), "§e" + t[0], t[1], t[2], "§7右鍵看說明");
         parts.add(sign);
         for (Block b : parts) exhibitAt.put(key(b), k);
+    }
+
+    /** 展示品疊上 3D 模型（跟遊戲裡一樣：方塊換成屏障，上面放模型）；門、監獄、地上扁平的東西維持原本的方塊。 */
+    private void overlayModel(String k, Slot s, List<Block> parts) {
+        if (!plugin.getConfig().getBoolean("models.scene", true)) return;
+        String model;
+        int height = 1;
+        float scale = 1f;
+        int y = FLOOR + 1;
+        switch (k) {
+            case "barrel" -> model = "container";
+            case "locked" -> model = "container_locked";
+            case "power" -> {
+                model = "power_panel_on";
+                height = 2;
+            }
+            case "terminal" -> model = "security_terminal_on";
+            case "reader" -> model = "card_reader_idle";
+            case "cabinet" -> {
+                model = "cabinet";
+                height = 2;
+                scale = 1.4388f;
+            }
+            case "fuse" -> {
+                model = "elevator_panel_2";
+                height = 2;
+            }
+            case "radio" -> model = "radio";
+            case "lectern" -> model = "note_stand";
+            case "vending" -> {
+                model = "vending_machine";
+                height = 2;
+            }
+            case "monitor" -> {
+                model = "cctv_monitor_on";
+                height = 2;
+            }
+            case "pa" -> {
+                model = "pa_desk";
+                height = 2;
+            }
+            case "breaker" -> {
+                model = "breaker_box_fixed";
+                height = 2;
+            }
+            case "camera" -> {
+                model = "cctv_camera";
+                y = CEIL - 1;
+            }
+            default -> {
+                return;
+            }
+        }
+        // 原本的方塊換成屏障（右鍵、碰撞照舊）；模型自己有的按鈕、拉桿、掛鎖、展示框拿掉
+        for (Block b : new ArrayList<>(parts)) {
+            Material t = b.getType();
+            if (t == Material.LEVER || t == Material.STONE_BUTTON || t == Material.IRON_TRAPDOOR && k.equals("locked")) b.setType(Material.AIR, false);
+        }
+        for (int dy = 0; dy < height; dy++) {
+            Block b = at(s.x(), y + dy, s.z());
+            b.setType(Material.BARRIER, false);
+            parts.add(b);
+        }
+        for (Entity e : world.getNearbyEntities(new Location(world, s.x() + 0.5, y + 1, s.z() + 0.5), 1.2, 1.2, 1.2))
+            if (e instanceof ItemFrame) e.remove();
+        com.ghosthunt.game.Models.spawn(plugin, world, s.x(), y, s.z(), com.ghosthunt.game.Models.yaw(plugin, s.in()), model, scale, true);
     }
 
     // ---- 方塊小工具 ----
