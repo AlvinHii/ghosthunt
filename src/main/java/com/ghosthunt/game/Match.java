@@ -68,6 +68,8 @@ public final class Match {
         /** 4 段心跳：現在播第幾段（0 = 沒有）、這段什麼時候開始播。 */
         int heartStage;
         long heartStageStart;
+        /** 心跳暗角：只有這個人看得到的世界邊界（靠近邊界時畫面四周變暗變紅）；沒有就是 null。 */
+        org.bukkit.WorldBorder vignette;
         Location lastSample;
         long stillSince;
         boolean inHole;
@@ -204,6 +206,11 @@ public final class Match {
         this.heartStageDist = sd.stream().mapToDouble(Double::doubleValue).toArray();
         this.heartStageLoop = (int) Math.round(hc.getDouble("heartbeat.stage-loop", 24) * 20);
         this.heartStageVolume = (float) hc.getDouble("heartbeat.stage-volume", 1.0);
+        this.vignetteOn = hc.getBoolean("heartbeat.vignette", true);
+        List<Double> vs = hc.getDoubleList("heartbeat.vignette-strength");
+        this.vignetteStrength = (vs.isEmpty() ? List.of(0.25, 0.4, 0.6, 0.8) : vs).stream().mapToDouble(Double::doubleValue).toArray();
+        List<Integer> vb = hc.getIntegerList("heartbeat.vignette-bpm");
+        this.vignetteBpm = (vb.isEmpty() ? List.of(60, 75, 100, 130) : vb).stream().mapToInt(Integer::intValue).toArray();
         org.bukkit.SoundCategory cat = org.bukkit.SoundCategory.PLAYERS;
         try {
             cat = org.bukkit.SoundCategory.valueOf(hc.getString("heartbeat.category", "players").toUpperCase(java.util.Locale.ROOT));
@@ -872,6 +879,7 @@ public final class Match {
                 sv.heartStage = st;
                 if (st > 0) playStage(sv, p);
             } else if (st > 0 && tick - sv.heartStageStart >= heartStageLoop) playStage(sv, p);
+            if (st > 0 && tick % 2 == 0) vignette(sv, p, st);
             return;
         }
         int interval = heart.intervalTicks(d);
@@ -892,11 +900,40 @@ public final class Match {
         p.playSound(p, heartStageSounds.get(sv.heartStage - 1), heartCategory, heartStageVolume, 1f);
     }
 
-    /** 停掉正在播的那段心跳（被抓、熄燈、遊戲結束、鬼離太遠）。 */
+    /** 停掉正在播的那段心跳（被抓、熄燈、遊戲結束、鬼離太遠），暗角也拿掉。 */
     void stopHeartbeat(Survivor sv, Player p) {
         if (sv.heartStage > 0 && !heartStageSounds.isEmpty() && p != null)
             p.stopSound(heartStageSounds.get(sv.heartStage - 1), heartCategory);
         sv.heartStage = 0;
+        if (sv.vignette != null) {
+            sv.vignette = null;
+            if (p != null) p.setWorldBorder(null);
+        }
+    }
+
+    private final boolean vignetteOn;
+    private final double[] vignetteStrength;
+    private final int[] vignetteBpm;
+
+    /**
+     * 心跳暗角（2026-11-23）：給這個人一道只有他看得到的世界邊界（直徑 2000 格、中心在他身上，離邊界 1000 格），
+     * 調警告距離讓原版的「靠近邊界」效果出現：畫面四周變暗、偏紅。強度 = 1 − 1000 ／ 警告距離。
+     * 心跳越近越暗，而且跟著那一段的心跳速度一下一下地脈動（每下最暗，之後退回 70%）。
+     */
+    private void vignette(Survivor sv, Player p, int stage) {
+        if (!vignetteOn || stage <= 0) return;
+        int i = Math.min(stage, vignetteStrength.length) - 1;
+        double bpm = vignetteBpm[Math.min(i, vignetteBpm.length - 1)];
+        double phase = ((tick - sv.heartStageStart) / 20.0 * bpm / 60.0) % 1.0;
+        double pulse = Math.exp(-phase * 5); // 每下一開始最暗，之後很快退掉
+        double strength = Math.min(0.95, vignetteStrength[i] * (0.7 + 0.3 * pulse));
+        if (sv.vignette == null) {
+            sv.vignette = Bukkit.createWorldBorder();
+            sv.vignette.setSize(2000);
+        }
+        sv.vignette.setCenter(p.getLocation());
+        sv.vignette.setWarningDistance((int) Math.round(1000 / (1 - strength)));
+        p.setWorldBorder(sv.vignette);
     }
     private final String heartSound;
     private final boolean heartPath;
