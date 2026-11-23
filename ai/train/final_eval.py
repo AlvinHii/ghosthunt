@@ -31,8 +31,8 @@ def _init():
 
 def _ghost_job(args):
     from .envs import _evaluate
-    state, seed, games, use_rule, personas = args
-    return _evaluate(_W['worlds'], _W['cfg'], MAPS, state, games, seed, use_rule, [2, 3], personas)
+    state, seed, games, use_rule, personas, surv = args
+    return _evaluate(_W['worlds'], _W['cfg'], MAPS, state, games, seed, use_rule, [2, 3], personas, surv)
 
 
 def _surv_job(args):
@@ -107,6 +107,7 @@ def main():
     ap.add_argument('--games', type=int, default=1000)
     ap.add_argument('--workers', type=int, default=12)
     ap.add_argument('--out', default=None)
+    ap.add_argument('--surv-run', default=None, help='鬼：另外比「對訓練好的逃生者 AI」')
     a = ap.parse_args()
 
     def state_of(run, ckpt='latest.pt'):
@@ -118,9 +119,13 @@ def main():
     result = {}
     with mp.get_context('spawn').Pool(a.workers, initializer=_init) as pool:
         if a.who == 'ghost':
-            for personas, title in [('train', '對訓練用的逃生者個性'), ('heldout', '對沒見過的逃生者個性')]:
-                pol = run(pool, _ghost_job, lambda s, n: (state, s, n, False, personas), a.games)
-                base = run(pool, _ghost_job, lambda s, n: (None, s, n, True, personas), a.games)
+            surv = state_of(a.surv_run) if a.surv_run else None
+            sets = [('train', '對訓練用的逃生者個性'), ('heldout', '對沒見過的逃生者個性')]
+            if surv is not None:
+                sets.append(('nn', f'對逃生者 AI（{a.surv_run}）'))
+            for personas, title in sets:
+                pol = run(pool, _ghost_job, lambda s, n: (state, s, n, False, personas, surv), a.games)
+                base = run(pool, _ghost_job, lambda s, n: (None, s, n, True, personas, surv), a.games)
                 cmp = compare(pol, base)
                 result[personas] = cmp
                 md += [table(f'鬼：{title}（每人逃出率，越低越好）', cmp, 'lower'), '']

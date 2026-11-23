@@ -69,6 +69,8 @@ def main():
     ap.add_argument('--eval-every', type=int, default=25)
     ap.add_argument('--eval-games', type=int, default=240)
     ap.add_argument('--init', default=None, help='新的訓練從這個 run 的 latest.pt 開始')
+    ap.add_argument('--surv-run', default=None, help='輪流進化：一部分局的逃生者用這個 run 訓練好的 AI')
+    ap.add_argument('--nn-frac', type=float, default=0.5, help='用逃生者 AI 的局佔多少')
     a = ap.parse_args()
 
     if os.name == 'nt':
@@ -79,7 +81,12 @@ def main():
     out = os.path.join(CACHE, 'runs', a.run)
     os.makedirs(out, exist_ok=True)
     maps = a.maps.split(',')
-    venv = VecEnv(maps, a.workers, a.envs, seed=hash(a.run) % 1000, difficulty=a.difficulty)
+    surv_state = None
+    if a.surv_run:
+        cks = torch.load(os.path.join(CACHE, 'runs', a.surv_run, 'latest.pt'), map_location='cpu')
+        surv_state = {k: v.cpu() for k, v in cks['net'].items()}
+        print(f'逃生者對手：規則型個性 {1 - a.nn_frac:.0%}＋{a.surv_run} 的 AI {a.nn_frac:.0%}', flush=True)
+    venv = VecEnv(maps, a.workers, a.envs, seed=hash(a.run) % 1000, difficulty=a.difficulty, surv_state=surv_state, nn_frac=a.nn_frac if surv_state else 0.0)
     E, T = venv.n, a.steps
     net = GhostNet().to(dev)
     opt = torch.optim.Adam(net.parameters(), lr=a.lr, eps=1e-5)
@@ -105,6 +112,8 @@ def main():
         t = time.time()
         base = summarize(venv.evaluate(None, a.eval_games, use_rule=True))
         base['heldout'] = summarize(venv.evaluate(None, a.eval_games, use_rule=True, personas='heldout'))
+        if surv_state is not None:
+            base['nn'] = summarize(venv.evaluate(None, a.eval_games, use_rule=True, personas='nn'))
         with open(base_path, 'w', encoding='utf-8') as f:
             json.dump(base, f, ensure_ascii=False, indent=1)
         print(f'規則型大腦（對照，{time.time() - t:.0f} 秒）：{base}')
@@ -210,6 +219,8 @@ def main():
             state = {k: v.cpu() for k, v in net.state_dict().items()}
             ev = summarize(venv.evaluate(state, a.eval_games))
             ev['heldout'] = summarize(venv.evaluate(state, a.eval_games, personas='heldout'))
+            if surv_state is not None:
+                ev['nn'] = summarize(venv.evaluate(state, a.eval_games, personas='nn'))
             evlog.writerow([update, decisions, round(time.time() - t_start)] + [round(ev.get(k, 0), 4) for k in
                            ['any_escape', 'escaped_per_survivor', 'captures', 'wipe', 'minutes', 'power_cut', 'mall2_escaped_per_survivor', 'hospital_escaped_per_survivor',
                             'jail_guard', 'regions_per_min']] + [round(ev['heldout'].get('escaped_per_survivor', 0), 4)])
@@ -218,7 +229,8 @@ def main():
             print(f'  評估（{a.eval_games} 局，鬼選最高分）：每人逃出 {ev["escaped_per_survivor"]:.3f}（規則型 {base["escaped_per_survivor"]:.3f}）'
                   f'｜沒見過的個性 {ev["heldout"].get("escaped_per_survivor", 0):.3f}（規則型 {base["heldout"].get("escaped_per_survivor", 0):.3f}）'
                   f'｜守監獄 {ev.get("jail_guard", 0):.2f}（{base.get("jail_guard", 0):.2f}）｜每分鐘區域 {ev.get("regions_per_min", 0):.1f}（{base.get("regions_per_min", 0):.1f}）'
-                  f'｜一局 {ev["minutes"]:.1f} 分（{base["minutes"]:.1f}）', flush=True)
+                  f'｜一局 {ev["minutes"]:.1f} 分（{base["minutes"]:.1f}）'
+                  + (f'｜對逃生者 AI {ev["nn"].get("escaped_per_survivor", 0):.3f}（規則型鬼 {base["nn"].get("escaped_per_survivor", 0):.3f}）' if 'nn' in ev else ''), flush=True)
     venv.close()
     print('時間到，結束。')
 
