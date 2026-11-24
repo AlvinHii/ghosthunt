@@ -110,6 +110,9 @@ class Survivor:
         self.busy_until = -1.0     # 卡門、推櫃子、照手電筒的時候站著不動
         self.flash_at = None
         self.flash_uses = 0
+        self.curse_until = -1.0    # 鬼的技能：詛咒減速
+        self.dark_until = -1.0     # 鬼的技能：黑暗（失明）
+        self.seal_until = -1.0     # 鬼的技能：封印道具
 
 
 class Game:
@@ -277,7 +280,9 @@ class Game:
         it = cfg.get('items', {}).get('spawn-by-survivors', {})
         self.item_pool = {k: by_survivors(it[k], survivors) for k in ('smoke', 'speed-potion', 'flashlight', 'barricade') if k in it}
         self.item_p = min(1.0, sum(self.item_pool.values()) / max(1, len(self.barrels)))
-        self.stats.update({'jams': 0, 'barricades': 0, 'cabinets': 0, 'smokes': 0, 'potions': 0, 'flashes': 0, 'breaks': 0})
+        self.stats.update({'jams': 0, 'barricades': 0, 'cabinets': 0, 'smokes': 0, 'potions': 0, 'flashes': 0, 'breaks': 0,
+                           'sk_slow': 0, 'sk_dark': 0, 'sk_seal': 0})
+        self.sk_ready = {'slow': 0.0, 'dark': 0.0, 'seal': 0.0}
         if not hasattr(w, 'door_nodes'):
             w.door_nodes, w.open_nodes, w.cab_of = set(), set(), {}
             for i in range(w.N):
@@ -548,6 +553,8 @@ class Game:
             m = 1.5
         if self.t < s.potion_until:
             m = max(m, 1 + self.c['items'].get('speed-potion-bonus', 0.4))
+        if self.t < s.curse_until:
+            m *= 1 - self.ai.get('skill-slow-amount', 0.3)
         return 5.6 * m
 
     def _tools(self, s, prev):
@@ -588,7 +595,7 @@ class Game:
                     s.busy_until = self.t + 0.5
                     self.stats['barricades'] += 1
                     return
-        if not sees:
+        if not sees or self.t < s.seal_until:
             return
         if s.items.get('smoke', 0) > 0 and de <= c['items'].get('smoke-radius', 4):
             s.items['smoke'] -= 1
@@ -808,6 +815,28 @@ class Game:
         if node is not None and node != p1:
             self.follow = (node, self.t + 10)
 
+    def _skills(self, s):
+        """鬼的技能（skill-*：0 = 沒有；冷卻、時間照 config）。追人的時候：
+        封印道具：8 格內有人就放（範圍）；詛咒減速：6～14 格、快追上又追不到；黑暗：對方在讀進度條，或 8 格以外在跑。"""
+        ai = self.ai
+        d = self.eu(self.g, s.pos)
+        if ai.get('skill-seal', 0) and self.t >= self.sk_ready['seal'] and d <= ai.get('skill-seal-radius', 8):
+            for o in self.free():
+                if o.pos is not None and self.eu(self.g, o.pos) <= ai.get('skill-seal-radius', 8):
+                    o.seal_until = self.t + ai.get('skill-seal-time', 8)
+            self.sk_ready['seal'] = self.t + ai.get('skill-seal-cooldown', 50)
+            self.stats['sk_seal'] += 1
+            return
+        if ai.get('skill-slow', 0) and self.t >= self.sk_ready['slow'] and 6 <= d <= 14:
+            s.curse_until = self.t + ai.get('skill-slow-time', 5)
+            self.sk_ready['slow'] = self.t + ai.get('skill-slow-cooldown', 45)
+            self.stats['sk_slow'] += 1
+            return
+        if ai.get('skill-dark', 0) and self.t >= self.sk_ready['dark'] and (s.act is not None or d >= 8):
+            s.dark_until = self.t + ai.get('skill-dark-time', 4)
+            self.sk_ready['dark'] = self.t + ai.get('skill-dark-cooldown', 50)
+            self.stats['sk_dark'] += 1
+
     def _intercept(self, s):
         """繞前堵（插件 Interceptor）：猜對方往哪個出口／目標跑，找他路上「鬼比他早 0.5 秒到」的格子。"""
         if self.t < self.icpt_next:
@@ -948,6 +977,7 @@ class Game:
             if self.t >= self.fatigue_until and self.t >= self.capture_ready and self.eu(self.g, s.pos) <= ai['attack-range']:
                 self.windup = (s, self.t + ai['reaction'])
                 return
+            self._skills(s)
             dest = s.pos
             if self.icpt_on:
                 node = self._intercept(s)
@@ -1288,6 +1318,8 @@ class Game:
     def _sees_ghost(self, s):
         d = self.eu(s.pos, self.g)
         rng = 24 if self.power else 12
+        if self.t < s.dark_until:
+            rng = min(rng, self.ai.get('skill-dark-sight', 4))
         if d > rng:
             return False
         if d > s.p['near-aware'] and self.t >= s.look_until:
@@ -1694,7 +1726,7 @@ class Game:
             'imp_touches': self.stats['imp_touches'],
             'chases': self.stats['chases'], 'chase_caps': self.stats['chase_caps'], 'intercepts': self.stats['intercepts'],
             'hide_checks': self.stats['hide_checks'], 'hide_hits': self.stats['hide_hits'], 'track_finds': self.stats['track_finds'],
-            'tools': {k: self.stats[k] for k in ('jams', 'barricades', 'cabinets', 'smokes', 'potions', 'flashes', 'breaks')},
+            'tools': {k: self.stats[k] for k in ('jams', 'barricades', 'cabinets', 'smokes', 'potions', 'flashes', 'breaks', 'sk_slow', 'sk_dark', 'sk_seal')},
             # 鑽漏洞檢查
             'jail_guard': self.m['near_jail_t'] / self.m['jailed_t'] if self.m['jailed_t'] > 0 else None,
             'down_guard': self.m['near_down_t'] / self.m['down_t'] if self.m['down_t'] > 0 else None,
