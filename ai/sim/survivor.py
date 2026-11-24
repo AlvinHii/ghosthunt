@@ -197,7 +197,7 @@ class SurvivorGame(Game):
                 self.team_ghost = (self.g, self.t)
         else:
             s.seen_since = -1.0
-        speed = 5.6 * (1.5 if self.t < s.dash_until or self.t < s.boost_until else 1.0)
+        speed = self.sv_speed(s)
         if s.act:
             kind, left, arg = s.act
             mult = 1.0
@@ -231,7 +231,7 @@ class SurvivorGame(Game):
                 s.dash_ready = self.t + c['survivor']['dash-cooldown']
             s.budget += speed * DT
             s.running = True
-            s.pos, s.budget = self.step_toward(s.pos, g, s.budget, away=True)
+            s.pos, s.budget = self.flee_step(s, g, s.budget)
             self._run_noise(s)
             return
         if kind == 'revive' and arg.state == DOWN:

@@ -5,6 +5,9 @@
 - 反射層（不訓練）：看到人就追、進攻擊距離就揮拳（前搖、揮空、疲勞照 config）、追丟先去最後看到的位置。
   第二版（ai-ghost.sim-reflex: 2，預設；2026-11-24 照插件第三版加的）：繞前堵（intercept-chance）、追丟後撒粒子猜人在哪（A_TRACK 跟著粒子找）、
   到了最後看到的位置照證據查暗格、到一個區域轉頭張望、站著等的時候轉頭看。sim-reflex: 1 是舊版（比較用）。
+逃生者的甩鬼手段（2026-11-24 加，REALISM['tools'] 是會用的機率；0 = 舊版）：卡門（D／W 每扇一次，鬼撞 2.5 秒）、
+障礙物（開局每人 1 個＋木桶撿到，放在空門口，鬼拆 3.5 秒）、推倒門口旁的櫃子、煙霧彈（4 格內鬼看不到人 3 秒）、
+加速藥水（+40% 5 秒）、手電筒（站著照 1 秒，鬼 1.5 秒看不到人、之後 12 秒免疫）。蹲伏小洞還沒有（要另一張距離表）。
 - 高層決策（可以訓練）：沒看到人時「接下來去哪裡、做什麼」。規則型大腦（RuleBrain）或外部策略（強化學習）。
 
 逃生者是規則型 AI，刻意加上真人的限制：反應延遲、只知道看得到／聽得到的事（加上心跳）、偶爾選錯路。
@@ -46,6 +49,8 @@ REALISM = {
     'near-aware': 3,        # 這麼近不分方向都察覺得到
     'look-back': 0.1,       # 每 0.5 秒回頭看一圈的機率（心跳沒在響）
     'look-back-alert': 0.4, # 心跳在響的時候回頭看的機率
+    'tools': 0.8,           # 被鬼追的時候會用道具、卡門、推櫃子的機率（每 0.5 秒擲一次）；2026-11-24 用真人 4 局校正（見 ai/README.md）
+    'smart-flee': 0.85,     # 逃跑時挑「比鬼先到、不是死路」的地方跑（每局每人擲一次）；沒中的人照舊「往離鬼最遠的那一格」（容易被逼到角落）
 }
 
 # 規則型逃生者的個性：訓練鬼時每個人隨機一種（避免鬼只會剋一種機器人）；heldout 只在評估用（訓練沒見過）
@@ -83,6 +88,11 @@ class Survivor:
         self.seen_hist = []        # 鬼看到他的位置（時間, 節點），最近 2.5 秒；繞前堵算移動方向用
         self.face = (1.0, 0.0)     # 面向（照移動方向；做事的時候不變）
         self.look_until = -1.0     # 回頭看一圈（這段時間不分方向都看得到）
+        self.items = {'barricade': 1}  # 道具（開局每人 1 個障礙物）
+        self.potion_until = -1.0
+        self.busy_until = -1.0     # 卡門、推櫃子、照手電筒的時候站著不動
+        self.flash_at = None
+        self.flash_uses = 0
 
 
 class Game:
@@ -156,6 +166,8 @@ class Game:
             s.p = dict(self.real, **table[name])
             s.will_rescue = self.rng.random() < s.p['rescue']
             s.will_hide = self.rng.random() < s.p['hide']
+            s.smart = self.rng.random() < s.p['smart-flee']
+            s.flee_dest, s.flee_pick = None, -1.0
             s.last_pos = s.pos
         # 鑽漏洞檢查用的統計
         self.m = {'jailed_t': 0.0, 'near_jail_t': 0.0, 'down_t': 0.0, 'near_down_t': 0.0, 'hide_t': 0.0, 'free_t': 0.0,
@@ -182,7 +194,8 @@ class Game:
         self.g_face = (0.0, 1.0)
         self.g_budget = 0.0
         bonus = by_survivors(cfg['ghost']['speed-bonus-by-survivors'], survivors)
-        self.g_speed = 5.6 * (self.ai.get("base-speed", 0.45) / 0.45) * (1 + bonus)  # base-speed 0.45 ≈ 跑步每秒 5.6 格
+        # 插件 AiGhost.steer：base-speed 0.45 實測每秒 5.3 格（逃生者跑步 5.6）；人數加成乘在上面（2026-11-24 修：之前當成 5.6）
+        self.g_speed = 5.3 * (self.ai.get("base-speed", 0.45) / 0.45) * (1 + bonus)
         self.g_goal = None         # (動作, 目標節點, 結束條件參數)
         self.g_goal_since = 0.0
         self.g_act = None          # (種類, 剩餘秒)
@@ -228,6 +241,31 @@ class Game:
         self.g_hcheck = None       # 要去查的暗格：(入口節點, 暗格)
         self.look_next = 0.0
         self.reg_seen = np.zeros(w.R) - 999
+        # ---- 逃生者的甩鬼手段 ----
+        self.trail = None          # 逃生者這一步走過的格子（找剛穿過的門口）
+        self.blocks = {}           # 節點 → 鬼要拆幾秒（卡住的門、障礙物、推倒的櫃子）
+        self.jammed = set()
+        self.cab_used = set()
+        self.g_blind_until = -1.0
+        self.g_flash_immune = -1.0
+        self.block_hit = None
+        it = cfg.get('items', {}).get('spawn-by-survivors', {})
+        self.item_pool = {k: by_survivors(it[k], survivors) for k in ('smoke', 'speed-potion', 'flashlight', 'barricade') if k in it}
+        self.item_p = min(1.0, sum(self.item_pool.values()) / max(1, len(self.barrels)))
+        self.stats.update({'jams': 0, 'barricades': 0, 'cabinets': 0, 'smokes': 0, 'potions': 0, 'flashes': 0, 'breaks': 0})
+        if not hasattr(w, 'door_nodes'):
+            w.door_nodes, w.open_nodes, w.cab_of = set(), set(), {}
+            for i in range(w.N):
+                f, x, z = w.pos(i)
+                c = w.ch(f, x, z)
+                if c in 'DW':
+                    w.door_nodes.add(i)
+                elif c == 'O':
+                    w.open_nodes.add(i)
+                    for dx in range(-2, 3):
+                        for dz in range(-2, 3):
+                            if w.ch(f, x + dx, z + dz) == 'C':
+                                w.cab_of[i] = (f, x + dx, z + dz)
         self.stats.update({'chases': 0, 'chase_caps': 0, 'intercepts': 0, 'hide_checks': 0, 'hide_hits': 0, 'track_finds': 0})
         if not hasattr(w, 'nbpad'):
             deg = max(len(a) for a in w.nb)
@@ -284,7 +322,7 @@ class Game:
     def log(self, msg):
         self.events.append((round(self.t, 1), msg))
 
-    def step_toward(self, pos, target, budget, away=False):
+    def step_toward(self, pos, target, budget, away=False, blocked=None):
         """沿著距離表往 target 走（away=True 是往遠離 target 走），走 budget 格；回傳 (新位置, 剩下的 budget)。"""
         w = self.w
         row = w.dist[target]
@@ -309,6 +347,11 @@ class Game:
                     budget = min(budget, 1.0)  # 到了：同上
                     break
             nxt = int(nb[k])
+            if blocked is not None and nxt in blocked:
+                self.block_hit = nxt
+                break
+            if self.trail is not None:
+                self.trail.append(nxt)
             fa, xa, za = w.pos(pos)
             fb, xb, zb = w.pos(nxt)
             cost = 1.0 if fa == fb and abs(xa - xb) + abs(za - zb) == 1 else max(1.0, abs(float(w.dist[pos, nxt])))
@@ -361,7 +404,22 @@ class Game:
                     pr = s.p['look-back-alert'] if self.heartbeat_stage(s) >= 1 else s.p['look-back']
                     if self.rng.random() < pr:
                         s.look_until = self.t + 0.5
+                if s.flash_at is not None and self.t >= s.flash_at:
+                    s.flash_at = None
+                    if self.eu(s.pos, self.g) <= self.c['items'].get('flashlight-range', 8) and self.w.los(s.pos, self.g):
+                        self.g_blind_until = self.t + self.ai.get('flash-blind', 1.5)
+                        self.g_flash_immune = self.t + self.ai.get('flash-immune', 12)
+                        self.stats['flashes'] += 1
+                if self.t < s.busy_until:
+                    continue
+                self.trail = []
                 self._survivor(s)
+                trail, self.trail = self.trail, None
+                for n in trail[:-1]:
+                    if n in self.w.door_nodes or n in self.w.open_nodes:
+                        s.door_passed = (n, self.t)
+                if not s.hidden and s.pos is not None and s.state == FREE and s.p.get('tools', 0) > 0:
+                    self._tools(s, prev)
                 if s.pos is not None and prev is not None and s.pos != prev:
                     fa, xa, za = self.w.pos(prev)
                     fb, xb, zb = self.w.pos(s.pos)
@@ -416,8 +474,98 @@ class Game:
     def _sight(self):
         return self.ai['sight-range'] if self.power else self.ai['sight-range-dark']
 
+    def flee_step(self, s, kg, budget):
+        """逃跑一步。聰明的人（s.smart）每秒挑一個目的地：比鬼先到的餘裕大、離鬼遠、不是死路；其他人往離鬼最遠的那一格。"""
+        if not getattr(s, 'smart', False):
+            return self.step_toward(s.pos, kg, budget, away=True)
+        w = self.w
+        if s.flee_dest is None or self.t >= s.flee_pick or s.pos == s.flee_dest:
+            s.flee_pick = self.t + 1.0
+            if not hasattr(w, 'flee_cands'):
+                ents = [w.node(*e) for (_, e) in w.hideouts]
+                w.flee_cands = np.array(sorted(set(int(c) for c in w.reg_center) | {e for e in ents if e >= 0}), np.int64)
+            c = w.flee_cands
+            dg = np.asarray(w.dist[kg])[c].astype(np.float32)
+            ds = np.asarray(w.dist[s.pos])[c].astype(np.float32)
+            score = (dg - ds) + 0.3 * np.minimum(dg, 60) - 25 * w.reg_dead_end[w.reg[c]] - 40 * (ds < 6)
+            score[(dg > 60000) | (ds > 60000)] = -1e9
+            s.flee_dest = int(c[int(np.argmax(score))])
+        pos, b = self.step_toward(s.pos, s.flee_dest, budget)
+        if pos == s.pos:
+            s.flee_dest = None
+            return self.step_toward(s.pos, kg, budget, away=True)
+        return pos, b
+
+    def sv_speed(self, s):
+        m = 1.0
+        if self.t < s.dash_until or self.t < s.boost_until:
+            m = 1.5
+        if self.t < s.potion_until:
+            m = max(m, 1 + self.c['items'].get('speed-potion-bonus', 0.4))
+        return 5.6 * m
+
+    def _tools(self, s, prev):
+        """被鬼追的時候用道具、卡門、推櫃子（每 0.5 秒擲一次；只在看得到鬼的時候）。"""
+        sees = self._sees_ghost(s)
+        if sees:
+            s.saw_at = self.t
+        # 門：鬼 4 秒內看過、還在後面（沿路 16 格內）就可以卡；其他道具要看得到鬼
+        if self.t - getattr(s, 'saw_at', -99) > 4 or self.rng.random() >= s.p['tools'] * 0.5:
+            return
+        w, c = self.w, self.c
+        de = self.eu(s.pos, self.g)
+        dg = self.d(s.pos, self.g)
+        if dg > 16:
+            return
+        # 剛穿過門口（1 秒內、已經走過去）、鬼在後面：卡門／放障礙物／推櫃子
+        dp = getattr(s, 'door_passed', None)
+        prev = dp[0] if dp is not None and self.t - dp[1] <= 1.0 and dp[0] != s.pos and self.eu(s.pos, dp[0]) <= 3 else None
+        if prev is not None and self.d(self.g, prev) < dg and prev not in self.blocks and self.eu(self.g, prev) >= 4:
+            s.door_passed = None
+            if prev in w.door_nodes and prev not in self.jammed:
+                self.jammed.add(prev)
+                self.blocks[prev] = c['ghost'].get('break-door-jam', 2.5)
+                s.busy_until = self.t + c['interaction'].get('jam-door', 1)
+                self.stats['jams'] += 1
+                return
+            if prev in w.open_nodes:
+                cab = w.cab_of.get(prev)
+                if cab is not None and cab not in self.cab_used:
+                    self.cab_used.add(cab)
+                    self.blocks[prev] = c['ghost'].get('break-barricade', 3.5)
+                    s.busy_until = self.t + 1.0
+                    self.stats['cabinets'] += 1
+                    return
+                if s.items.get('barricade', 0) > 0:
+                    s.items['barricade'] -= 1
+                    self.blocks[prev] = c['ghost'].get('break-barricade', 3.5)
+                    s.busy_until = self.t + 0.5
+                    self.stats['barricades'] += 1
+                    return
+        if not sees:
+            return
+        if s.items.get('smoke', 0) > 0 and de <= c['items'].get('smoke-radius', 4):
+            s.items['smoke'] -= 1
+            self.g_blind_until = max(self.g_blind_until, self.t + c['items'].get('smoke-blind', 3))
+            self.stats['smokes'] += 1
+            return
+        if s.items.get('speed-potion', 0) > 0 and dg <= 8 and self.t >= s.potion_until:
+            s.items['speed-potion'] -= 1
+            s.potion_until = self.t + c['items'].get('speed-potion-duration', 5)
+            self.stats['potions'] += 1
+            return
+        if s.items.get('flashlight', 0) > 0 and 5 <= de <= c['items'].get('flashlight-range', 8) and self.t >= self.g_flash_immune and s.flash_at is None:
+            s.flash_at = self.t + self.ai.get('flash-time', 1.0)
+            s.busy_until = s.flash_at
+            s.flash_uses += 1
+            if s.flash_uses >= 3:
+                s.items['flashlight'] = 0
+            return
+
     def _ghost_sees(self, s):
         if s.state != FREE or s.hidden:
+            return False
+        if self.t < self.g_blind_until:
             return False
         d = self.eu(self.g, s.pos)
         if d > self._sight():
@@ -439,7 +587,13 @@ class Game:
             speed *= 1 - self.c['ghost']['attack-fatigue-slow']
         self.g_budget += speed * DT
         old = self.g
-        self.g, self.g_budget = self.step_toward(self.g, target, self.g_budget)
+        self.block_hit = None
+        self.g, self.g_budget = self.step_toward(self.g, target, self.g_budget, blocked=self.blocks or None)
+        if self.block_hit is not None:
+            # 前面被卡住的門、障礙物、櫃子擋住：站著拆
+            self.g_act = ('break', self.blocks[self.block_hit], self.block_hit)
+            self.g_budget = 0.0
+            self.stats['breaks'] += 1
         if self.g != old:
             fo, xo, zo = self.w.pos(old)
             fn, xn, zn = self.w.pos(self.g)
@@ -634,7 +788,8 @@ class Game:
             self.ls_checked = False
             self.last_contact = self.t
             self.belief[self.w.reg[tgt.pos]] += 1.0
-            self.g_act = None
+            if self.g_act is None or self.g_act[0] != 'break':
+                self.g_act = None
             self.g_goal = None
         else:
             # 沒看到人：這一區的信念降低
@@ -846,6 +1001,8 @@ class Game:
             g['counting'] = self.c['gate']['open-countdown']
             g['sabotaged'] = True
             self.log('鬼弄壞大門')
+        elif kind == 'break':
+            self.blocks.pop(arg, None)
         elif kind == 'hideout':
             for s in self.sv:
                 if s.hidden and s.hidden[0] == arg and s.state == FREE:
@@ -1037,9 +1194,7 @@ class Game:
                     s.walk = True  # 心跳變快但不知道鬼在哪：放輕腳步，照原本的計畫走
         else:
             s.threat_seen_at = -1
-        speed = 5.6
-        if self.t < s.dash_until or self.t < s.boost_until:
-            speed *= 1.5
+        speed = self.sv_speed(s)
         kg = self._known_ghost()
         if self.t < s.flee_until and kg is not None:
             # 逃跑：往離「隊上最後看到鬼的位置」遠的方向；心跳最快（鬼 6 格內）就衝刺；附近有暗格、鬼沒看到就躲
@@ -1059,7 +1214,7 @@ class Game:
                         return
             s.budget += speed * DT
             s.running = True
-            s.pos, s.budget = self.step_toward(s.pos, kg, s.budget, away=True)
+            s.pos, s.budget = self.flee_step(s, kg, s.budget)
             self._run_noise(s)
             return
         # 正在做事
@@ -1240,6 +1395,14 @@ class Game:
             self.searched.add(arg)
             s.claim = None
             card = self.barrel_card.pop(arg, None)
+            if not card and self.item_pool and self.rng.random() < self.item_p:
+                kinds = [k for k, v in self.item_pool.items() if v > 0]
+                if kinds:
+                    k = self.rng.choices(kinds, weights=[self.item_pool[x] for x in kinds])[0]
+                    cap = self.c['items'].get('max-barricades', 2) if k == 'barricade' else self.c['items'].get('max-carry', 1)
+                    if s.items.get(k, 0) < cap:
+                        s.items[k] = s.items.get(k, 0) + 1
+                        self.item_pool[k] -= 1
             if card:
                 s.cards.append(card)
                 self.contrib[s.i] += 1
@@ -1402,6 +1565,7 @@ class Game:
             'imp_touches': self.stats['imp_touches'],
             'chases': self.stats['chases'], 'chase_caps': self.stats['chase_caps'], 'intercepts': self.stats['intercepts'],
             'hide_checks': self.stats['hide_checks'], 'hide_hits': self.stats['hide_hits'], 'track_finds': self.stats['track_finds'],
+            'tools': {k: self.stats[k] for k in ('jams', 'barricades', 'cabinets', 'smokes', 'potions', 'flashes', 'breaks')},
             # 鑽漏洞檢查
             'jail_guard': self.m['near_jail_t'] / self.m['jailed_t'] if self.m['jailed_t'] > 0 else None,
             'down_guard': self.m['near_down_t'] / self.m['down_t'] if self.m['down_t'] > 0 else None,
