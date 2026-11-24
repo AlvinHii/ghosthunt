@@ -194,8 +194,9 @@ class Game:
         self.g_face = (0.0, 1.0)
         self.g_budget = 0.0
         bonus = by_survivors(cfg['ghost']['speed-bonus-by-survivors'], survivors)
-        # 插件 AiGhost.steer：base-speed 0.45 實測每秒 5.3 格（逃生者跑步 5.6）；人數加成乘在上面（2026-11-24 修：之前當成 5.6）
-        self.g_speed = 5.3 * (self.ai.get("base-speed", 0.45) / 0.45) * (1 + bonus)
+        # 插件 AiGhost.steer：每 tick 走「速度屬性 × 0.57」格，速度屬性 = base-speed ×（1＋人數加成）（Match 的 ADD_SCALAR）
+        # → 每秒 11.4 × base-speed ×（1＋加成）；0.45、3% 是 5.3 格（逃生者跑步 5.6）。2026-11-24 修：之前當成 5.6×（1＋加成）
+        self.g_speed = 11.4 * self.ai.get("base-speed", 0.45) * (1 + bonus)
         self.g_goal = None         # (動作, 目標節點, 結束條件參數)
         self.g_goal_since = 0.0
         self.g_act = None          # (種類, 剩餘秒)
@@ -1605,6 +1606,7 @@ class RuleBrain:
         score = g.belief * 2 + stale - dist / 80
         score[w.reg[g.g]] -= 5
         score += np.array([r.random() * 0.5 for _ in range(w.R)])
+        score[~mask[:w.R]] = -1e9  # 照遮罩（守監獄額度用完時監獄附近不能去）
         return int(np.argmax(score))
 
 
