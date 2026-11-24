@@ -204,6 +204,11 @@ public final class GameListener implements Listener {
             return;
         }
         if (Items.BARRICADE.equals(item) && a == Action.RIGHT_CLICK_BLOCK) {
+            if (m.skills.sealed(p.getUniqueId())) {
+                m.skills.sealedMessage(p);
+                e.setCancelled(true);
+                return;
+            }
             if (m.tryPlaceBarricade(p, clicked)) e.setCancelled(true);
             return;
         }

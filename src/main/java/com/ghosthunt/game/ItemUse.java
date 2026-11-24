@@ -44,6 +44,10 @@ final class ItemUse {
     boolean use(Player p, String id) {
         Match.Survivor sv = m.survivors.get(p.getUniqueId());
         if (sv == null || sv.status != Match.Status.FREE) return true;
+        if (m.skills.sealed(p.getUniqueId()) && (Items.SMOKE.equals(id) || Items.SPEED.equals(id) || Items.FLASHLIGHT.equals(id) || Items.SCANNER.equals(id))) {
+            m.skills.sealedMessage(p);
+            return true;
+        }
         switch (id) {
             case Items.SMOKE -> {
                 return false; // 原版丟雪球，打到東西時在 onSmokeHit 處理
@@ -169,6 +173,15 @@ final class ItemUse {
         d.setLevel(13);
         bl.setBlockData(d, false);
         flashLight.put(p.getUniqueId(), target);
+    }
+
+    /** 被鬼封印道具：開著的手電筒關掉。 */
+    void sealedNow(Player p) {
+        if (flashOn.getOrDefault(p.getUniqueId(), false)) {
+            flashOn.put(p.getUniqueId(), false);
+            Items.setFlashlightOn(p, false);
+            clearLight(p.getUniqueId());
+        }
     }
 
     private void clearLight(UUID id) {

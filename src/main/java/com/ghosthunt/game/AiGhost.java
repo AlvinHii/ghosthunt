@@ -895,6 +895,7 @@ final class AiGhost {
         footsteps();
         boolean busy = m.acts.busy(mob.getUniqueId());
         attackTick();
+        skillTick();
         if (!busy) {
             if (lookStep >= 0) lookTick();
             else followPath();
@@ -1650,6 +1651,39 @@ final class AiGhost {
             mob.swingMainHand();
             m.ghostSwing();
             misses++;
+        }
+    }
+
+    // =====================================================================
+    // 技能（2026-11-24：詛咒減速、黑暗、封印道具；GhostSkills）
+    // =====================================================================
+
+    private long slowReady, darkReady, sealReady;
+
+    /**
+     * 追人的時候（每 5 tick 看一次，一次最多放一個）：封印道具 = 對方在 skill-seal-radius 格內；
+     * 詛咒減速 = 6～14 格（快追上又追不到）；黑暗 = 對方在讀進度條，或 8 格以外。都要看得到對方。
+     */
+    private void skillTick() {
+        if (m.tick % 5 != 0 || chaseId == null || m.tick < blindUntil) return;
+        if (!(byId(chaseId) instanceof Player t) || !t.getWorld().equals(mob.getWorld()) || m.aiIgnores(t.getUniqueId())) return;
+        Match.Survivor sv = m.survivors.get(t.getUniqueId());
+        if (sv == null || sv.status != Match.Status.FREE || !mob.hasLineOfSight(t)) return;
+        double d = t.getLocation().distance(mob.getLocation());
+        if (c.skillSeal() && m.tick >= sealReady && d <= c.skillSealRadius()) {
+            if (m.skills.seal(mob.getLocation(), c.skillSealRadius(), c.skillSealTime()) > 0) {
+                sealReady = m.tick + c.skillSealCooldown();
+                return;
+            }
+        }
+        if (c.skillSlow() && m.tick >= slowReady && d >= 6 && d <= 14) {
+            m.skills.curse(t, c.skillSlowAmount(), c.skillSlowTime());
+            slowReady = m.tick + c.skillSlowCooldown();
+            return;
+        }
+        if (c.skillDark() && m.tick >= darkReady && (m.acts.busy(t.getUniqueId()) || d >= 8)) {
+            m.skills.darken(t, c.skillDarkTime());
+            darkReady = m.tick + c.skillDarkCooldown();
         }
     }
 
@@ -2705,6 +2739,7 @@ final class AiGhost {
         stats.put("aiFieldMsAvg", fieldTime.avgMs());
         stats.put("aiNavBuildMs", navBuildMs);
         stats.put("aiSneaks", sneaks);
+        stats.put("aiSkills", m.skills.curses + "/" + m.skills.darks + "/" + m.skills.seals); // 詛咒／黑暗／封印
         stats.put("aiCutWatchSpots", cutWatchSpots);
         stats.put("aiIntercepts", intercepts + "/" + interceptPredicted + "/" + interceptTries);
         stats.put("aiAmbushes", ambushes);

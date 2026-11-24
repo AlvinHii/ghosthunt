@@ -158,6 +158,7 @@ public final class Match {
     final Interactions acts;
     final Objectives obj;
     final ItemUse items;
+    final GhostSkills skills;
     private Hud hud;
     /** 每局記錄的數據（結束時寫進 plugins/GhostHunt/stats.log）。 */
     final Map<String, Object> stats = new LinkedHashMap<>();
@@ -243,6 +244,7 @@ public final class Match {
         this.acts = new Interactions(this);
         this.obj = new Objectives(this);
         this.items = new ItemUse(this);
+        this.skills = new GhostSkills(this);
         this.audio = MapAudio.create(this);
         this.side = SideQuests.present(b) ? new SideQuests(this) : null;
         this.gimmicks = Gimmicks.create(this);
@@ -560,6 +562,7 @@ public final class Match {
         sp.removeModifier(FATIGUE_KEY);
         sp.removeModifier(HOLE_SPEED_KEY);
         sp.removeModifier(DOWN_KEY);
+        sp.removeModifier(GhostSkills.CURSE_KEY);
         p.getAttribute(Attribute.SNEAKING_SPEED).removeModifier(HOLE_SNEAK_KEY);
         if (p.getPose() == org.bukkit.entity.Pose.SWIMMING) setDownPose(p, false);
     }
@@ -679,6 +682,7 @@ public final class Match {
         obj.tick(g);
         if (tick % 20 == 0 && hud != null) hud.update();
         items.tick(g);
+        skills.tick();
         if (aiGhost != null) aiGhost.tick();
         dummies.tick(g);
         escapes();

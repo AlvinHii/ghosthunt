@@ -77,7 +77,7 @@ ai-ghost:                      # PvE 的 AI 鬼（/gh start ai [easy|normal|hard
   difficulty: normal           # 預設難度（presets 底下的值會蓋掉下面的同名設定）
   mob: HUSK                    # 用哪種怪物當身體（要跟玩家差不多高：過得了門、鑽不過蹲伏小洞）
   footsteps: false             # 鬼的腳步聲（關掉：只靠逃生者的心跳判斷鬼多近）
-  base-speed: 0.56             # 基本速度（怪物的速度數值；追人時每秒 11.4 × 這個 ×（1＋人數加成）格：0.45 → 5.3、0.56 → 6.6，玩家跑步 5.6）；2026-11-24 用校正過的模擬器找的：加上 guard-objective 後普通每人逃出約 50%（ai/README.md）
+  base-speed: 0.52             # 基本速度（怪物的速度數值；追人時每秒 11.4 × 這個 ×（1＋人數加成）格：0.45 → 5.3、0.52 → 6.1，玩家跑步 5.6）；2026-11-24 用校正過的模擬器找的：加上 guard-objective 和技能後普通每人逃出約 50%（ai/README.md）
   chase-speed: 1.0             # 看到人追的時候的速度倍率
   search-speed: 0.9            # 去聽到聲音、感應到的房間、追丟後找人、去弄壞大門
   patrol-speed: 0.9            # 巡邏、守監獄、去關電源（2026-11-23 從 0.75 調高：大地圖上才有壓迫感；不會超過追人的速度）
@@ -122,6 +122,17 @@ ai-ghost:                      # PvE 的 AI 鬼（/gh start ai [easy|normal|hard
   intercept-chance: 0.5        # 追人時「繞到前面堵」的機率（每次開始追擲一次；猜得到對方要往哪個出口跑、鬼會先到才堵）
   ambush-time: 25              # 冷靜期的退場埋伏：在逃生者往下一個目標會經過的咽喉點旁邊、看不到的地方最多等幾秒（0 = 不埋伏）
   guard-reader-cap: 40         # 守下一個目標每次最多幾秒（之後走開一半的時間再回來；0 = 不守）
+  skill-slow: 1                # 技能：詛咒減速（追人時 6～14 格、看得到對方：對方變慢）；2026-11-24 使用者決定的三個技能
+  skill-slow-amount: 0.2       # 慢多少（0.2 = 速度剩 80%）
+  skill-slow-time: 3           # 幾秒
+  skill-slow-cooldown: 60      # 冷卻（秒）
+  skill-dark: 1                # 技能：黑暗（對方讀進度條、或 8 格以外：畫面變暗，原版 Darkness）
+  skill-dark-time: 4
+  skill-dark-cooldown: 50
+  skill-seal: 1                # 技能：封印道具（鬼身邊幾格內的人不能用煙霧彈、加速藥水、手電筒、掃描器、障礙物；卡門、推櫃子可以）
+  skill-seal-radius: 8
+  skill-seal-time: 8
+  skill-seal-cooldown: 50
   guard-objective: 1           # 守逃生者下一個一定要去的地方：沒電守總電源、還沒授權守保全室終端機、授權後守讀卡機（0 = 只有授權後守讀卡機，舊的做法）；2026-11-24 加，模擬器每人逃出 0.37 → 0.28
   cut-power-advantage: 15      # 關電源的時機：他們走回電源的平均秒數 − 鬼走過去的秒數 ≥ 這個值才去關
   cut-power-max-wait: 90       # 電源開了這麼多秒以後不管時機，直接去關
