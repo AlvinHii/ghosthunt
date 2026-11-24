@@ -87,7 +87,7 @@ public final class GhostBrain {
             new Rule(Kind.GO_SENSED, s -> s.sensed() != null, s -> new Goal(Kind.GO_SENSED, s.sensed(), null)),
             new Rule(Kind.MOVE_CARD, s -> s.cardRevealOpen() && s.cardMoveAvailable(), s -> new Goal(Kind.MOVE_CARD, null, null)),
             new Rule(Kind.CUT_POWER, s -> s.powerOn() && !s.cutPowerUsed(), s -> new Goal(Kind.CUT_POWER, null, null)),
-            // 有人授權了：去讀卡機附近的守望點守（AiGhost 決定點、時間上限）
+            // 守下一個目標：沒電守總電源、還沒授權守保全室終端機、授權後守讀卡機（AiGhost 決定點、時間上限；guard-objective）
             new Rule(Kind.GUARD_READER, s -> s.readerWatch() != null, s -> new Goal(Kind.GUARD_READER, s.readerWatch(), null)),
             new Rule(Kind.GUARD_JAIL, s -> s.someoneJailed() && s.jail() != null && rnd.nextDouble() < cfg.guardJailChance(),
                     s -> new Goal(Kind.GUARD_JAIL, s.jail(), null)),

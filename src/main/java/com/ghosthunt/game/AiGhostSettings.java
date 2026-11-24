@@ -19,7 +19,7 @@ record AiGhostSettings(
         int particles, double particleFlee, double particleGoal, double particleSigma, int particleMin, int particleMaxAge,
         double escaperSpeed,
         double interceptChance, int ambushTime, int guardReaderCap, double cutPowerAdvantage, int cutPowerMaxWait,
-        boolean tacticalApproach, double sneakPenalty) {
+        boolean tacticalApproach, double sneakPenalty, boolean guardObjective) {
 
     /** 依難度讀：先看 ai-ghost.presets.<難度>.<key>，沒有再看 ai-ghost.<key>。 */
     private static double d(FileConfiguration c, ConfigurationSection preset, String key, double def) {
@@ -58,6 +58,7 @@ record AiGhostSettings(
                 d(c, p, "escaper-speed", 5.6),
                 d(c, p, "intercept-chance", 0.5), t(c, p, "ambush-time", 25), t(c, p, "guard-reader-cap", 40),
                 d(c, p, "cut-power-advantage", 15), t(c, p, "cut-power-max-wait", 90),
-                d(c, p, "tactical-approach", 0) > 0, d(c, p, "sneak-penalty", 3));
+                d(c, p, "tactical-approach", 0) > 0, d(c, p, "sneak-penalty", 3),
+                d(c, p, "guard-objective", 1) > 0);
     }
 }

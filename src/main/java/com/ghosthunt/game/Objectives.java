@@ -412,6 +412,13 @@ final class Objectives {
         return powerOn;
     }
 
+    /** 保全室終端機的位置（方塊中心）。 */
+    List<Location> terminalLocations() {
+        List<Location> out = new ArrayList<>();
+        for (Pos p : b.securityTerminals) out.add(m.loc(p).add(0.5, 0.5, 0.5));
+        return out;
+    }
+
     boolean cutPowerUsed() {
         return ghostCutUsed;
     }

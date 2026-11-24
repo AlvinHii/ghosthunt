@@ -61,6 +61,22 @@ PERSONAS = {
     'rescuer': {'rescue': 1.0, 'flee-stage': 3, 'walk-chance': 0.3},
     'selfish': {'rescue': 0.0, 'flee-stage': 3, 'hide': 0.5},
 }
+def random_persona(rng):
+    """隨機抽一組逃生者個性（訓練用）；範圍包住固定個性，但不刻意重現 heldout 的 careful。"""
+    lo = rng.uniform(0.2, 0.7)
+    return {
+        'walk-chance': rng.uniform(0.05, 0.8),
+        'flee-stage': rng.choice([2, 3, 3, 4]),
+        'rescue': rng.uniform(0.0, 1.0),
+        'hide': rng.uniform(0.2, 1.0),
+        'hesitate-chance': rng.uniform(0.0, 0.08),
+        'react': (lo, lo + rng.uniform(0.2, 0.6)),
+        'mistake-chance': rng.uniform(0.0, 0.03),
+        'smart-flee': rng.uniform(0.5, 1.0),
+        'tools': rng.uniform(0.3, 1.0),
+    }
+
+
 HELDOUT = {
     'careful': {'walk-chance': 0.6, 'flee-stage': 2, 'rescue': 0.9, 'hesitate-chance': 0.08, 'react': (0.5, 1.0), 'hide': 0.3},
 }
@@ -161,9 +177,14 @@ class Game:
         self.sv = [Survivor(i, p) for i, p in enumerate(pts)]
         table = {'standard': {'standard': {}}, 'train': PERSONAS, 'heldout': HELDOUT}[personas] if isinstance(personas, str) else personas
         for s in self.sv:
-            name = self.rng.choice(sorted(table))
-            s.persona = name
-            s.p = dict(self.real, **table[name])
+            if personas == 'train' and self.rng.random() < 0.5:
+                # 一半的人數值隨機抽（真人不會只有幾種個性；2026-11-24 加：只用固定個性訓練，鬼對沒見過的個性沒進步）
+                s.persona = 'random'
+                s.p = dict(self.real, **random_persona(self.rng))
+            else:
+                name = self.rng.choice(sorted(table))
+                s.persona = name
+                s.p = dict(self.real, **table[name])
             s.will_rescue = self.rng.random() < s.p['rescue']
             s.will_hide = self.rng.random() < s.p['hide']
             s.smart = self.rng.random() < s.p['smart-flee']

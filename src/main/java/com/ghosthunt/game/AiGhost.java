@@ -1188,18 +1188,55 @@ final class AiGhost {
         return Math.round(c.ambushTime() * persona.ambushTimeMul());
     }
 
-    // ---- 守讀卡機 ----
+    // ---- 守下一個目標（原本只守讀卡機）----
 
-    /** 有人授權了：輪流守還沒開的大門的讀卡機，每次最多 guard-reader-cap 秒，之後走開一半的時間再回來。 */
+    /**
+     * 逃生者下一個一定要去的地方：沒電 → 總電源；有電、要授權、還沒人授權 → 保全室終端機；之後 → 還沒開的大門讀卡機。
+     * guard-objective: 0 時只有「有人授權後守讀卡機」（舊的做法）。
+     * 2026-11-24：模擬器裡守下一個目標（照這裡的上限）讓每人逃出率 0.37 → 0.28（沒見過的個性 0.54 → 0.47），見 ai/README.md。
+     */
+    private List<Location> objectiveTargets() {
+        List<Location> out = new ArrayList<>();
+        if (c.guardObjective()) {
+            if (!m.obj.powerOn()) {
+                Location lever = m.obj.leverLocation();
+                if (lever != null) out.add(lever.clone().add(0.5, 0.5, 0.5));
+                objPhase = 1;
+                return out;
+            }
+            if (m.obj.authRequired() && m.obj.authorized.isEmpty()) {
+                out.addAll(m.obj.terminalLocations());
+                objPhase = 2;
+                return out;
+            }
+        } else if (m.obj.authorized.isEmpty()) {
+            return out;
+        }
+        for (Objectives.GateState gs : m.obj.gates) if (!gs.opened) out.add(m.loc(gs.g.reader()).add(0.5, 0.5, 0.5));
+        objPhase = 3;
+        return out;
+    }
+
+    private int objPhase, objGuardedPhase;
+
+    /** 輪流守下一個目標（有好幾個就輪流），每次最多 guard-reader-cap 秒，之後走開一半的時間再回來；換階段（例如開了電）就重選。 */
     private Location readerWatch() {
-        if (c.guardReaderCap() <= 0 || m.obj.authorized.isEmpty()) {
+        if (c.guardReaderCap() <= 0) {
             readerGuardStart = -1;
             return null;
         }
-        List<Location> readers = new ArrayList<>();
-        for (Objectives.GateState gs : m.obj.gates) if (!gs.opened) readers.add(m.loc(gs.g.reader()).add(0.5, 0.5, 0.5));
-        if (readers.isEmpty() || m.tick < readerCooldownUntil) return null;
+        List<Location> readers = objectiveTargets();
+        if (readers.isEmpty()) {
+            readerGuardStart = -1;
+            return null;
+        }
+        if (readerGuardStart >= 0 && objPhase != objGuardedPhase) {
+            readerGuardStart = -1; // 換階段：馬上換到新的目標（不用等冷卻）
+            readerCooldownUntil = 0;
+        }
+        if (m.tick < readerCooldownUntil) return null;
         if (readerGuardStart < 0) {
+            objGuardedPhase = objPhase;
             readerGuardStart = m.tick;
             readerTarget = readers.get(readerCycle++ % readers.size());
             readerSpot = pickWatchSpot(readerTarget, 3, 9, 0);
