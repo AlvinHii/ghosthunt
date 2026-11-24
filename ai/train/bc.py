@@ -74,14 +74,24 @@ def main():
     ap.add_argument('--chunk', type=int, default=64)
     ap.add_argument('--batch', type=int, default=128)
     ap.add_argument('--lr', type=float, default=5e-4)
+    ap.add_argument('--smooth', type=float, default=0.0, help='標籤平滑：起點不要那麼確定（PPO 比較會去試別的做法）')
+    ap.add_argument('--save-data', default=None, help='把收集到的局存起來（下次 --load-data 不用重跑）')
+    ap.add_argument('--load-data', default=None)
     a = ap.parse_args()
     t0 = time.time()
     per = 25
     jobs = [(70_000_000 + i, min(per, a.games - i), a.gamma) for i in range(0, a.games, per)]
     seqs = []
-    with mp.get_context('spawn').Pool(a.workers, initializer=_init, initargs=(a.difficulty,)) as pool:
-        for r in pool.imap_unordered(_collect, jobs):
-            seqs += r
+    if a.load_data:
+        import pickle
+        seqs = pickle.load(open(a.load_data, 'rb'))
+    else:
+        with mp.get_context('spawn').Pool(a.workers, initializer=_init, initargs=(a.difficulty,)) as pool:
+            for r in pool.imap_unordered(_collect, jobs):
+                seqs += r
+    if a.save_data:
+        import pickle
+        pickle.dump(seqs, open(a.save_data, 'wb'))
     n_dec = sum(len(s[2]) for s in seqs)
     print(f'收集 {len(seqs)} 局、{n_dec:,} 個決定（{time.time() - t0:.0f} 秒）', flush=True)
 
@@ -125,7 +135,14 @@ def main():
         ce, vl, acc = 0.0, 0.0, 0.0
         for t in range(TL):
             lg, v, h = net(O[t], h, M[t])
-            ce = ce + (F.cross_entropy(lg, A[t], reduction='none') * V[t]).sum()
+            lp = F.log_softmax(lg, -1)
+            nll = -lp.gather(1, A[t].unsqueeze(1)).squeeze(1)
+            if a.smooth > 0:
+                # 只平滑到能選的動作上
+                mk = M[t].float()
+                uni = -(lp.masked_fill(~M[t], 0) * mk).sum(-1) / mk.sum(-1).clamp(min=1)
+                nll = (1 - a.smooth) * nll + a.smooth * uni
+            ce = ce + (nll * V[t]).sum()
             vl = vl + (((v - R[t]) ** 2) * V[t]).sum()
             acc = acc + ((lg.argmax(-1) == A[t]).float() * V[t]).sum()
         n = V.sum().clamp(min=1)

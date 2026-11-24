@@ -23,11 +23,12 @@ from .config import by_survivors
 DT = 0.25
 RMAX = 64                 # 觀察的區域數上限（mall2 44、hospital 55）
 REG_FEATS = 15
-GLOBAL_FEATS = 14
+GLOBAL_FEATS = 16
 OBS_DIM = RMAX * REG_FEATS + GLOBAL_FEATS
-A_NOISE, A_POWER, A_SABOTAGE, A_JAIL, A_WAIT, A_TRACK = range(RMAX, RMAX + 6)
-N_ACTIONS = RMAX + 6
-ACTION_NAMES = {A_NOISE: '去聲音', A_POWER: '關電源', A_SABOTAGE: '弄壞大門', A_JAIL: '守監獄', A_WAIT: '原地等（轉頭看）', A_TRACK: '跟著粒子找'}
+A_NOISE, A_POWER, A_SABOTAGE, A_JAIL, A_WAIT, A_TRACK, A_GUARD = range(RMAX, RMAX + 7)
+N_ACTIONS = RMAX + 7
+ACTION_NAMES = {A_NOISE: '去聲音', A_POWER: '關電源', A_SABOTAGE: '弄壞大門', A_JAIL: '守監獄', A_WAIT: '原地等（轉頭看）', A_TRACK: '跟著粒子找',
+                A_GUARD: '守下一個目標'}
 P_COUNT = 64          # 追丟後撒的粒子數（插件 200；模擬器少一點比較快）
 P_MIN = 6             # 剩不到這麼多就放棄
 P_AGE = 40            # 最多推理幾秒（particle-max-age）
@@ -262,6 +263,7 @@ class Game:
         self.ls_checked = True
         self.g_hcheck = None       # 要去查的暗格：(入口節點, 暗格)
         self.follow = None         # 追丟後接著追的點：(節點, 到期時間)（chase-heading／chase-predict）
+        self.gs = {'start': -1.0, 'cool': -1.0, 'cycle': 0, 'tgt': None}  # 守下一個目標（插件 readerWatch）
         self.look_next = 0.0
         self.reg_seen = np.zeros(w.R) - 999
         # ---- 逃生者的甩鬼手段 ----
@@ -321,7 +323,7 @@ class Game:
         for c in cands:
             if all(w.dist[c, o] >= 6 for o in out):
                 out.append(c)
-            if len(out) >= w.barrel_count:
+            if len(out) >= int(self.ai.get('barrel-count', 0) or w.barrel_count):
                 break
         return out
 
@@ -518,6 +520,27 @@ class Game:
             s.flee_dest = None
             return self.step_toward(s.pos, kg, budget, away=True)
         return pos, b
+
+    def guard_target(self):
+        """守下一個目標（插件 AiGhost.readerWatch，guard-objective）：輪流守，每次最多 guard-reader-cap 秒，之後走開一半的時間；
+        換階段（例如開了電）馬上換目標。回傳要守的節點，不能守回傳 None。"""
+        cap = self.ai.get('guard-reader-cap', 40)
+        if not self.ai.get('guard-objective', 1) or cap <= 0:
+            return None
+        st = self.gs
+        goals = self._next_goal()
+        if st['start'] >= 0 and st['tgt'] not in goals:
+            st['start'], st['cool'] = -1.0, -1.0
+        if self.t < st['cool']:
+            return None
+        if st['start'] >= 0 and self.t - st['start'] > cap:
+            st['start'] = -1.0
+            st['cool'] = self.t + cap / 2
+            return None
+        if st['start'] < 0:
+            st['tgt'] = goals[st['cycle'] % len(goals)]
+            return st['tgt']
+        return st['tgt']
 
     def sv_speed(self, s):
         m = 1.0
@@ -732,7 +755,8 @@ class Game:
         ai, w = self.ai, self.w
         heading = ai.get('chase-heading', 0)
         predict = ai.get('chase-predict', 0)
-        if not heading and not predict:
+        barrel = ai.get('chase-barrel', 0)
+        if not heading and not predict and not barrel:
             return
         hist = lost.seen_hist
         p1 = self.lost_pos
@@ -743,7 +767,24 @@ class Game:
         vx, vz = (x1 - x0, z1 - z0) if f0 == f1 else (0, 0)
         vl = math.hypot(vx, vz)
         node = None
-        if predict:
+        if barrel:
+            # 他跑的方向上、還沒開的桶子（找卡階段）或下一個目標：方向越一致、越近越可能
+            cands = self._next_goal() + ([b for b in self.barrels if b not in self.searched] if self.barrel_card else [])
+            best, bs = None, -1e9
+            for c in cands:
+                fc, xc, zc = w.pos(c)
+                if fc != f1:
+                    continue
+                dx, dz = xc - x1, zc - z1
+                dl = math.hypot(dx, dz)
+                if dl < 3:
+                    continue
+                cos = (dx * vx + dz * vz) / (dl * vl) if vl > 0 else 0.0
+                sc = 2.0 * cos - self.d(p1, c) / 30.0
+                if sc > bs:
+                    best, bs = c, sc
+            node = best
+        elif predict:
             if not hasattr(w, 'flee_cands'):
                 ents = [w.node(*e) for (_, e) in w.hideouts]
                 w.flee_cands = np.array(sorted(set(int(c) for c in w.reg_center) | {e for e in ents if e >= 0}), np.int64)
@@ -1005,6 +1046,9 @@ class Game:
         if a == A_WAIT:
             self.g_act = ('wait', 4.0, None)
             return
+        if a == A_GUARD:
+            self.g_act = ('look', 2.0, None)   # 守著轉頭看；之後再決定（還在守的時間內會繼續選守）
+            return
         if a == A_TRACK:
             if self.particles is not None:
                 self.g_goal = (a, self._particle_target(), None)
@@ -1143,6 +1187,7 @@ class Game:
         m[A_JAIL] = (any(s.state == JAILED for s in self.sv) and bool(self.w.jails)) or any(s.state == DOWN for s in self.sv)
         m[A_WAIT] = self.reflex >= 2
         m[A_TRACK] = self.particles is not None
+        m[A_GUARD] = self.guard_target() is not None
         if self.guard_used >= self.ai.get('guard-cap', 45) and any(s.state == JAILED for s in self.sv):
             m[A_JAIL] = any(s.state == DOWN for s in self.sv)
             for r in self.jail_regions:
@@ -1168,6 +1213,13 @@ class Game:
             target = self.g
         elif a == A_TRACK:
             target = self._particle_target()
+        elif a == A_GUARD:
+            target = self.guard_target()
+            if target is None:
+                target = self.g
+            elif self.gs['start'] < 0:
+                self.gs['start'] = self.t   # 開始守（計時）
+                self.gs['cycle'] += 1
         else:
             down = [s for s in self.sv if s.state == DOWN]
             if down:
@@ -1219,6 +1271,9 @@ class Game:
         gl[11] = len(self.authorized) / 2
         gl[12] = min((self.t - self.g_last_seen[1]) / 30, 1) if self.g_last_seen else 1.0
         gl[13] = 0 if self.particles is None else len(self.particles) / P_COUNT
+        gl[14] = m[A_GUARD]
+        cap = max(1.0, self.ai.get('guard-reader-cap', 40))
+        gl[15] = min(1.0, (self.t - self.gs['start']) / cap) if self.gs['start'] >= 0 else 0.0
         return o
 
     # =================================================================
@@ -1661,25 +1716,21 @@ class RuleBrain:
         self.gs = {'start': -1.0, 'cool': -1.0, 'cycle': 0, 'tgt': None}
 
     def _guard(self, g):
-        """守下一個目標（插件 AiGhost.readerWatch，guard-objective）：每次最多 guard-reader-cap 秒，之後走開一半的時間。"""
-        cap = g.ai.get('guard-reader-cap', 40)
-        if not g.ai.get('guard-objective', 1) or cap <= 0:
+        return g.guard_target()
+
+    def _hunt(self, g):
+        """找卡階段：還沒開的桶子最多、又近的區域（離開剛看過的區域）。"""
+        w = g.w
+        cnt = np.zeros(w.R)
+        for b in g.barrels:
+            if b not in g.searched:
+                cnt[w.reg[b]] += 1
+        if cnt.sum() == 0:
             return None
-        st = self.gs
-        goals = g._next_goal()
-        if st['start'] >= 0 and st['tgt'] not in goals:
-            st['start'], st['cool'] = -1.0, -1.0  # 換階段：馬上換目標
-        if g.t < st['cool']:
-            return None
-        if st['start'] < 0:
-            st['start'] = g.t
-            st['tgt'] = goals[st['cycle'] % len(goals)]
-            st['cycle'] += 1
-        if g.t - st['start'] <= cap:
-            return int(g.w.reg[st['tgt']])
-        st['start'] = -1.0
-        st['cool'] = g.t + cap / 2
-        return None
+        dist = np.asarray(w.dist[g.g][w.reg_center]).astype(np.float64)
+        stale = np.minimum((g.t - g.reg_visit) / 30, 1)
+        score = cnt * stale / (dist + 20)
+        return int(np.argmax(score))
 
     def __call__(self, game, mask):
         g = game
@@ -1692,9 +1743,13 @@ class RuleBrain:
             return A_SABOTAGE
         if mask[A_POWER] and g.t - g.power_on_at >= g.ai['power-cut-delay'] + 20:
             return A_POWER
-        gr = self._guard(g)
-        if gr is not None and mask[gr]:
-            return gr
+        if g.ai.get('barrel-hunt', 0) and g.power and g.barrel_card:
+            hr = self._hunt(g)
+            if hr is not None and mask[hr] and (g.ai['barrel-hunt'] >= 2 or self.gs['start'] < 0 or g.t >= self.gs['cool']):
+                if g.ai['barrel-hunt'] >= 2 or r.random() < 0.5:
+                    return hr
+        if mask[A_GUARD]:
+            return A_GUARD
         jc = self.jail_chance if self.jail_chance is not None else g.ai['guard-jail-chance'] * 0.3
         if mask[A_JAIL] and r.random() < jc:
             return A_JAIL
