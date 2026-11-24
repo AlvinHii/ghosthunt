@@ -261,6 +261,7 @@ class Game:
         self.lost_pos = None       # 真的最後看到的位置（繞前堵時 g_last_seen 會換成堵的格子）
         self.ls_checked = True
         self.g_hcheck = None       # 要去查的暗格：(入口節點, 暗格)
+        self.follow = None         # 追丟後接著追的點：(節點, 到期時間)（chase-heading／chase-predict）
         self.look_next = 0.0
         self.reg_seen = np.zeros(w.R) - 999
         # ---- 逃生者的甩鬼手段 ----
@@ -725,6 +726,47 @@ class Game:
         self.p_pick = self.t
         return int(members[len(members) // 2])
 
+    def _plan_follow(self, lost):
+        """追丟以後，到了最後看到的位置要接著去哪裡（實驗）：
+        chase-heading：照他最後的移動方向多走 8 格；chase-predict：從他的角度挑「比鬼先到、離鬼遠、不是死路」的地方（加上移動方向）。"""
+        ai, w = self.ai, self.w
+        heading = ai.get('chase-heading', 0)
+        predict = ai.get('chase-predict', 0)
+        if not heading and not predict:
+            return
+        hist = lost.seen_hist
+        p1 = self.lost_pos
+        old = [n for (tt, n) in hist if hist and hist[-1][0] - tt >= 0.75]
+        p0 = old[-1] if old else (hist[0][1] if hist else p1)
+        f0, x0, z0 = w.pos(p0)
+        f1, x1, z1 = w.pos(p1)
+        vx, vz = (x1 - x0, z1 - z0) if f0 == f1 else (0, 0)
+        vl = math.hypot(vx, vz)
+        node = None
+        if predict:
+            if not hasattr(w, 'flee_cands'):
+                ents = [w.node(*e) for (_, e) in w.hideouts]
+                w.flee_cands = np.array(sorted(set(int(c) for c in w.reg_center) | {e for e in ents if e >= 0}), np.int64)
+            c = w.flee_cands
+            dg = np.asarray(w.dist[self.g])[c].astype(np.float32)
+            ds = np.asarray(w.dist[p1])[c].astype(np.float32)
+            score = (dg - ds) + 0.3 * np.minimum(dg, 60) - 25 * w.reg_dead_end[w.reg[c]] - 40 * (ds < 6)
+            if vl > 0:
+                pts = w.nodes[c]
+                dx, dz = pts[:, 2] - x1, pts[:, 1] - z1
+                dl = np.hypot(dx, dz) + 1e-6
+                score += 8 * (dx * vx + dz * vz) / (dl * vl) * (pts[:, 0] == f1)
+            score[(dg > 60000) | (ds > 60000)] = -1e9
+            node = int(c[int(np.argmax(score))])
+        elif vl > 0:
+            for k in range(8, 2, -1):
+                j = w.node(f1, int(round(x1 + vx / vl * k)), int(round(z1 + vz / vl * k)))
+                if j >= 0:
+                    node = j
+                    break
+        if node is not None and node != p1:
+            self.follow = (node, self.t + 10)
+
     def _intercept(self, s):
         """繞前堵（插件 Interceptor）：猜對方往哪個出口／目標跑，找他路上「鬼比他早 0.5 秒到」的格子。"""
         if self.t < self.icpt_next:
@@ -804,6 +846,7 @@ class Game:
                 self.stats['track_finds'] += 1 if self.g_goal is not None and self.g_goal[0] == A_TRACK else 0
             self.particles = None
             self.g_hcheck = None
+            self.follow = None
             self.g_target = tgt
             self.g_last_seen = (tgt.pos, self.t)
             self.lost_pos = tgt.pos
@@ -822,6 +865,7 @@ class Game:
                 self.need_decision = True
                 if v2 and lost.state == FREE and self.lost_pos is not None:
                     self._seed_particles(self.lost_pos)
+                    self._plan_follow(lost)
                     if self.icpt_node is not None and self.t - self.icpt_at <= 3:
                         self.g_last_seen = (self.icpt_node, self.t)
                 lost.seen_hist = []
@@ -881,8 +925,16 @@ class Game:
             return
         # 追丟：先去最後看到的位置（search-time 內）
         if self.g_last_seen and self.t - self.g_last_seen[1] <= ai['search-time'] and self.g != self.g_last_seen[0]:
-            self._ghost_move(self.g_last_seen[0], ai['search-speed'])
+            # lost-chase-time（實驗）：剛追丟的這幾秒維持追人速度
+            fresh = self.t - self.g_last_seen[1] <= ai.get('lost-chase-time', 0)
+            self._ghost_move(self.g_last_seen[0], ai['chase-speed'] if fresh else ai['search-speed'])
             return
+        if self.follow is not None and self.ls_checked:
+            node, until = self.follow
+            if self.t < until and self.g != node:
+                self._ghost_move(node, ai['search-speed'])
+                return
+            self.follow = None
         if v2 and not self.ls_checked and self.lost_pos is not None:
             # 到了最後看到的位置：照證據查附近的暗格（插件 6.3）
             self.ls_checked = True
@@ -1601,11 +1653,33 @@ class Game:
 
 
 class RuleBrain:
-    """規則型的高層決策（照插件的 AI 鬼簡化：聲音 → 關電源 → 弄壞大門 → 守監獄 → 依信念和多久沒去巡邏）。"""
+    """規則型的高層決策（照插件的 AI 鬼簡化：聲音 → 跟粒子 → 弄壞大門 → 關電源 → 守下一個目標（2026-11-24）→ 守監獄 → 依信念和多久沒去巡邏）。"""
 
     def __init__(self, rng=None, jail_chance=None):
         self.rng = rng or random.Random(0)
         self.jail_chance = jail_chance  # None：照 config 的 guard-jail-chance；「守監獄型」給 0.9
+        self.gs = {'start': -1.0, 'cool': -1.0, 'cycle': 0, 'tgt': None}
+
+    def _guard(self, g):
+        """守下一個目標（插件 AiGhost.readerWatch，guard-objective）：每次最多 guard-reader-cap 秒，之後走開一半的時間。"""
+        cap = g.ai.get('guard-reader-cap', 40)
+        if not g.ai.get('guard-objective', 1) or cap <= 0:
+            return None
+        st = self.gs
+        goals = g._next_goal()
+        if st['start'] >= 0 and st['tgt'] not in goals:
+            st['start'], st['cool'] = -1.0, -1.0  # 換階段：馬上換目標
+        if g.t < st['cool']:
+            return None
+        if st['start'] < 0:
+            st['start'] = g.t
+            st['tgt'] = goals[st['cycle'] % len(goals)]
+            st['cycle'] += 1
+        if g.t - st['start'] <= cap:
+            return int(g.w.reg[st['tgt']])
+        st['start'] = -1.0
+        st['cool'] = g.t + cap / 2
+        return None
 
     def __call__(self, game, mask):
         g = game
@@ -1618,6 +1692,9 @@ class RuleBrain:
             return A_SABOTAGE
         if mask[A_POWER] and g.t - g.power_on_at >= g.ai['power-cut-delay'] + 20:
             return A_POWER
+        gr = self._guard(g)
+        if gr is not None and mask[gr]:
+            return gr
         jc = self.jail_chance if self.jail_chance is not None else g.ai['guard-jail-chance'] * 0.3
         if mask[A_JAIL] and r.random() < jc:
             return A_JAIL
