@@ -20,11 +20,11 @@ class NNGhost:
 
     def __init__(self, state):
         import torch
-        from .model import GhostNet, HID
+        from .model import GhostNet, HID, load_expand
         torch.set_num_threads(1)
         self.torch = torch
         self.net = GhostNet()
-        self.net.load_state_dict(state)
+        load_expand(self.net, state)
         self.net.eval()
         self.h = torch.zeros(1, HID)
 

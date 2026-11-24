@@ -134,10 +134,10 @@ def _evaluate(worlds, cfg, maps, state, games, seed, use_rule, survivors, person
     net = None
     if not use_rule:
         import torch
-        from .model import GhostNet, HID
+        from .model import GhostNet, HID, load_expand
         torch.set_num_threads(1)
         net = GhostNet()
-        net.load_state_dict(state)
+        load_expand(net, state)
         net.eval()
     for k in range(games):
         m = maps[k % len(maps)]

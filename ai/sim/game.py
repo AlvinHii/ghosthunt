@@ -3,6 +3,8 @@
 
 分兩層，跟插件的 AI 鬼一樣：
 - 反射層（不訓練）：看到人就追、進攻擊距離就揮拳（前搖、揮空、疲勞照 config）、追丟先去最後看到的位置。
+  第二版（ai-ghost.sim-reflex: 2，預設；2026-11-24 照插件第三版加的）：繞前堵（intercept-chance）、追丟後撒粒子猜人在哪（A_TRACK 跟著粒子找）、
+  到了最後看到的位置照證據查暗格、到一個區域轉頭張望、站著等的時候轉頭看。sim-reflex: 1 是舊版（比較用）。
 - 高層決策（可以訓練）：沒看到人時「接下來去哪裡、做什麼」。規則型大腦（RuleBrain）或外部策略（強化學習）。
 
 逃生者是規則型 AI，刻意加上真人的限制：反應延遲、只知道看得到／聽得到的事（加上心跳）、偶爾選錯路。
@@ -17,12 +19,15 @@ from .config import by_survivors
 
 DT = 0.25
 RMAX = 64                 # 觀察的區域數上限（mall2 44、hospital 55）
-REG_FEATS = 12
-GLOBAL_FEATS = 12
+REG_FEATS = 15
+GLOBAL_FEATS = 14
 OBS_DIM = RMAX * REG_FEATS + GLOBAL_FEATS
-A_NOISE, A_POWER, A_SABOTAGE, A_JAIL = RMAX, RMAX + 1, RMAX + 2, RMAX + 3
-N_ACTIONS = RMAX + 4
-ACTION_NAMES = {A_NOISE: '去聲音', A_POWER: '關電源', A_SABOTAGE: '弄壞大門', A_JAIL: '守監獄'}
+A_NOISE, A_POWER, A_SABOTAGE, A_JAIL, A_WAIT, A_TRACK = range(RMAX, RMAX + 6)
+N_ACTIONS = RMAX + 6
+ACTION_NAMES = {A_NOISE: '去聲音', A_POWER: '關電源', A_SABOTAGE: '弄壞大門', A_JAIL: '守監獄', A_WAIT: '原地等（轉頭看）', A_TRACK: '跟著粒子找'}
+P_COUNT = 64          # 追丟後撒的粒子數（插件 200；模擬器少一點比較快）
+P_MIN = 6             # 剩不到這麼多就放棄
+P_AGE = 40            # 最多推理幾秒（particle-max-age）
 
 FREE, JAILED, ESCAPED, OUT, DOWN = 0, 1, 2, 3, 4   # DOWN：困難模式的倒地（capture-mode: downed）
 
@@ -36,6 +41,11 @@ REALISM = {
     'flee-stage': 3,        # 心跳到第幾段（1 遠～4 貼臉）就開始逃
     'rescue': 1.0,          # 願意去救人／扶人的機率（每局每人擲一次）
     'hide': 1.0,            # 逃跑時附近有暗格就躲的機率（每局每人擲一次）
+    # 視野（2026-11-24 加）：之前逃生者 360 度都看得到鬼，真人只看得到前面（鬼沒有腳步聲，從背後摸過去不會被發現）
+    'fov': 110,             # 看得到的角度（Minecraft 預設 FOV 70 約等於左右 110 度）
+    'near-aware': 3,        # 這麼近不分方向都察覺得到
+    'look-back': 0.1,       # 每 0.5 秒回頭看一圈的機率（心跳沒在響）
+    'look-back-alert': 0.4, # 心跳在響的時候回頭看的機率
 }
 
 # 規則型逃生者的個性：訓練鬼時每個人隨機一種（避免鬼只會剋一種機器人）；heldout 只在評估用（訓練沒見過）
@@ -70,6 +80,9 @@ class Survivor:
         self.hidden = None         # 躲在暗格：(暗格, 入口節點, 出來的時間)
         self.claim = None          # 搶著翻的木桶
         self.running = False
+        self.seen_hist = []        # 鬼看到他的位置（時間, 節點），最近 2.5 秒；繞前堵算移動方向用
+        self.face = (1.0, 0.0)     # 面向（照移動方向；做事的時候不變）
+        self.look_until = -1.0     # 回頭看一圈（這段時間不分方向都看得到）
 
 
 class Game:
@@ -79,6 +92,7 @@ class Game:
         self.c = cfg
         self.ai = cfg['ai']
         self.rng = random.Random(seed)
+        self.np_rng = np.random.default_rng(seed + 7)
         self.t = 0.0
         self.n = survivors
         self.record = [] if record else None
@@ -168,7 +182,7 @@ class Game:
         self.g_face = (0.0, 1.0)
         self.g_budget = 0.0
         bonus = by_survivors(cfg['ghost']['speed-bonus-by-survivors'], survivors)
-        self.g_speed = 5.6 * (1 + bonus)
+        self.g_speed = 5.6 * (self.ai.get("base-speed", 0.45) / 0.45) * (1 + bonus)  # base-speed 0.45 ≈ 跑步每秒 5.6 格
         self.g_goal = None         # (動作, 目標節點, 結束條件參數)
         self.g_goal_since = 0.0
         self.g_act = None          # (種類, 剩餘秒)
@@ -198,6 +212,35 @@ class Game:
                 self.imps.append({'pos': None, 'out_at': imp.get('start-after', 150) + imp.get('stagger', 40) * k,
                                   'ready': 0.0, 'target': None, 'budget': 0.0})
         self.stats['imp_touches'] = 0
+        # ---- 反射層第二版 ----
+        self.reflex = int(self.ai.get('sim-reflex', 2))
+        self.icpt_on = False       # 這次追人要不要算繞前堵
+        self.icpt_next = 0.0
+        self.icpt_node = None
+        self.icpt_at = -99.0
+        self.particles = None      # 追丟後的粒子（節點陣列）
+        self.p_goal = None
+        self.p_born = 0.0
+        self.p_next = 0.0
+        self.p_pick = 0.0
+        self.lost_pos = None       # 真的最後看到的位置（繞前堵時 g_last_seen 會換成堵的格子）
+        self.ls_checked = True
+        self.g_hcheck = None       # 要去查的暗格：(入口節點, 暗格)
+        self.look_next = 0.0
+        self.reg_seen = np.zeros(w.R) - 999
+        self.stats.update({'chases': 0, 'chase_caps': 0, 'intercepts': 0, 'hide_checks': 0, 'hide_hits': 0, 'track_finds': 0})
+        if not hasattr(w, 'nbpad'):
+            deg = max(len(a) for a in w.nb)
+            pad = -np.ones((w.N, deg), np.int32)
+            for i, a in enumerate(w.nb):
+                pad[i, :len(a)] = a
+            w.nbpad = pad
+            hc = np.zeros(w.R)
+            for (hide, entrance) in w.hideouts:
+                ei = w.node(*entrance)
+                if ei >= 0:
+                    hc[w.reg[ei]] += 1
+            w.reg_hides = hc
 
     # =================================================================
     # 公用
@@ -258,10 +301,12 @@ class Game:
                         score[k] -= 30
                 k = int(np.argmax(score))
                 if vals[k] <= row[pos]:
+                    budget = min(budget, 1.0)  # 被逼到角落：額度不能存起來（2026-11-24 修：之前存著，鬼一靠近就一步瞬移好幾格）
                     break
             else:
                 k = int(np.argmin(vals))
                 if vals[k] >= row[pos]:
+                    budget = min(budget, 1.0)  # 到了：同上
                     break
             nxt = int(nb[k])
             fa, xa, za = w.pos(pos)
@@ -308,9 +353,21 @@ class Game:
         self._env()
         self._ghost_reflex()
         self._imps()
+        look = int(self.t / DT) % 2 == 0
         for s in self.sv:
             if s.state == FREE:
+                prev = s.pos
+                if look and not s.hidden:
+                    pr = s.p['look-back-alert'] if self.heartbeat_stage(s) >= 1 else s.p['look-back']
+                    if self.rng.random() < pr:
+                        s.look_until = self.t + 0.5
                 self._survivor(s)
+                if s.pos is not None and prev is not None and s.pos != prev:
+                    fa, xa, za = self.w.pos(prev)
+                    fb, xb, zb = self.w.pos(s.pos)
+                    if fa == fb:
+                        n = math.hypot(xb - xa, zb - za)
+                        s.face = ((xb - xa) / n, (zb - za) / n)
         self._metrics()
         self._rescues()
         self._gates()
@@ -365,7 +422,8 @@ class Game:
         d = self.eu(self.g, s.pos)
         if d > self._sight():
             return False
-        if d > self.ai['near-aware']:
+        # 正在追的人：頭一直盯著他（插件 mob.lookAt），不受視野角度限制（2026-11-24 修：之前人一閃到旁邊就跟丟）
+        if d > self.ai['near-aware'] and not (self.reflex >= 2 and s is self.g_target):
             fg, xg, zg = self.xyz(self.g)
             fs, xs, zs = self.xyz(s.pos)
             vx, vz = xs - xg, zs - zg
@@ -393,16 +451,187 @@ class Game:
         r = self.w.reg[self.g]
         self.reg_visit[r] = self.t
 
+    def _ghost_sees_node(self, n):
+        d = self.eu(self.g, n)
+        if d > self._sight():
+            return False
+        if d > self.ai['near-aware']:
+            fg, xg, zg = self.xyz(self.g)
+            fs, xs, zs = self.xyz(n)
+            vx, vz = xs - xg, zs - zg
+            nn = math.hypot(vx, vz) or 1
+            if (vx * self.g_face[0] + vz * self.g_face[1]) / nn < math.cos(math.radians(self.ai['fov'] / 2)):
+                return False
+        return self.w.los(self.g, n)
+
+    def _look_around(self):
+        """站著的時候每 0.5 秒轉 90 度（插件：到了以後左、右、後各看一下）。"""
+        if self.t >= self.look_next:
+            fx, fz = self.g_face
+            self.g_face = (-fz, fx)
+            self.look_next = self.t + 0.5
+
+    def _next_goal(self):
+        """逃生者下一個遊戲目標（粒子、繞前堵用；鬼知道電源、終端機、讀卡機在哪）。"""
+        if not self.power:
+            return [self.lever]
+        if len(self.authorized) == 0:
+            return list(self.terminals)
+        return [g['reader'] for g in self.gates if not g['open']] or list(self.terminals)
+
+    def _seed_particles(self, pos):
+        self.particles = np.full(P_COUNT, pos, np.int32)
+        goals = self._next_goal()
+        self.p_goal = np.array([goals[k % len(goals)] for k in range(P_COUNT)], np.int32)
+        self.p_born = self.t
+        self.p_next = self.t
+        self.p_pick = -1.0
+
+    def _particles_step(self):
+        """每 0.5 秒：粒子走 3 格（60% 往離鬼遠、25% 往下一個目標、其他隨便走），鬼看得到的粒子刪掉。"""
+        if self.particles is None or self.t < self.p_next:
+            return
+        self.p_next = self.t + 0.5
+        w = self.w
+        if self.t - self.p_born > P_AGE:
+            self.particles = None
+            self.need_decision = True
+            return
+        P = self.particles
+        rowg = np.asarray(w.dist[self.g]).astype(np.float32)
+        rng = self.np_rng
+        for _ in range(3):
+            nbs = w.nbpad[P]                     # K × deg
+            ok = nbs >= 0
+            safe = np.where(ok, nbs, 0)
+            mode = rng.random(len(P))
+            # 往離鬼遠
+            va = np.where(ok, rowg[safe], -1e9)
+            away = safe[np.arange(len(P)), va.argmax(1)]
+            # 往目標
+            vg = np.full(nbs.shape, 1e9, np.float32)
+            for goal in np.unique(self.p_goal):
+                sel = self.p_goal == goal
+                row = np.asarray(w.dist[goal])
+                vg[sel] = np.where(ok[sel], row[safe[sel]].astype(np.float32), 1e9)
+            to_goal = safe[np.arange(len(P)), vg.argmin(1)]
+            # 隨便走
+            cnt = ok.sum(1)
+            k = (rng.random(len(P)) * cnt).astype(int)
+            order = np.argsort(~ok, axis=1, kind='stable')
+            rnd = safe[np.arange(len(P)), order[np.arange(len(P)), k]]
+            P = np.where(mode < 0.6, away, np.where(mode < 0.85, to_goal, rnd)).astype(np.int32)
+        keep = np.ones(len(P), bool)
+        fg = w.pos(self.g)[0]
+        sight = self._sight()
+        for i, n in enumerate(P):
+            f, x, z = w.pos(int(n))
+            if f == fg and self.eu(self.g, int(n)) <= sight and self._ghost_sees_node(int(n)):
+                keep[i] = False
+        self.particles = P[keep]
+        self.p_goal = self.p_goal[keep]
+        if len(self.particles) < P_MIN:
+            self.particles = None
+            self.need_decision = True
+
+    def _particle_target(self):
+        """粒子最多的區域（近的優先）裡的一顆粒子。"""
+        w = self.w
+        if self.particles is None:
+            return self.g
+        regs = w.reg[self.particles]
+        cnt = np.bincount(regs, minlength=w.R).astype(np.float64)
+        dist = np.asarray(w.dist[self.g][w.reg_center]).astype(np.float64)
+        score = cnt / (dist + 15)
+        score[cnt == 0] = -1
+        r = int(score.argmax())
+        members = self.particles[regs == r]
+        self.p_pick = self.t
+        return int(members[len(members) // 2])
+
+    def _intercept(self, s):
+        """繞前堵（插件 Interceptor）：猜對方往哪個出口／目標跑，找他路上「鬼比他早 0.5 秒到」的格子。"""
+        if self.t < self.icpt_next:
+            return self.icpt_node
+        self.icpt_next = self.t + 1.0
+        self.icpt_node = None
+        if self.eu(self.g, s.pos) <= 4:
+            return None
+        old = [n for (tt, n) in s.seen_hist if self.t - tt >= 0.9]
+        if not old:
+            return None
+        o = old[-1]
+        w = self.w
+        fo, xo, zo = w.pos(o)
+        fs, xs, zs = w.pos(s.pos)
+        vx, vz = (xs - xo, zs - zo) if fo == fs else (0, 0)
+        vl = math.hypot(vx, vz)
+        cands = [int(w.reg_center[q]) for q in w.reg_adj[w.reg[s.pos]]]
+        cands += [n for n in self._next_goal() if self.d(s.pos, n) <= 40]
+        if not cands:
+            return None
+        sc = []
+        for c in cands:
+            fc, xc, zc = w.pos(c)
+            dx, dz = xc - xs, zc - zs
+            dl = math.hypot(dx, dz)
+            cos = 0.0 if vl < 1e-6 or dl < 1e-6 or fc != fs else (dx * vx + dz * vz) / (dl * vl)
+            sc.append(cos + (self.d(o, c) - self.d(s.pos, c)))
+        sc = np.array(sc)
+        pr = np.exp(sc - sc.max())
+        pr /= pr.sum()
+        k = int(pr.argmax())
+        if pr[k] < 0.5:
+            return None
+        c = cands[k]
+        row = w.dist[c]
+        rowg = w.dist[self.g]
+        cur = s.pos
+        gs = self.g_speed * self.ai['chase-speed']
+        for step in range(1, 60):
+            nb = w.nb[cur]
+            vals = row[nb]
+            j = int(np.argmin(vals))
+            if vals[j] >= row[cur]:
+                break
+            cur = int(nb[j])
+            if float(rowg[cur]) / gs + 0.5 < step / 5.6:
+                if self.icpt_node != cur:
+                    self.stats['intercepts'] += 1
+                self.icpt_node = cur
+                self.icpt_at = self.t
+                return cur
+        return None
+
     def _ghost_reflex(self):
         ai = self.ai
+        v2 = self.reflex >= 2
+        if v2:
+            self._particles_step()
         seen = [s for s in self.sv if self._ghost_sees(s)]
         r = self.w.reg[self.g]
         if seen:
             if self.g_target is None and self.t - self.last_contact > 5:
                 self.log('鬼看到 逃生者%d' % seen[0].i)
             tgt = min(seen, key=lambda s: self.eu(self.g, s.pos))
+            if self.g_target is None:
+                self.stats['chases'] += 1
+                self.chase_caps0 = self.stats['captures']
+                self.icpt_on = v2 and self.rng.random() < ai.get('intercept-chance', 0.0)
+                self.icpt_node = None
+            for s in seen:
+                s.seen_hist.append((self.t, s.pos))
+                if len(s.seen_hist) > 10:
+                    del s.seen_hist[0]
+                self.reg_seen[self.w.reg[s.pos]] = self.t
+            if self.particles is not None:
+                self.stats['track_finds'] += 1 if self.g_goal is not None and self.g_goal[0] == A_TRACK else 0
+            self.particles = None
+            self.g_hcheck = None
             self.g_target = tgt
             self.g_last_seen = (tgt.pos, self.t)
+            self.lost_pos = tgt.pos
+            self.ls_checked = False
             self.last_contact = self.t
             self.belief[self.w.reg[tgt.pos]] += 1.0
             self.g_act = None
@@ -411,22 +640,39 @@ class Game:
             # 沒看到人：這一區的信念降低
             self.belief[r] *= 0.85
             if self.g_target is not None:
+                lost = self.g_target
                 self.g_target = None
                 self.need_decision = True
-        # 揮拳：前搖 → 判定
+                if v2 and lost.state == FREE and self.lost_pos is not None:
+                    self._seed_particles(self.lost_pos)
+                    if self.icpt_node is not None and self.t - self.icpt_at <= 3:
+                        self.g_last_seen = (self.icpt_node, self.t)
+                lost.seen_hist = []
+        # 揮拳：前搖 → 判定（2026-11-24 照插件 AiGhost.attackTick 修：前搖時照樣追；時間到人已經退出範圍，
+        # 只有 whiff-chance 的機率還是揮（揮空才疲勞），其他不揮、重新等。之前是站著不動、一律算揮空）
         if self.windup is not None:
             s, at = self.windup
             if self.t >= at:
                 self.windup = None
-                self.fatigue_until = self.t + self.c['ghost']['attack-fatigue']
                 if s.state == FREE and not s.hidden and self.eu(self.g, s.pos) <= ai['attack-range'] and self.t >= s.protect_until:
+                    self.fatigue_until = self.t + self.c['ghost']['attack-fatigue']
                     self._capture(s)
-                else:
+                    return
+                if self.rng.random() < ai.get('whiff-chance', 0.3):
+                    self.fatigue_until = self.t + self.c['ghost']['attack-fatigue']
                     self.stats['whiffs'] += 1
-            return
-        # 正在做事（關電源、弄壞大門、打暗格）
+            elif self.g_target is s and s.state == FREE:
+                self._ghost_move(s.pos, ai['chase-speed'])
+                return
+            else:
+                self.windup = None
+            if self.windup is not None:
+                return
+        # 正在做事（關電源、弄壞大門、打暗格、等）
         if self.g_act is not None:
             kind, left, arg = self.g_act
+            if v2 and kind in ('wait', 'look'):
+                self._look_around()
             left -= DT
             if left > 0:
                 self.g_act = (kind, left, arg)
@@ -440,12 +686,49 @@ class Game:
             if self.t >= self.fatigue_until and self.t >= self.capture_ready and self.eu(self.g, s.pos) <= ai['attack-range']:
                 self.windup = (s, self.t + ai['reaction'])
                 return
-            self._ghost_move(s.pos, ai['chase-speed'])
+            dest = s.pos
+            if self.icpt_on:
+                node = self._intercept(s)
+                if node is not None and node != self.g:
+                    dest = node
+            self._ghost_move(dest, ai['chase-speed'])
+            return
+        # 要去查暗格
+        if self.g_hcheck is not None:
+            ei, hide = self.g_hcheck
+            if self.g == ei:
+                self.g_hcheck = None
+                self.g_act = ('hideout', self.c['ghost']['widen-crawl-hole'], hide)
+                return
+            self._ghost_move(ei, ai['search-speed'])
             return
         # 追丟：先去最後看到的位置（search-time 內）
         if self.g_last_seen and self.t - self.g_last_seen[1] <= ai['search-time'] and self.g != self.g_last_seen[0]:
             self._ghost_move(self.g_last_seen[0], ai['search-speed'])
             return
+        if v2 and not self.ls_checked and self.lost_pos is not None:
+            # 到了最後看到的位置：照證據查附近的暗格（插件 6.3）
+            self.ls_checked = True
+            best, bp = None, 0.0
+            heard = self.noise is not None and self.g_last_seen is not None and self.noise[1] > self.g_last_seen[1]
+            for (hide, entrance) in self.w.hideouts:
+                ei = self.w.node(*entrance)
+                if ei < 0:
+                    continue
+                dd = self.d(self.g, ei)
+                if dd > 12:
+                    continue
+                pr = ai['check-hideout-base']
+                if self.eu(self.lost_pos, ei) <= 3 and self.g_last_seen is not None and self.t - self.g_last_seen[1] <= 5 and not heard:
+                    pr *= 2.5
+                if dd > 8:
+                    pr *= 0.3
+                if pr > bp:
+                    best, bp = (ei, hide), pr
+            if best is not None and self.rng.random() < min(bp, 0.95):
+                self.g_hcheck = best
+                self.stats['hide_checks'] += 1
+                return
         # 感應：太久沒接觸 → 知道最近的人在哪一區
         if self.t - self.last_contact >= self.sense_quiet and self.t - self.last_sense >= ai['sense-gap'] * (self.sense_quiet / ai['sense-quiet']):
             fr = [s for s in self.free() if not s.hidden]
@@ -462,10 +745,17 @@ class Game:
             self.need_decision = True
             return  # 等外面決定（decide）
         a, target, _ = self.g_goal
+        if a == A_TRACK:
+            if self.particles is None:
+                self.need_decision = True
+                return
+            if self.t - self.p_pick >= 1.0:
+                target = self._particle_target()
+                self.g_goal = (a, target, None)
         if self.g == target:
             self._ghost_arrive(a, target)
             return
-        mult = ai['search-speed'] if a in (A_NOISE, A_SABOTAGE) else ai['patrol-speed']
+        mult = ai['search-speed'] if a in (A_NOISE, A_SABOTAGE, A_TRACK) else ai['patrol-speed']
         self._ghost_move(target, mult)
 
     def _ghost_arrive(self, a, target):
@@ -483,15 +773,34 @@ class Game:
         if a == A_JAIL:
             self.g_act = ('wait', 6.0, None)
             return
+        if a == A_WAIT:
+            self.g_act = ('wait', 4.0, None)
+            return
+        if a == A_TRACK:
+            if self.particles is not None:
+                self.g_goal = (a, self._particle_target(), None)
+                if self.g_goal[1] != self.g:
+                    return
+            self.need_decision = True
+            return
         # 到了一個區域：查暗格（擲骰）
         r = self.w.reg[self.g]
         for (hide, entrance) in self.w.hideouts:
             ei = self.w.node(*entrance)
             if ei >= 0 and self.w.reg[ei] == r and self.rng.random() < ai['check-hideout-base'] * 0.5:
                 if self.d(self.g, ei) < 12:
+                    if self.reflex >= 2:
+                        self.g_hcheck = (ei, hide)
+                        self.stats['hide_checks'] += 1
+                        self.g_goal = None
+                        self.need_decision = True
+                        return
                     self.g_act = ('hideout', self.c['ghost']['widen-crawl-hole'], hide)
                     self.g_goal = (a, ei, None)
                     return
+        if self.reflex >= 2 and a < RMAX:
+            self.g_act = ('look', 1.5, None)
+            return
         self.need_decision = True
 
     def _imps(self):
@@ -541,6 +850,7 @@ class Game:
             for s in self.sv:
                 if s.hidden and s.hidden[0] == arg and s.state == FREE:
                     s.hidden = None
+                    self.stats['hide_hits'] += 1
                     self._capture(s)
                     break
 
@@ -551,6 +861,10 @@ class Game:
         s.task = None
         s.hidden = None
         self.stats['captures'] += 1
+        if self.g_target is s:
+            self.stats['chase_caps'] += 1
+        self.particles = None
+        self.g_hcheck = None
         self.capture_ready = self.t + c['ghost']['capture-cooldown']
         self.g_target = None
         self.g_last_seen = None
@@ -596,6 +910,8 @@ class Game:
         m[A_POWER] = self.power and not self.power_cut and self.t - self.power_on_at >= self.ai['power-cut-delay']
         m[A_SABOTAGE] = any(g['counting'] >= 0 and not g['sabotaged'] for g in self.gates)
         m[A_JAIL] = (any(s.state == JAILED for s in self.sv) and bool(self.w.jails)) or any(s.state == DOWN for s in self.sv)
+        m[A_WAIT] = self.reflex >= 2
+        m[A_TRACK] = self.particles is not None
         if self.guard_used >= self.ai.get('guard-cap', 45) and any(s.state == JAILED for s in self.sv):
             m[A_JAIL] = any(s.state == DOWN for s in self.sv)
             for r in self.jail_regions:
@@ -617,6 +933,10 @@ class Game:
         elif a == A_SABOTAGE:
             gs = [g for g in self.gates if g['counting'] >= 0 and not g['sabotaged']]
             target = min(gs, key=lambda g: self.d(self.g, g['reader']))['reader'] if gs else self.g
+        elif a == A_WAIT:
+            target = self.g
+        elif a == A_TRACK:
+            target = self._particle_target()
         else:
             down = [s for s in self.sv if s.state == DOWN]
             if down:
@@ -651,6 +971,10 @@ class Game:
         for j in w.jails:
             if j['stand'] >= 0:
                 reg[w.reg[j['stand']], 11] = 1
+        reg[:R, 12] = np.exp(-(self.t - self.reg_seen) / 30)
+        if self.particles is not None:
+            reg[:R, 13] = np.bincount(w.reg[self.particles], minlength=R) / P_COUNT
+        reg[:R, 14] = np.minimum(w.reg_hides, 3) / 3
         gl = o[RMAX * REG_FEATS:]
         gl[0] = self.t / self.c['match']['time-limit']
         gl[1] = self.power
@@ -662,6 +986,8 @@ class Game:
         gl[9] = w.reg_floor[gr]
         gl[10] = min((self.t - self.last_contact) / 60, 1)
         gl[11] = len(self.authorized) / 2
+        gl[12] = min((self.t - self.g_last_seen[1]) / 30, 1) if self.g_last_seen else 1.0
+        gl[13] = 0 if self.particles is None else len(self.particles) / P_COUNT
         return o
 
     # =================================================================
@@ -676,7 +1002,16 @@ class Game:
     def _sees_ghost(self, s):
         d = self.eu(s.pos, self.g)
         rng = 24 if self.power else 12
-        return d <= rng and self.w.los(s.pos, self.g)
+        if d > rng:
+            return False
+        if d > s.p['near-aware'] and self.t >= s.look_until:
+            fs, xs, zs = self.w.pos(s.pos)
+            fg, xg, zg = self.w.pos(self.g)
+            vx, vz = xg - xs, zg - zs
+            n = math.hypot(vx, vz) or 1
+            if (vx * s.face[0] + vz * s.face[1]) / n < math.cos(math.radians(s.p['fov'] / 2)):
+                return False
+        return self.w.los(s.pos, self.g)
 
     def _survivor(self, s):
         c = self.c
@@ -1065,6 +1400,8 @@ class Game:
             'objectives': dict(self.objectives),
             'power_cut': self.power_cut,
             'imp_touches': self.stats['imp_touches'],
+            'chases': self.stats['chases'], 'chase_caps': self.stats['chase_caps'], 'intercepts': self.stats['intercepts'],
+            'hide_checks': self.stats['hide_checks'], 'hide_hits': self.stats['hide_hits'], 'track_finds': self.stats['track_finds'],
             # 鑽漏洞檢查
             'jail_guard': self.m['near_jail_t'] / self.m['jailed_t'] if self.m['jailed_t'] > 0 else None,
             'down_guard': self.m['near_down_t'] / self.m['down_t'] if self.m['down_t'] > 0 else None,
@@ -1089,6 +1426,8 @@ class RuleBrain:
         r = self.rng
         if mask[A_NOISE]:
             return A_NOISE
+        if mask[A_TRACK]:
+            return A_TRACK
         if mask[A_SABOTAGE]:
             return A_SABOTAGE
         if mask[A_POWER] and g.t - g.power_on_at >= g.ai['power-cut-delay'] + 20:

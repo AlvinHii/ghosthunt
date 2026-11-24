@@ -49,6 +49,10 @@ def summarize(results, n):
     out['一局（中位數）'] = f"{np.median([r['time'] for r in results]) / 60:.1f} 分"
     out['抓／救／淘汰（平均）'] = f"{np.mean([r['captures'] for r in results]):.1f}／{np.mean([r['rescues'] for r in results]):.1f}／{np.mean([r['eliminated'] for r in results]):.1f}"
     out['揮空（平均）'] = f"{np.mean([r['whiffs'] for r in results]):.1f}"
+    ch = sum(r.get('chases', 0) for r in results)
+    if ch:
+        out['追人成功率（抓到／開始追）'] = f"{sum(r['chase_caps'] for r in results) / ch:.0%}（每局追 {ch / k:.1f} 次）"
+        out['繞前堵／查暗格（抓到）／跟粒子找到人（每局）'] = f"{np.mean([r['intercepts'] for r in results]):.1f}／{np.mean([r['hide_checks'] for r in results]):.1f}（{np.mean([r['hide_hits'] for r in results]):.2f}）／{np.mean([r['track_finds'] for r in results]):.1f}"
     out['鬼關掉電源的局'] = f"{sum(r['power_cut'] for r in results) / k:.0%}"
     for name in ['開電源', '第一張卡', '授權', '刷卡', '大門打開']:
         ts = [r['objectives'][name] for r in results if name in r['objectives']]

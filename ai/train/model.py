@@ -54,3 +54,33 @@ class SurvivorNet(Net):
     def __init__(self):
         from ..sim.survivor import S_ACTIONS, S_GLOBAL, S_REG
         super().__init__(S_REG, S_GLOBAL, S_ACTIONS)
+
+
+def load_expand(net, state):
+    """載入舊版的權重，輸入特徵或特殊動作變多的時候：舊的欄位照抄，新的輸入欄位從 0 開始，新動作的偏差用舊動作的平均。
+    （2026-11-24：觀察 12→15 個區域特徵、12→14 個全域特徵，加了「原地等」「跟著粒子找」兩個動作。）"""
+    own = net.state_dict()
+    for k, v in state.items():
+        if k not in own:
+            continue
+        t = own[k]
+        if t.shape == v.shape:
+            own[k] = v.clone()
+        elif k == 'reg.0.weight' or k == 'ctx.0.weight':
+            t = t.clone()
+            t[:, :v.shape[1]] = v
+            t[:, v.shape[1]:] = 0
+            own[k] = t
+        elif k == 'special.weight':
+            t = t.clone()
+            t[:v.shape[0]] = v
+            t[v.shape[0]:] = 0
+            own[k] = t
+        elif k == 'special.bias':
+            t = t.clone()
+            t[:v.shape[0]] = v
+            t[v.shape[0]:] = v.mean()
+            own[k] = t
+        else:
+            raise ValueError(f'{k}: {tuple(v.shape)} → {tuple(t.shape)} 不知道怎麼轉')
+    net.load_state_dict(own)

@@ -22,7 +22,7 @@ import torch.nn.functional as F
 from ..sim.game import N_ACTIONS
 from ..sim.world import CACHE
 from .envs import VecEnv
-from .model import HID, GhostNet
+from .model import HID, GhostNet, load_expand
 
 
 def summarize(res):
@@ -95,7 +95,7 @@ def main():
     if not os.path.exists(latest) and a.init:
         # 從別的訓練接著練（例如修了模擬器以後，不用從零開始）
         ck0 = torch.load(os.path.join(CACHE, 'runs', a.init, 'latest.pt'), map_location=dev)
-        net.load_state_dict(ck0['net'])
+        load_expand(net, ck0['net'])
         print(f'從 {a.init} 的模型開始', flush=True)
     if os.path.exists(latest):
         ck = torch.load(latest, map_location=dev)
